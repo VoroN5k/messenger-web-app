@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import {PrismaService} from "../prisma/prisma.service";
+import {PrismaService} from "../prisma/prisma.service.js";
 import {JwtService} from "@nestjs/jwt";
 import * as bcrypt from 'bcryptjs';
 
@@ -38,5 +38,20 @@ export class AuthService {
         return {user, token};
     }
 
+    async login(email: string, password: string) {
+        const user = await this.prisma.user.findUnique({where: {email}});
+        if (!user) throw new Error('Invalid credentials');
 
+        const valid = await bcrypt.compare(password, user.password);
+        if (!valid) throw new Error('Invalid credentials');
+
+        const token = this.jwtService.sign({
+            sub: user.id,
+            email: user.email,
+            nickname: user.nickname,
+         });
+
+        return {user, token};
+
+    }
 }
