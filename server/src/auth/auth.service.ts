@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import {Injectable, UnauthorizedException} from '@nestjs/common';
 import {PrismaService} from "../prisma/prisma.service.js";
 import {JwtService} from "@nestjs/jwt";
 import * as bcrypt from 'bcryptjs';
@@ -22,6 +22,7 @@ export class AuthService {
             }
         });
 
+
         if (existingUser) throw new Error('User already exists');
 
         const hashedPassword = await bcrypt.hash(password, 10);
@@ -33,25 +34,43 @@ export class AuthService {
             },
         });
 
-        const token = this.jwtService.sign({sub: user.id, email: user.email});
+        const token = this.jwtService.sign({ userId: user.id });
+
 
         return {user, token};
     }
 
     async login(email: string, password: string) {
-        const user = await this.prisma.user.findUnique({where: {email}});
-        if (!user) throw new Error('Invalid credentials');
+        const user = await this.prisma.user.findUnique({
+            where: {email},
+        });
 
-        const valid = await bcrypt.compare(password, user.password);
-        if (!valid) throw new Error('Invalid credentials');
+        if (!user) {
+            throw new UnauthorizedException('Invalid credentials');
+        }
 
-        const token = this.jwtService.sign({
+        const isPasswordValid = await bcrypt.compare(password, user.password);
+
+        if (!isPasswordValid) {
+            throw new UnauthorizedException('Invalid credentials');
+        }
+
+        const payload = {
             sub: user.id,
             email: user.email,
             nickname: user.nickname,
-         });
+        };
 
-        return {user, token};
+        const token = this.jwtService.sign(payload);
 
+        return {
+            user: {
+                id: user.id,
+                email: user.email,
+                nickname: user.nickname,
+                createdAt: user.createdAt,
+            },
+            token,
+        };
     }
 }
