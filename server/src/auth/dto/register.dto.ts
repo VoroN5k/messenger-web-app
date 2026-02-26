@@ -10,6 +10,11 @@ export class RegisterDto {
     password: string;
 
     @IsString()
+    @MinLength(6)
+    @MaxLength(32)
+    confirmPassword: string;
+
+    @IsString()
     @MinLength(3)
     @MaxLength(20)
     nickname: string;
