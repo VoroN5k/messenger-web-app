@@ -1,19 +1,33 @@
-import { Controller, Post, Body } from '@nestjs/common';
+import {Controller, Post, Body, Res, Req} from '@nestjs/common';
 import { AuthService } from './auth.service.js';
 import {RegisterDto} from "./dto/register.dto.js";
 import {LoginDto} from "./dto/login.dto.js";
+import type {Request, Response} from "express";
+import {RefreshDto} from "./dto/refresh.dto.js";
 
 @Controller('auth')
 export class AuthController {
-    constructor(private authService: AuthService) {}
+    constructor(private readonly authService: AuthService) {}
 
     @Post('register')
-    register(@Body() dto: RegisterDto) {
-        return this.authService.register(dto);
+    register(@Body() dto: RegisterDto, @Req() req: Request) {
+        return this.authService.register(dto, req);
     }
 
     @Post('login')
-    async login (@Body() dto: LoginDto) {
-        return this.authService.login(dto);
+    async login (@Body() dto: LoginDto, @Req() req: Request) {
+        return this.authService.login(dto, req);
     }
+
+    @Post('refresh')
+    async refresh (@Body() dto: RefreshDto) {
+        return this.authService.refresh(dto);
+    }
+
+    @Post('logout')
+    async logout (@Body() dto: RefreshDto) {
+        return this.authService.logout(dto);
+    }
+
+
 }
