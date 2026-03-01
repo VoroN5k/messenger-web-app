@@ -5,7 +5,7 @@ import * as bcrypt from 'bcryptjs';
 import { RegisterDto } from './dto/register.dto.js';
 import { LoginDto } from './dto/login.dto.js';
 import { RefreshDto } from './dto/refresh.dto.js';
-import { JWTPayload } from './types/jwt-payload.type.js';
+import { JWTPayload } from './interfaces/jwt-payload.interface.js';
 import { Request } from 'express';
 
 @Injectable()
@@ -178,5 +178,27 @@ export class AuthService {
         });
 
         return { message: 'Logged out successfully' };
+    }
+
+    async getUserSessions(userId: number) {
+        return this.prisma.session.findMany({
+            where: { userId },
+            orderBy: { createdAt: 'desc' },
+            select: {
+                id: true,
+                userAgent: true,
+                ipAddress: true,
+                createdAt: true,
+                expiresAt: true,
+            },
+        });
+    }
+
+    async logoutAll(userId: number) {
+        await this.prisma.session.deleteMany({
+            where: { userId },
+        });
+
+        return { message: 'Logged out from all devices' };
     }
 }
