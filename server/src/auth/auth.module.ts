@@ -17,9 +17,7 @@ import { PrismaModule } from '../prisma/prisma.module.js';
             inject: [ConfigService],
             useFactory: async (configService: ConfigService) => ({
                 secret: configService.get<string>('JWT_SECRET'),
-                signOptions: {
-                    expiresIn: '7d',
-                },
+
             }),
         }),
     ],
