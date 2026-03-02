@@ -17,8 +17,25 @@ export class AuthController {
     }
 
     @Post('login')
-    async login (@Body() dto: LoginDto, @Req() req: Request) {
-        return this.authService.login(dto, req);
+    async login (
+        @Body() dto: LoginDto,
+        @Req() req: Request,
+        @Res({ passthrough: true }) res: Response,
+    ) {
+        const tokens = await this.authService.login(dto, {
+            ip: req.ip,
+            userAgent: req.headers['user-agent'] || 'unknown',
+        });
+
+        res.cookie('refreshToken', tokens.refreshToken, {
+            httpOnly: true,
+            secure: true,
+            sameSite: 'strict',
+            path: '/auth/refresh',
+            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+        });
+
+        return { accessToken: tokens.accessToken };
     }
 
     @Post('refresh')
