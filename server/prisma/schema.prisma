@@ -39,6 +39,7 @@ model Session {
   userId       Int
   refreshToken String   @unique
   userAgent    String?
+  deviceName   String?
   ipAddress    String?
   expiresAt    DateTime
   createdAt    DateTime @default(now())

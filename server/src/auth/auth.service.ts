@@ -19,7 +19,7 @@ import { EmailService } from './email/email.service.js';
 export class AuthService {
     private readonly logger = new Logger(AuthService.name);
     private readonly MAX_SESSIONS = 5;
-    private readonly REFRESH_TOKEN_EXPIRY = 7 * 24 * 60 * 60 * 1000; // 7 days
+    private readonly REFRESH_TOKEN_EXPIRY = 7 * 24 * 60 * 60 * 1000; // 7 днів
 
     constructor(
         private readonly prisma: PrismaService,
@@ -59,7 +59,8 @@ export class AuthService {
 
             await this.emailService.sendVerificationEmail(email, verifyToken);
 
-            return this.createSession(user.id, meta, tx);
+
+            return this.issueNewTokens(user.id, meta, tx);
         });
     }
 
@@ -75,10 +76,11 @@ export class AuthService {
             throw new UnauthorizedException('Please verify your email first');
         }
 
-        return this.createSession(user.id, meta);
+
+        return this.issueNewTokens(user.id, meta);
     }
 
-    // --- REFRESH (Security Optimized) ---
+    // --- REFRESH ---
     async refresh(refreshToken: string, meta: SessionMeta) {
         let payload: JWTPayload;
         try {
@@ -95,59 +97,47 @@ export class AuthService {
             });
 
             if (!session) {
-                // TOKEN REUSE DETECTION
-                this.logger.warn(`Potential token reuse attack! User ID: ${payload.sub}`);
+                this.logger.warn(`Security alert! Token reuse by user ID: ${payload.sub}`);
                 await tx.session.deleteMany({ where: { userId: payload.sub } });
                 throw new UnauthorizedException('Security alert: session compromised');
             }
 
-            if (session.expiresAt < new Date()) {
-                await tx.session.delete({ where: { id: session.id } });
-                throw new UnauthorizedException('Session expired');
-            }
 
-            // Видаляємо стару сесію і створюємо нову (Refresh Token Rotation)
-            await tx.session.delete({ where: { id: session.id } });
-            return this.createSession(payload.sub, meta, tx);
+            return this.rotateSession(session.id, payload.sub, meta, tx);
         });
     }
 
-    // --- SESSION CORE ---
-    private async createSession(userId: number, meta: SessionMeta, tx?: any) {
+    // --- CORE LOGIC: ISSUE TOKENS
+    private async issueNewTokens(userId: number, meta: SessionMeta, tx?: any) {
         const client = tx || this.prisma;
+        const userAgent = meta.userAgent || 'unknown';
 
-        // 1. Cleanup & Limit check
-        await client.session.deleteMany({
-            where: { OR: [{ userId, expiresAt: { lt: new Date() } }] }
+        // 1. Шукаємо існуючу сесію для цього ж пристрою (Deduplication)
+        const existingSession = await client.session.findFirst({
+            where: { userId, userAgent },
         });
 
-        const activeSessions = await client.session.count({ where: { userId } });
-        if (activeSessions >= this.MAX_SESSIONS) {
-            const oldest = await client.session.findFirst({
-                where: { userId },
-                orderBy: { createdAt: 'asc' },
-            });
-            if (oldest) await client.session.delete({ where: { id: oldest.id } });
+        if (existingSession) {
+            return this.rotateSession(existingSession.id, userId, meta, client);
         }
 
-        // 2. Generate Tokens
-        const user = await client.user.findUniqueOrThrow({ where: { id: userId } });
-        const payload: JWTPayload = {
-            sub: user.id,
-            email: user.email,
-            nickname: user.nickname,
-            role: user.role
-        };
 
-        const accessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
-        const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
+        const activeSessions = await client.session.findMany({
+            where: { userId },
+            orderBy: { createdAt: 'asc' },
+        });
 
-        // 3. Save Session
+        if (activeSessions.length >= this.MAX_SESSIONS) {
+            await client.session.delete({ where: { id: activeSessions[0].id } });
+        }
+
+
+        const { accessToken, refreshToken } = await this.generateJwt(userId);
         await client.session.create({
             data: {
                 userId,
                 refreshToken: hashToken(refreshToken),
-                userAgent: meta.userAgent || 'unknown',
+                userAgent,
                 ipAddress: meta.ip || 'unknown',
                 expiresAt: new Date(Date.now() + this.REFRESH_TOKEN_EXPIRY),
             },
@@ -156,45 +146,60 @@ export class AuthService {
         return { accessToken, refreshToken };
     }
 
-    // --- PASSWORD MANAGEMENT ---
+    private async rotateSession(sessionId: number, userId: number, meta: SessionMeta, client: any) {
+        const { accessToken, refreshToken } = await this.generateJwt(userId);
+
+        await client.session.update({
+            where: { id: sessionId },
+            data: {
+                refreshToken: hashToken(refreshToken),
+                ipAddress: meta.ip || 'unknown',
+                expiresAt: new Date(Date.now() + this.REFRESH_TOKEN_EXPIRY),
+            },
+        });
+
+        return { accessToken, refreshToken };
+    }
+
+    private async generateJwt(userId: number) {
+        const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+        const payload: JWTPayload = {
+            sub: user.id,
+            email: user.email,
+            nickname: user.nickname,
+            role: user.role
+        };
+
+        return {
+            accessToken: this.jwtService.sign(payload, { expiresIn: '15m' }),
+            refreshToken: this.jwtService.sign(payload, { expiresIn: '7d' }),
+        };
+    }
+
+    // --- REST OF METHODS ---
     async changePassword(userId: number, oldPass: string, newPass: string) {
         const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
-
         if (!(await bcrypt.compare(oldPass, user.password))) {
             throw new UnauthorizedException('Current password incorrect');
         }
 
         const hashedPassword = await bcrypt.hash(newPass, 10);
-
         await this.prisma.$transaction([
-            this.prisma.user.update({
-                where: { id: userId },
-                data: { password: hashedPassword },
-            }),
-            this.prisma.session.deleteMany({ where: { userId } }), // Logout everywhere
+            this.prisma.user.update({ where: { id: userId }, data: { password: hashedPassword } }),
+            this.prisma.session.deleteMany({ where: { userId } }),
         ]);
-
-        return { message: 'Password updated successfully' };
+        return { message: 'Password updated' };
     }
 
-    // --- HELPER METHODS (Всі твої методи збережено) ---
     async verifyEmail(token: string) {
-        const user = await this.prisma.user.findFirst({
-            where: { emailVerifyToken: hashToken(token) },
-        });
+        const user = await this.prisma.user.findFirst({ where: { emailVerifyToken: hashToken(token) } });
         if (!user) throw new BadRequestException('Invalid token');
-
-        await this.prisma.user.update({
-            where: { id: user.id },
-            data: { isEmailVerified: true, emailVerifyToken: null },
-        });
+        await this.prisma.user.update({ where: { id: user.id }, data: { isEmailVerified: true, emailVerifyToken: null } });
         return { message: 'Email verified' };
     }
 
     async logout(refreshToken: string) {
-        await this.prisma.session.deleteMany({
-            where: { refreshToken: hashToken(refreshToken) },
-        });
+        await this.prisma.session.deleteMany({ where: { refreshToken: hashToken(refreshToken) } });
     }
 
     async logoutAll(userId: number) {
@@ -204,7 +209,8 @@ export class AuthService {
     async getUserSessions(userId: number) {
         return this.prisma.session.findMany({
             where: { userId },
-            select: { id: true, userAgent: true, ipAddress: true, createdAt: true },
+            select: { id: true, userAgent: true, ipAddress: true, createdAt: true, expiresAt: true },
+            orderBy: { createdAt: 'desc' }
         });
     }
 }
