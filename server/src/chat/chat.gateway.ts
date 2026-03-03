@@ -16,11 +16,12 @@ import {PrismaService} from "../prisma/prisma.service.js";
     cors: { origin: "*" },
 })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
+    constructor(private readonly prisma: PrismaService) {}
     @WebSocketServer() server: Server;
     private logger = new Logger("ChatGateway");
 
     // Calls when user opens the socket
-    private prisma: PrismaService;
+
     async handleConnection(client: Socket){
         this.logger.log(`Client trying to connect: ${client.id}`);
     }
