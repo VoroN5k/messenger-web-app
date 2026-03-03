@@ -10,6 +10,7 @@ import {
 import { Server, Socket } from "socket.io";
 import { UseGuards, Logger } from "@nestjs/common";
 import { WsJwtGuard } from "./guards/ws-jwt.guard.js";
+import {PrismaService} from "../prisma/prisma.service.js";
 
 @WebSocketGateway({
     cors: { origin: "*" },
@@ -19,6 +20,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private logger = new Logger("ChatGateway");
 
     // Calls when user opens the socket
+    private prisma: PrismaService;
     async handleConnection(client: Socket){
         this.logger.log(`Client trying to connect: ${client.id}`);
     }
@@ -35,13 +37,32 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     ) {
         const sender = client.data.user;
 
-        this.logger.log(`Meesage from ${sender.nickname} to User ${data.toId}: ${data.text}`);
+        // Save messages to DB via ORM
+        const newMessage = await this.prisma.message.create({
+            data: {
+                content: data.text,
+                senderId: sender.id,
+                receiverId: data.toId,
+            },
+            include: {
+                sender: {select: {nickname: true} }
+            }
+        });
 
-        this.server.emit('onMessage', {
-            fromNickname: sender.nickname,
-            text: data.text,
-            sentAt: new Date(),
-        })
+        this.logger.log(`Saved message from ${sender.id} to ${data.toId}: ${data.text}`);
+
+        // 2. Send to receiver if online
+        this.server.to(`user_${data.toId}`).emit('onMessage', {
+            id: newMessage.id,
+            fromNickname: newMessage.sender.nickname,
+            text: newMessage.content,
+            sentAt: newMessage.createdAt,
+        });
+
+        client.emit('messageSent', {
+            id: newMessage.id,
+            status: 'sent'
+        });
     }
 
 }
