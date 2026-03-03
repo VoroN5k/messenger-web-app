@@ -5,12 +5,23 @@ const api = axios.create({
     baseURL: 'http://localhost:4000/api',
 });
 
-api.interceptors.request.use((config) => {
-    const token = useAuthStore.getState().accessToken;
-    if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
+api.interceptors.request.use(
+    (config) => {
+        // Дістаємо стан
+        const state = useAuthStore.getState();
+        const token = state.accessToken;
+
+        console.log("Axios Interceptor - Token found:", !!token);
+
+        if (token) {
+            config.headers.Authorization = `Bearer ${token}`;
+        }
+
+        return config;
+    },
+    (error) => {
+        return Promise.reject(error);
     }
-    return config;
-});
+);
 
 export default api;

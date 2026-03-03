@@ -1,4 +1,4 @@
-import {isEmail, IsString, MinLength, MaxLength, IsEmail} from "class-validator";
+import {isEmail, IsString, MinLength, MaxLength, IsEmail, IsOptional, IsObject} from "class-validator";
 
 export class RegisterDto {
     @IsEmail()
@@ -18,4 +18,11 @@ export class RegisterDto {
     @MinLength(3)
     @MaxLength(20)
     nickname: string;
+
+    @IsOptional()
+    @IsObject()
+    meta?: {
+        userAgent?: string;
+        ip?: string;
+    }
 }

@@ -13,7 +13,10 @@ export const useAuthStore = create<AuthState>()(
         (set) => ({
             user: null,
             accessToken: null,
-            setAuth: (user, token) => set({ user, accessToken: token}),
+            setAuth: (user, token) => {
+                console.log("Setting auth in Zustand:", { user, token });
+                set({ user: user, accessToken: token})
+            },
             logout: () => set({ user: null, accessToken: null }),
         }),
         { name: 'auth-storage' } // Save token in storage automatically
