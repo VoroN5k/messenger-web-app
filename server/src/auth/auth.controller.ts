@@ -20,10 +20,6 @@ import { CurrentUser } from './decorators/current-user.decorator.js';
 export class AuthController {
     constructor(private readonly authService: AuthService) {}
 
-    /**
-     * Реєстрація нового користувача.
-     * Передаємо Request для витягування мета-даних сесії (IP, User-Agent).
-     */
     @Post('register')
     async register(
         @Body() dto: RegisterDto,
@@ -37,9 +33,6 @@ export class AuthController {
         return { accessToken: tokens.accessToken };
     }
 
-    /**
-     * Вхід у систему.
-     */
     @Post('login')
     async login(
         @Body() dto: LoginDto,
@@ -53,10 +46,6 @@ export class AuthController {
         return { accessToken: tokens.accessToken };
     }
 
-    /**
-     * Оновлення пари токенів.
-     * Токен береться з HttpOnly Cookie для безпеки.
-     */
     @Post('refresh')
     async refresh(
         @Req() req: Request,
@@ -72,9 +61,6 @@ export class AuthController {
         return { accessToken: tokens.accessToken };
     }
 
-    /**
-     * Вихід з поточної сесії.
-     */
     @Post('logout')
     async logout(
         @Req() req: Request,
@@ -89,37 +75,23 @@ export class AuthController {
         return { message: 'Logged out successfully' };
     }
 
-    /**
-     * Список активних сесій користувача.
-     */
     @UseGuards(JwtAuthGuard)
     @Get('sessions')
     async getSessions(@CurrentUser('sub') userId: number) {
         return this.authService.getUserSessions(userId);
     }
 
-    /**
-     * Підтвердження Email через токен.
-     */
     @Get('verify-email')
     async verify(@Query('token') token: string) {
         return this.authService.verifyEmail(token);
     }
 
-    /**
-     * Вихід зі всіх пристроїв.
-     */
     @UseGuards(JwtAuthGuard)
     @Post('logout-all')
     async logoutAll(@CurrentUser('sub') userId: number) {
         return this.authService.logoutAll(userId);
     }
 
-    // --- Private Helpers ---
-
-    /**
-     * Централізоване налаштування безпечних кук.
-     */
     private setRefreshCookie(res: Response, token: string) {
         res.cookie('refreshToken', token, {
             httpOnly: true,
@@ -130,9 +102,6 @@ export class AuthController {
         });
     }
 
-    /**
-     * Уніфіковане вилучення мета-даних запиту.
-     */
     private extractMeta(req: Request) {
         return {
             ip: req.ip || req.headers['x-forwarded-for']?.toString() || 'unknown',

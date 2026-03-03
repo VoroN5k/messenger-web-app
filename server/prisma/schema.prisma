@@ -34,6 +34,9 @@ model User {
   sentMessages      Message[] @relation("SentMessages")
   receivedMessages  Message[] @relation("ReceivedMessages")
 
+  isOnline  Boolean   @default(false)
+  lastSeen   DateTime @default(now())
+
   sessions  Session[]
 }
 

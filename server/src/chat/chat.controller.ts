@@ -2,7 +2,7 @@ import { Controller, Get, Param, ParseIntPipe, Req, UseGuards } from "@nestjs/co
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 
-@Controller('chat') // Додаємо префікс шляху /chat
+@Controller('chat')
 export class ChatController {
 
     constructor(private readonly prisma: PrismaService) {}

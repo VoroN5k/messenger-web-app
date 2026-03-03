@@ -27,7 +27,7 @@ export class AuthService {
         private readonly emailService: EmailService,
     ) {}
 
-    // --- REGISTER ---
+
     async register(dto: RegisterDto, meta: SessionMeta) {
         const { email, password, confirmPassword, nickname } = dto;
 
@@ -64,7 +64,7 @@ export class AuthService {
         });
     }
 
-    // --- LOGIN ---
+    //  LOGIN
     async login(dto: LoginDto, meta: SessionMeta) {
         const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
 
@@ -80,7 +80,7 @@ export class AuthService {
         return this.issueNewTokens(user.id, meta);
     }
 
-    // --- REFRESH ---
+    //  REFRESH
     async refresh(refreshToken: string, meta: SessionMeta) {
         let payload: JWTPayload;
         try {
@@ -107,12 +107,11 @@ export class AuthService {
         });
     }
 
-    // --- CORE LOGIC: ISSUE TOKENS
+    // ISSUE TOKENS
     private async issueNewTokens(userId: number, meta: SessionMeta, tx?: any) {
         const client = tx || this.prisma;
         const userAgent = meta.userAgent || 'unknown';
 
-        // 1. Шукаємо існуючу сесію для цього ж пристрою (Deduplication)
         const existingSession = await client.session.findFirst({
             where: { userId, userAgent },
         });
@@ -176,7 +175,7 @@ export class AuthService {
         };
     }
 
-    // --- REST OF METHODS ---
+    // REST OF METHODS
     async changePassword(userId: number, oldPass: string, newPass: string) {
         const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
         if (!(await bcrypt.compare(oldPass, user.password))) {
