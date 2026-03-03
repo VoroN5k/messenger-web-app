@@ -27,7 +27,7 @@ export class AuthService {
         private readonly emailService: EmailService,
     ) {}
 
-
+    // REGISTER
     async register(dto: RegisterDto, meta: SessionMeta) {
         const { email, password, confirmPassword, nickname } = dto;
 
@@ -64,7 +64,7 @@ export class AuthService {
         });
     }
 
-    //  LOGIN
+    // LOGIN
     async login(dto: LoginDto, meta: SessionMeta) {
         const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
 
@@ -76,11 +76,10 @@ export class AuthService {
             throw new UnauthorizedException('Please verify your email first');
         }
 
-
         return this.issueNewTokens(user.id, meta);
     }
 
-    //  REFRESH
+    // REFRESH
     async refresh(refreshToken: string, meta: SessionMeta) {
         let payload: JWTPayload;
         try {
@@ -102,7 +101,6 @@ export class AuthService {
                 throw new UnauthorizedException('Security alert: session compromised');
             }
 
-
             return this.rotateSession(session.id, payload.sub, meta, tx);
         });
     }
@@ -120,7 +118,6 @@ export class AuthService {
             return this.rotateSession(existingSession.id, userId, meta, client);
         }
 
-
         const activeSessions = await client.session.findMany({
             where: { userId },
             orderBy: { createdAt: 'asc' },
@@ -131,7 +128,8 @@ export class AuthService {
         }
 
 
-        const { accessToken, refreshToken } = await this.generateJwt(userId);
+        const { accessToken, refreshToken } = await this.generateJwt(userId, client);
+
         await client.session.create({
             data: {
                 userId,
@@ -145,8 +143,9 @@ export class AuthService {
         return { accessToken, refreshToken };
     }
 
+    // ROTATE SESSION
     private async rotateSession(sessionId: number, userId: number, meta: SessionMeta, client: any) {
-        const { accessToken, refreshToken } = await this.generateJwt(userId);
+        const { accessToken, refreshToken } = await this.generateJwt(userId, client);
 
         await client.session.update({
             where: { id: sessionId },
@@ -160,8 +159,13 @@ export class AuthService {
         return { accessToken, refreshToken };
     }
 
-    private async generateJwt(userId: number) {
-        const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    // GENERATE JWT
+    private async generateJwt(userId: number, tx?: any) {
+        const client = tx || this.prisma;
+
+
+        const user = await client.user.findUniqueOrThrow({ where: { id: userId } });
+
         const payload: JWTPayload = {
             sub: user.id,
             email: user.email,
@@ -175,7 +179,7 @@ export class AuthService {
         };
     }
 
-    // REST OF METHODS
+
     async changePassword(userId: number, oldPass: string, newPass: string) {
         const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
         if (!(await bcrypt.compare(oldPass, user.password))) {

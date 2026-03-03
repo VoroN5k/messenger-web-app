@@ -34,6 +34,13 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
             const payload = await this.jwtService.verify(token);
             const userId = payload.sub;
 
+            client.data.user = {
+                id: userId,
+                nickname: payload.nickname || 'Unknown'
+            };
+
+            client.data.userId = userId;
+
             const roomId = `user_${payload.sub}`;
             client.join(roomId);
 
@@ -75,7 +82,13 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         @ConnectedSocket() client: Socket,
         @MessageBody() data: { toId: number; text: string },
     ) {
+
         const sender = client.data.user;
+
+        if (!sender || !sender.id) {
+            this.logger.error('Sender not found in socket data');
+            return;
+        }
 
         const newMessage = await this.prisma.message.create({
             data: {
@@ -97,6 +110,38 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
             text: newMessage.content,
             status: 'sent'
         });
+
+        this.logger.log(`User ${sender.id} sent message to User ${data.toId}: "${data.text}"`)
+    }
+
+    @UseGuards(WsJwtGuard)
+    @SubscribeMessage('markAsRead')
+    async handleMarkAsRead(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() data: { senderId: number }
+    ) {
+
+        const userId = client.data.user?.id;
+
+        if (!userId) return;
+
+
+        await this.prisma.message.updateMany({
+            where: {
+                senderId: data.senderId,
+                receiverId: userId,
+                isRead: false,
+            },
+            data: { isRead: true },
+        });
+
+
+        this.server.to(`user_${data.senderId}`).emit('messagesRead', {
+            readerId: userId,
+            senderId: data.senderId
+        });
+
+        this.logger.log(`User ${userId} marked messages from ${data.senderId} as read`);
     }
 
 }
