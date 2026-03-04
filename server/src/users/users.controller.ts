@@ -9,7 +9,12 @@ export class UsersController {
 
     @Get()
     async getAll(@Req() req) {
+        const userId = req.user.sub;
 
-        return this.usersService.findAll(req.user.id);
+        if (!userId) {
+            console.error("ID not found in token payload", req.user);
+        }
+
+        return this.usersService.findAll(Number(userId));
     }
 }

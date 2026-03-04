@@ -21,8 +21,6 @@ export const LoginForm = () => {
 
             console.log("Backend response data: ", response.data);
 
-            // response.data має містити { accessToken, refreshToken, user? }
-            // Якщо бекенд не повертає об'єкт user, ми можемо зберегти хоча б токен
             setAuth(response.data.user || { email: data.email }, response.data.accessToken);
 
             setTimeout(() => {

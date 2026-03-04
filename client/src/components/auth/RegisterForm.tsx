@@ -17,19 +17,18 @@ export const RegisterForm = () => {
         formState: { errors }
     } = useForm();
 
-    // Стежимо за паролем, щоб порівняти його з підтвердженням
+
     const password = watch("password");
 
     const onSubmit = async (data: any) => {
         setIsLoading(true);
         try {
-            // Відправляємо дані на /api/auth/register (префікс /api додає axios.ts)
-            // Бекенд очікує: email, nickname, password, confirmPassword
+
             const response = await api.post("/auth/register", {
                 ...data,
                 meta: {
                     userAgent: window.navigator.userAgent,
-                    ip: "127.0.0.1" // Можна додати заглушку, якщо бекенд вимагає
+                    ip: "127.0.0.1"
                 }
             });
 

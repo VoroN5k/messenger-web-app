@@ -24,6 +24,7 @@ export default function ChatPage() {
                 console.error("Failed to fetch users");
             }
         };
+
         fetchUsers();
     }, [user]);
 
