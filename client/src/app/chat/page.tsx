@@ -1,39 +1,62 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useAuthStore } from "@/src/store/useAuthStore";
 import { useSocket } from "@/src/hooks/useSocket";
 import api from "@/src/lib/axios";
 import { Send, User as UserIcon, LogOut } from "lucide-react";
 
 export default function ChatPage() {
+
     const { user, logout } = useAuthStore();
     const socket = useSocket();
+
     const [users, setUsers] = useState<any[]>([]);
     const [selectedUser, setSelectedUser] = useState<any>(null);
     const [message, setMessage] = useState("");
     const [messages, setMessages] = useState<any[]>([]);
 
-    // 1. Завантажуємо список контактів
+
+    const [isLoaded, setIsLoaded] = useState(false);
+
     useEffect(() => {
+
+        // Zustand hydration
+        if (user !== undefined) {
+            setIsLoaded(true);
+        }
+    }, [user]);
+
+    const currentUserId = user?.id || user?.sub;
+
+
+    useEffect(() => {
+        console.log("DEBUG: Повна структура юзера:", JSON.stringify(user, null, 2));
+
+        console.log("DEBUG: useEffect для fetchUsers запущено");
+        console.log("DEBUG: isLoaded:", isLoaded);
+        console.log("DEBUG: currentUserId:", currentUserId);
+        if (!isLoaded || !currentUserId) return;
+
         const fetchUsers = async () => {
             try {
-                const res = await api.get("/users"); // Перевір цей ендпоінт на бекенді!
-                setUsers(res.data.filter((u: any) => u.id !== user?.id));
+                console.log("DEBUG: Виконую запит до /users...");
+                const res = await api.get("/users");
+                console.log("DEBUG: Відповідь від сервера:", res.data);
+                setUsers(res.data.filter((u: any) => String(u.id) !== String(currentUserId)));
             } catch (e) {
                 console.error("Failed to fetch users");
             }
         };
 
         fetchUsers();
-    }, [user]);
+    }, [isLoaded, currentUserId]);
 
-    // 2. Слухаємо вхідні повідомлення
+
     useEffect(() => {
         if (!socket) return;
 
         socket.on("onMessage", (newMessage) => {
-            // Додаємо повідомлення в список, якщо воно від обраного юзера
             setMessages((prev) => [...prev, newMessage]);
         });
 
@@ -42,32 +65,46 @@ export default function ChatPage() {
 
     const handleSendMessage = (e: React.FormEvent) => {
         e.preventDefault();
-        if (!message || !selectedUser || !socket) return;
+        if (!message.trim() || !selectedUser || !socket) return;
 
         const messageData = {
             toId: selectedUser.id,
-            text: message,
+            content: message, // Використовуємо content згідно з вашою структурою БД
         };
 
-        // Відправка через сокет
         socket.emit("sendMessage", messageData);
 
-        // Додаємо собі в чат візуально (опціонально, бо сервер може повернути підтвердження)
+
         setMessages((prev) => [...prev, {
-            text: message,
-            senderId: user.id,
+            content: message,
+            senderId: currentUserId,
             createdAt: new Date().toISOString()
         }]);
 
         setMessage("");
     };
 
+    useEffect(() => {
+        const fetchHistory = async () => {
+            if (!selectedUser?.id) return;
+
+            try {
+                const res = await api.get(`/chat/history/${selectedUser.id}`);
+                setMessages(res.data);
+            } catch (error) {
+                console.error("Failed to fetch chat history");
+            }
+        };
+
+        fetchHistory();
+    }, [selectedUser?.id]);
+
     return (
         <div className="flex h-screen bg-gray-100">
             {/* SIDEBAR */}
             <aside className="w-1/4 bg-white border-r border-gray-200 flex flex-col">
                 <div className="p-4 bg-blue-600 text-white flex justify-between items-center">
-                    <span className="font-bold">{user?.nickname}</span>
+                    <span className="font-bold truncate">{user?.nickname}</span>
                     <button onClick={logout}><LogOut size={18}/></button>
                 </div>
                 <div className="flex-1 overflow-y-auto">
@@ -97,13 +134,18 @@ export default function ChatPage() {
                             Чат з {selectedUser.nickname}
                         </header>
                         <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
-                            {messages.map((msg, idx) => (
-                                <div key={idx} className={`flex ${msg.senderId === user.id ? 'justify-end' : 'justify-start'}`}>
-                                    <div className={`p-3 rounded-lg max-w-xs ${msg.senderId === user.id ? 'bg-blue-500 text-white' : 'bg-white border'}`}>
-                                        {msg.text}
+                            {messages.map((msg, idx) => {
+                                // Порівнюємо ID як рядки для надійності
+                                const isMe = String(msg.senderId) === String(currentUserId);
+                                return (
+                                    <div key={idx} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                                        <div className={`p-3 rounded-lg max-w-xs ${isMe ? 'bg-blue-500 text-white' : 'bg-white border'}`}>
+                                            {/* ВИВІД КОНТЕНТУ З ПОЛЯ CONTENT */}
+                                            {msg.content}
+                                        </div>
                                     </div>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
                         <form onSubmit={handleSendMessage} className="p-4 bg-white flex gap-2">
                             <input
@@ -112,7 +154,7 @@ export default function ChatPage() {
                                 className="flex-1 border rounded-full px-4 outline-none focus:border-blue-500"
                                 placeholder="Напишіть повідомлення..."
                             />
-                            <button className="bg-blue-600 text-white p-2 rounded-full"><Send size={20}/></button>
+                            <button type="submit" className="bg-blue-600 text-white p-2 rounded-full"><Send size={20}/></button>
                         </form>
                     </>
                 ) : (

@@ -5,7 +5,8 @@ import { useForm } from "react-hook-form";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/src/store/useAuthStore";
 import api from "@/src/lib/axios";
-import { Loader2 } from "lucide-react"; // Іконка завантаження
+import { Loader2 } from "lucide-react";
+import { jwtDecode } from "jwt-decode";
 
 export const LoginForm = () => {
     const [isLoading, setIsLoading] = useState(false);
@@ -18,10 +19,19 @@ export const LoginForm = () => {
         try {
             // На бекенді LoginDto очікує email та password
             const response = await api.post("/auth/login", data);
+            const token = response.data.accessToken;
 
+            const decoded: any = jwtDecode(token);
+
+            const userFromToken = {
+                id :decoded.sub,
+                nickname: decoded.nickname,
+                email: decoded.email,
+                role: decoded.role
+            }
             console.log("Backend response data: ", response.data);
 
-            setAuth(response.data.user || { email: data.email }, response.data.accessToken);
+            setAuth(userFromToken, token);
 
             setTimeout(() => {
                 router.push("/chat");
