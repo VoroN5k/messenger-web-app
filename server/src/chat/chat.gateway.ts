@@ -83,7 +83,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @SubscribeMessage('sendMessage')
     async handleMessage(
         @ConnectedSocket() client: Socket,
-        @MessageBody() data: { toId: number; text: string },
+        @MessageBody() data: { toId: number; content: string },
     ) {
 
         const sender = client.data.user;
@@ -95,7 +95,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
         const newMessage = await this.prisma.message.create({
             data: {
-                content: data.text,
+                content: data.content,
                 senderId: sender.id,
                 receiverId: data.toId,
             },
@@ -114,7 +114,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
             status: 'sent'
         });
 
-        this.logger.log(`User ${sender.id} sent message to User ${data.toId}: "${data.text}"`)
+        this.logger.log(`User ${sender.id} sent message to User ${data.toId}: "${data.content}"`)
     }
 
     @UseGuards(WsJwtGuard)
