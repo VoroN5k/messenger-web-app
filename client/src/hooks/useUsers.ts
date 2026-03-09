@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import api from "@/src/lib/axios";
 
-export const useUsers = (currentUserId: string | number | undefined, isLoaded: boolean) => {
+export const useUsers = (currentUserId: string | number | undefined, isLoaded: boolean, socket: any) => {
     const [users, setUsers] = useState<any[]>([]);
 
     useEffect(() => {
@@ -18,6 +18,28 @@ export const useUsers = (currentUserId: string | number | undefined, isLoaded: b
 
         fetchUsers();
     }, [isLoaded, currentUserId]);
+
+    useEffect(() => {
+        if (!socket) return;
+
+        const handleStatusChange = (data: { userId: number | string; isOnline: boolean}) =>{
+            console.log("Status changed for user:", data.userId, "isOnline:", data.isOnline);
+
+            setUsers((prevUsers) =>
+                prevUsers.map((user) =>
+                    String(user.id) === String(data.userId)
+                    ? { ...user, isOnline: data.isOnline}
+                    : user
+                )
+            );
+        }
+
+        socket.on("userStatusChanged", handleStatusChange);
+
+        return () => {
+            socket.off("userStatusChanged", handleStatusChange);
+        }
+    }, [socket]);
 
     return { users, setUsers };
 };

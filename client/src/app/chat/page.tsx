@@ -23,23 +23,26 @@ export default function ChatPage() {
     }, [user]);
 
 
-    const { users } = useUsers(currentUserId, isLoaded);
+    const { users } = useUsers(currentUserId, isLoaded, socket);
 
 
     useEffect(() => {
         if (!socket) return;
 
         const handleError = (error: any) => {
-            console.warn("Помилка WebSockets:", error);
+            console.warn("Помилка WebSockets (тригеримо Axios):", error);
+
             api.get('/auth/sessions').catch(() => {});
         };
 
         socket.on("auth_error", handleError);
         socket.on("connect_error", handleError);
 
+
         return () => {
             socket.off("auth_error", handleError);
             socket.off("connect_error", handleError);
+            socket.off("exception");
         };
     }, [socket]);
 

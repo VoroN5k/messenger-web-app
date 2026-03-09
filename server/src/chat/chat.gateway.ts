@@ -120,14 +120,14 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
         this.server.to(`user_${data.toId}`).emit('onMessage', {
             id: newMessage.id,
-            fromNickname: sender.nickname,
-            text: newMessage.content,
-            sentAt: newMessage.createdAt,
+            senderId: sender.nickname,
+            content: newMessage.content,
+            createdAt: newMessage.createdAt,
         });
 
         client.emit('messageSent', {
             id: newMessage.id,
-            text: newMessage.content,
+            content: newMessage.content,
             status: 'sent'
         });
 
