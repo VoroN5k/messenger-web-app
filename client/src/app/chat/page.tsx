@@ -60,7 +60,24 @@ export default function ChatPage() {
             setMessages((prev) => [...prev, newMessage]);
         });
 
-        return () => { socket.off("onMessage"); };
+        socket.on("auth_error", (error) => {
+            console.warn("Помилка авторизації WebSockets:", error);
+
+            api.get('/auth/sessions').catch(() => {
+            });
+        });
+
+        socket.on ("connect_error", (err) => {
+            if (err.message.includes("jwt") || err.message.includes('Unauthorized')) {
+                api.get('/auth/sessions').catch(() => {})
+            }
+        });
+
+        return () => {
+            socket.off("onMessage");
+            socket.off("auth_error");
+            socket.off("connect_error");
+        };
     }, [socket]);
 
     const handleSendMessage = (e: React.FormEvent) => {
@@ -99,13 +116,29 @@ export default function ChatPage() {
         fetchHistory();
     }, [selectedUser?.id]);
 
+    const handleLogout = async () => {
+        try {
+            await api.post("/auth/logout");
+        } catch (error) {
+            console.error("Failed to logout", error);
+        } finally {
+            logout();
+
+            localStorage.removeItem('auth-storage');
+
+            window.location.href = '/auth/login'
+        }
+    };
+
     return (
         <div className="flex h-screen bg-gray-100">
             {/* SIDEBAR */}
             <aside className="w-1/4 bg-white border-r border-gray-200 flex flex-col">
                 <div className="p-4 bg-blue-600 text-white flex justify-between items-center">
                     <span className="font-bold truncate">{user?.nickname}</span>
-                    <button onClick={logout}><LogOut size={18}/></button>
+                    <button onClick={handleLogout} className="hover:text-gray-300 transition-colors">
+                        <LogOut size={18}/>
+                    </button>
                 </div>
                 <div className="flex-1 overflow-y-auto">
                     {users.map((u) => (
