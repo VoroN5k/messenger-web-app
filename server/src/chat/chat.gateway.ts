@@ -8,7 +8,7 @@ import {
     WebSocketServer
 } from "@nestjs/websockets";
 import { Server, Socket } from "socket.io";
-import { UseGuards, Logger } from "@nestjs/common";
+import {UseGuards, Logger, UnauthorizedException} from "@nestjs/common";
 import { WsJwtGuard } from "./guards/ws-jwt.guard.js";
 import {PrismaService} from "../prisma/prisma.service.js";
 import {JwtService} from "@nestjs/jwt";
@@ -24,6 +24,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         private readonly prisma: PrismaService,
         private readonly jwtService: JwtService
     ) {}
+
+    private activeUsers = new Map<number, Set<string>>();
     @WebSocketServer() server: Server;
     private logger = new Logger("ChatGateway");
 
@@ -37,45 +39,60 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
             const payload = await this.jwtService.verify(token);
             const userId = payload.sub;
 
+            let userSockets = this.activeUsers.get(userId);
+            if (!userSockets) {
+                userSockets = new Set<string>();
+                this.activeUsers.set(userId, userSockets);
+            }
+
+            userSockets.add(client.id);
+
             client.data.user = {
                 id: userId,
                 nickname: payload.nickname || 'Unknown'
             };
-
             client.data.userId = userId;
 
-            const roomId = `user_${payload.sub}`;
+            const roomId = `user_${userId}`;
             client.join(roomId);
 
-            client.data.userId = userId;
+            if (userSockets.size === 1) {
+                await this.prisma.user.update({
+                    where: { id: userId },
+                    data: { isOnline: true },
+                });
 
-            await this.prisma.user.update({
-                where: { id: userId },
-                data: { isOnline: true },
-            });
+                this.server.emit(`userStatusChanged`, {userId, isOnline: true})
+                this.logger.log(`User ${userId} is now Online`)
+            }
 
-            this.server.emit('userStatusChanged', { userId, isOnline: true})
-
-            this.logger.log(`User ${payload.sub} joined room: ${roomId}`)
             this.logger.log(`User ${userId} is now Online`)
         } catch (e) {
             client.disconnect();
         }
     }
 
-    async handleDisconnect(client: Socket){
+    async handleDisconnect(client: Socket) {
         const userId = client.data.userId;
         if (userId) {
 
-            await this.prisma.user.update({
-                where: { id: userId },
-                data: { isOnline: false, lastSeen: new Date() }
-            });
+            const userSockets = this.activeUsers.get(userId);
 
+            if (userSockets) {
+                userSockets.delete(client.id);
 
-            this.server.emit('userStatusChanged', { userId, isOnline: false });
+                if (userSockets.size === 0) {
+                    this.activeUsers.delete(userId);
 
-            this.logger.log(`User ${userId} disconnected and is now Offline`);
+                    await this.prisma.user.update({
+                        where: { id: userId },
+                        data: { isOnline: false, lastSeen: new Date() }
+                    });
+
+                    this.server.emit('userStatusChanged', { userId, isOnline: false });
+                    this.logger.log(`User ${userId} disconnected and is now Offline`);
+                }
+            }
         }
     }
 
