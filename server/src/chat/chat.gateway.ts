@@ -164,4 +164,20 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.logger.log(`User ${userId} marked messages from ${data.senderId} as read`);
     }
 
+    @UseGuards(WsJwtGuard)
+    @SubscribeMessage('typing')
+    async handleTyping(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() data: {toId: number, isTyping: boolean},
+    ) {
+        const sender = client.data.user;
+        if (!sender) return;
+
+        this.server.to(`user_${data.toId}`).emit('onTyping', {
+            userId: sender.id,
+            isTyping: data.isTyping
+        })
+    }
+
+
 }
