@@ -71,7 +71,7 @@ export class AuthController {
             await this.authService.logout(refreshToken);
         }
 
-        res.clearCookie('refreshToken', { path: '/api/auth/refresh' });
+        res.clearCookie('refreshToken', { path: '/' });
         return { message: 'Logged out successfully' };
     }
 
@@ -96,8 +96,8 @@ export class AuthController {
         res.cookie('refreshToken', token, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
-            sameSite: 'strict',
-            path: '/api/auth/refresh', // Обмежуємо куку лише шляхом оновлення
+            sameSite: 'lax',
+            path: '/', // Обмежуємо куку лише шляхом оновлення
             maxAge: 7 * 24 * 60 * 60 * 1000, // 7 днів
         });
     }

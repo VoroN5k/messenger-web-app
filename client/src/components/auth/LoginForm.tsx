@@ -33,9 +33,7 @@ export const LoginForm = () => {
 
             setAuth(userFromToken, token);
 
-            setTimeout(() => {
-                router.push("/chat");
-            }, 100)
+            window.location.href = "/chat";
 
         } catch (e: any) {
             const message = e.response?.data?.message || "Помилка входу";
