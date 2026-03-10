@@ -1,10 +1,11 @@
 import { User as UserIcon, LogOut } from "lucide-react";
+import { User } from "@/src/types/auth.types";
 
 interface SidebarProps {
-    currentUser: any;
-    users: any[];
-    selectedUser: any;
-    onSelectUser: (user: any) => void;
+    currentUser: User | null;
+    users: User[];
+    selectedUser: User | null;
+    onSelectUser: (user: User) => void;
     onLogout: () => void;
 }
 
@@ -26,20 +27,17 @@ export default function Sidebar({ currentUser, users, selectedUser, onSelectUser
                         className={`p-4 border-b cursor-pointer transition-colors flex items-center gap-3 
                             ${selectedUser?.id === u.id ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
                     >
-                        {/* Аватарка з індикатором статусу */}
                         <div className="relative">
                             <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center">
                                 <UserIcon size={20} className="text-gray-500" />
                             </div>
 
-                            {/* Кружечок статусу */}
                             <span
                                 className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white 
                                 ${u.isOnline ? 'bg-green-500' : 'bg-red-500'}`}
                             />
                         </div>
 
-                        {/* Ім'я та статус текстом (можеш видалити текст статусу, якщо хочеш тільки кружечок) */}
                         <div>
                             <p className="font-medium text-gray-800">{u.nickname}</p>
                             <p className="text-xs text-gray-400">

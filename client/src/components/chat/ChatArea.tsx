@@ -1,11 +1,13 @@
 import { useState, useRef, useEffect } from "react";
 import { Send } from "lucide-react";
 import { useChat } from "@/src/hooks/useChat";
+import {User} from "@/src/types/auth.types";
+import {Socket} from "socket.io-client";
 
 interface ChatAreaProps {
     currentUserId: string | number;
-    selectedUser: any;
-    socket: any;
+    selectedUser: User | null;
+    socket: Socket | null;
 }
 
 export default function ChatArea({ currentUserId, selectedUser, socket }: ChatAreaProps) {

@@ -7,12 +7,13 @@ import { useUsers } from "@/src/hooks/useUsers";
 import api from "@/src/lib/axios";
 import Sidebar from "@/src/components/chat/SideBar";
 import ChatArea from "@/src/components/chat/ChatArea";
+import {User} from "@/src/types/auth.types";
 
 export default function ChatPage() {
     const { user, logout, setAuth } = useAuthStore();
     const socket = useSocket();
 
-    const [selectedUser, setSelectedUser] = useState<any>(null);
+    const [selectedUser, setSelectedUser] = useState<User | null>(null);
     const [isLoaded, setIsLoaded] = useState(false);
 
     const currentUserId = user?.id || user?.sub;

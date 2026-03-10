@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import api from "@/src/lib/axios";
+import {User} from "@/src/types/auth.types";
 
 export const useUsers = (currentUserId: string | number | undefined, isLoaded: boolean, socket: any) => {
-    const [users, setUsers] = useState<any[]>([]);
+    const [users, setUsers] = useState<User[]>([]);
 
     useEffect(() => {
         if (!isLoaded || !currentUserId) return;
