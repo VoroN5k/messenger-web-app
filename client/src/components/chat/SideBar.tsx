@@ -12,7 +12,6 @@ interface SidebarProps {
 export default function Sidebar({ currentUser, users, selectedUser, onSelectUser, onLogout }: SidebarProps) {
     return (
         <aside className="w-1/4 bg-white border-r border-gray-100 flex flex-col shadow-[2px_0_10px_rgba(0,0,0,0.02)] z-20">
-            {/* Світла сучасна шапка */}
             <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-white">
                 <div className="flex items-center gap-3">
                     <div className="w-10 h-10 bg-violet-100 rounded-full flex items-center justify-center text-violet-600 font-bold">
@@ -22,7 +21,7 @@ export default function Sidebar({ currentUser, users, selectedUser, onSelectUser
                 </div>
                 <button
                     onClick={onLogout}
-                    className="text-gray-400 hover:text-violet-600 hover:bg-violet-50 p-2 rounded-full transition-all"
+                    className="text-gray-400 hover:text-violet-600 hover:bg-violet-50 p-2 rounded-full transition-all cursor-pointer"
                     title="Вийти"
                 >
                     <LogOut size={18} />
@@ -36,7 +35,6 @@ export default function Sidebar({ currentUser, users, selectedUser, onSelectUser
                         <div
                             key={u.id}
                             onClick={() => onSelectUser(u)}
-                            // Flat-дизайн для списку: без ліній між юзерами, тільки виділення кольором
                             className={`px-5 py-3 cursor-pointer transition-all flex items-center gap-3 border-l-4 
                                 ${isSelected ? 'bg-violet-50 border-l-violet-500' : 'hover:bg-slate-50 border-l-transparent'}`}
                         >

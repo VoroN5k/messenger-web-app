@@ -37,16 +37,25 @@ export default function ChatArea({ currentUserId, selectedUser, socket }: ChatAr
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
 
+    const lastMessageIdRef = useRef<string | number | null>(null);
+
     const {
         messages, sendMessage, isTyping, notifyTyping,
         loadMoreMessages, hasMore, isLoadingMore
     } = useChat(selectedUser?.id, currentUserId, socket);
 
     useEffect(() => {
-        if (!isLoadingMore) {
+        if (messages.length === 0) return;
+
+        const lastMessage = messages[messages.length - 1];
+        const lastMessageId = lastMessage.id || (lastMessage.createdAt as string);
+
+        if (lastMessageId !== lastMessageIdRef.current || isTyping) {
             messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+            lastMessageIdRef.current = lastMessageId;
         }
-    }, [messages, isTyping, isLoadingMore]);
+
+    }, [messages, isTyping]);
 
     const handleScroll = async (e: UIEvent<HTMLDivElement>) => {
         const target = e.currentTarget;
@@ -156,7 +165,7 @@ export default function ChatArea({ currentUserId, selectedUser, socket }: ChatAr
                 />
                 <button
                     type="submit"
-                    className="bg-violet-500 hover:bg-violet-600 text-white p-3 h-[50px] w-[50px] rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95 disabled:opacity-50 disabled:hover:scale-100 shrink-0"
+                    className="bg-violet-500 hover:bg-violet-600 text-white p-3 h-[50px] w-[50px] rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95 disabled:opacity-50 disabled:hover:scale-100 shrink-0 cursor-pointer"
                     disabled={!inputValue.trim()}
                 >
                     <Send size={18} className="ml-0.5" />
