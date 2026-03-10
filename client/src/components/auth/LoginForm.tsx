@@ -7,6 +7,7 @@ import { useAuthStore } from "@/src/store/useAuthStore";
 import api from "@/src/lib/axios";
 import { Loader2 } from "lucide-react";
 import { jwtDecode } from "jwt-decode";
+import {AuthResponse, JwtPayload, User} from "@/src/types/auth.types";
 
 export const LoginForm = () => {
     const [isLoading, setIsLoading] = useState(false);
@@ -18,12 +19,12 @@ export const LoginForm = () => {
         setIsLoading(true);
         try {
             // На бекенді LoginDto очікує email та password
-            const response = await api.post("/auth/login", data);
+            const response = await api.post<AuthResponse>("/auth/login", data);
             const token = response.data.accessToken;
 
-            const decoded: any = jwtDecode(token);
+            const decoded: any = jwtDecode<JwtPayload>(token);
 
-            const userFromToken = {
+            const userFromToken: User ={
                 id :decoded.sub,
                 nickname: decoded.nickname,
                 email: decoded.email,

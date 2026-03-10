@@ -1,8 +1,9 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import {User} from "@/src/types/auth.types";
 
 interface AuthState {
-    user: any | null;
+    user: User | null;
     accessToken: string | null;
     _hasHydrated: boolean; // Прапорець стану
     setAuth: (user: any, token: string) => void;
