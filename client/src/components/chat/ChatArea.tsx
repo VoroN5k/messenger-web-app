@@ -12,22 +12,26 @@ export default function ChatArea({ currentUserId, selectedUser, socket }: ChatAr
     const [inputValue, setInputValue] = useState("");
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
-
-    const { messages, sendMessage } = useChat(selectedUser?.id, currentUserId, socket);
+    const { messages, sendMessage, isTyping, notifyTyping } = useChat(selectedUser?.id, currentUserId, socket);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     };
 
-
     useEffect(() => {
         scrollToBottom();
-    }, [messages]);
+    }, [messages, isTyping]);
 
     const handleSendMessage = (e: React.FormEvent) => {
         e.preventDefault();
         sendMessage(inputValue);
         setInputValue(""); // Очищаємо інпут
+    };
+
+    // НОВИЙ ОБРОБНИК: реагує на кожну букву
+    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        setInputValue(e.target.value);
+        notifyTyping();
     };
 
     if (!selectedUser) {
@@ -49,19 +53,29 @@ export default function ChatArea({ currentUserId, selectedUser, socket }: ChatAr
                     const isMe = String(msg.senderId) === String(currentUserId);
                     return (
                         <div key={idx} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                            <div className={`p-3 rounded-lg max-w-xs ${isMe ? 'bg-blue-500 text-white' : 'bg-white border'}`}>
+
+                            <div className={`p-3 rounded-lg max-w-xs break-words ${isMe ? 'bg-blue-500 text-white' : 'bg-white border'}`}>
                                 {msg.content}
                             </div>
                         </div>
                     );
                 })}
+
+                {isTyping && (
+                    <div className="flex justify-start animate-pulse">
+                        <div className="p-3 rounded-lg bg-gray-200 text-gray-500 text-sm italic shadow-sm">
+                            {selectedUser.nickname} друкує...
+                        </div>
+                    </div>
+                )}
+
                 <div ref={messagesEndRef} />
             </div>
 
             <form onSubmit={handleSendMessage} className="p-4 bg-white flex gap-2">
                 <input
                     value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
+                    onChange={handleInputChange}
                     className="flex-1 border rounded-full px-4 outline-none focus:border-blue-500"
                     placeholder="Напишіть повідомлення..."
                 />
