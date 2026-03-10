@@ -9,7 +9,7 @@ import Sidebar from "@/src/components/chat/SideBar";
 import ChatArea from "@/src/components/chat/ChatArea";
 
 export default function ChatPage() {
-    const { user, logout } = useAuthStore();
+    const { user, logout, setAuth } = useAuthStore();
     const socket = useSocket();
 
     const [selectedUser, setSelectedUser] = useState<any>(null);
@@ -17,34 +17,54 @@ export default function ChatPage() {
 
     const currentUserId = user?.id || user?.sub;
 
-
     useEffect(() => {
         if (user !== undefined) setIsLoaded(true);
     }, [user]);
 
-
     const { users } = useUsers(currentUserId, isLoaded, socket);
 
-
+    // 1. РЕЗЕРВНИЙ ЗАХИСТ
     useEffect(() => {
         if (!socket) return;
 
         const handleError = (error: any) => {
             console.warn("Помилка WebSockets (тригеримо Axios):", error);
-
             api.get('/auth/sessions').catch(() => {});
         };
 
         socket.on("auth_error", handleError);
         socket.on("connect_error", handleError);
 
-
         return () => {
             socket.off("auth_error", handleError);
             socket.off("connect_error", handleError);
-            socket.off("exception");
         };
     }, [socket]);
+
+    // SILENT REFRESH
+    useEffect(() => {
+
+        const refreshIntervalTime = 14 * 60 * 1000;
+
+        const refreshInterval = setInterval(async () => {
+            try {
+                console.log("🔄 Фонове оновлення токена...");
+
+                // Звертаємось до нашого бекенду за новим токеном
+                const response = await api.post('/auth/refresh');
+                const newAccessToken = response.data.accessToken;
+
+                setAuth(user, newAccessToken);
+
+                console.log("Token has been refreshed silently");
+            } catch (error) {
+                console.error("Error while refreshing token:", error);
+            }
+        }, refreshIntervalTime);
+
+        // Очищаємо інтервал при виході з чату
+        return () => clearInterval(refreshInterval);
+    }, [user, setAuth]);
 
     const handleLogout = async () => {
         try {
@@ -71,7 +91,7 @@ export default function ChatPage() {
             />
 
             <ChatArea
-                currentUserId={currentUserId!} // Додав "!", щоб задовольнити TS, бо якщо дійде сюди, юзер точно є
+                currentUserId={currentUserId!}
                 selectedUser={selectedUser}
                 socket={socket}
             />
