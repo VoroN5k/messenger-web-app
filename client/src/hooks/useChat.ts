@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import api from "@/src/lib/axios";
+import {Message} from "@/src/types/chat.types";
 
 
 export const useChat = (selectedUserId: string | number | undefined, currentUserId: string | number | undefined, socket: any) => {
-    const [messages, setMessages] = useState<any[]>([]);
+    const [messages, setMessages] = useState<Message[]>([]);
     const [isTyping, setIsTyping] = useState(false);
 
     const [hasMore, setHasMore] = useState(true);
@@ -86,7 +87,7 @@ export const useChat = (selectedUserId: string | number | undefined, currentUser
     }, [socket, selectedUserId]);
 
     const sendMessage = useCallback((content: string) => {
-        if (!content.trim() || !selectedUserId || !socket) return;
+        if (!content.trim() || !selectedUserId || !currentUserId || !socket) return;
 
         socket.emit("sendMessage", {
             toId: selectedUserId,

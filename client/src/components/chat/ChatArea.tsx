@@ -1,7 +1,8 @@
-import { useState, useRef, useEffect, UIEvent } from "react";
-import { Send, Loader2 } from "lucide-react"; // Додав Loader2 для спінера
+import React, { useState, useRef, useEffect, UIEvent } from "react";
+import { Send, Loader2 } from "lucide-react";
 import { useChat } from "@/src/hooks/useChat";
 import { User } from "@/src/types/auth.types";
+import { Message } from "@/src/types/chat.types";
 import { Socket } from "socket.io-client";
 
 interface ChatAreaProps {
@@ -10,20 +11,37 @@ interface ChatAreaProps {
     socket: Socket | null;
 }
 
+const formatTime = (dateString: string | Date) => {
+    const date = new Date(dateString);
+    return date.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
+};
+
+const formatDateSeparator = (dateString: string | Date) => {
+    const date = new Date(dateString);
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    if (date.toDateString() === today.toDateString()) {
+        return "Сьогодні";
+    } else if (date.toDateString() === yesterday.toDateString()) {
+        return "Вчора";
+    } else {
+        return date.toLocaleDateString('uk-UA', { day: 'numeric', month: 'long' });
+    }
+};
+
 export default function ChatArea({ currentUserId, selectedUser, socket }: ChatAreaProps) {
     const [inputValue, setInputValue] = useState("");
 
-    // 1. ДВА РЕФИ: один для низу чату, інший для самого контейнера зі скролом
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-    // 2. ДІСТАЄМО НОВІ ФУНКЦІЇ З ХУКА (loadMoreMessages, hasMore, isLoadingMore)
     const {
         messages, sendMessage, isTyping, notifyTyping,
         loadMoreMessages, hasMore, isLoadingMore
     } = useChat(selectedUser?.id, currentUserId, socket);
 
-    // Скролимо вниз ТІЛЬКИ коли не підвантажуємо стару історію
     useEffect(() => {
         if (!isLoadingMore) {
             messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -32,14 +50,9 @@ export default function ChatArea({ currentUserId, selectedUser, socket }: ChatAr
 
     const handleScroll = async (e: UIEvent<HTMLDivElement>) => {
         const target = e.currentTarget;
-
-        // Якщо доскролили до верху (scrollTop <= 1)
         if (target.scrollTop <= 1 && hasMore && !isLoadingMore) {
-            // Запам'ятовуємо висоту до завантаження
             const previousScrollHeight = target.scrollHeight;
-
             await loadMoreMessages();
-
             requestAnimationFrame(() => {
                 const newScrollHeight = target.scrollHeight;
                 target.scrollTop = newScrollHeight - previousScrollHeight;
@@ -60,44 +73,73 @@ export default function ChatArea({ currentUserId, selectedUser, socket }: ChatAr
 
     if (!selectedUser) {
         return (
-            <div className="flex-1 flex items-center justify-center text-gray-400">
+            <div className="flex-1 flex items-center justify-center bg-slate-50 text-slate-400 font-medium">
                 Оберіть когось, щоб почати спілкування
             </div>
         );
     }
 
     return (
-        <main className="flex-1 flex flex-col">
-            <header className="p-4 bg-white border-b font-bold">
-                Чат з {selectedUser.nickname}
+        <main className="flex-1 flex flex-col bg-slate-50">
+            {/* Шапка чату */}
+            <header className="px-6 py-4 bg-white border-b border-gray-100 flex items-center justify-between shadow-sm z-10">
+                <div>
+                    <h2 className="font-semibold text-gray-800 text-lg leading-tight">{selectedUser.nickname}</h2>
+                    <p className={`text-xs font-medium mt-0.5 ${selectedUser.isOnline ? 'text-violet-500' : 'text-slate-400'}`}>
+                        {selectedUser.isOnline ? 'В мережі' : 'Офлайн'}
+                    </p>
+                </div>
             </header>
 
             <div
                 ref={scrollContainerRef}
                 onScroll={handleScroll}
-                className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50"
+                className="flex-1 overflow-y-auto px-6 py-6 space-y-6"
             >
                 {isLoadingMore && (
                     <div className="flex justify-center py-2">
-                        <Loader2 className="w-5 h-5 animate-spin text-blue-500" />
+                        <Loader2 className="w-5 h-5 animate-spin text-violet-400" />
                     </div>
                 )}
 
-                {messages.map((msg, idx) => {
+                {messages.map((msg: Message, idx: number) => {
                     const isMe = String(msg.senderId) === String(currentUserId);
+
+                    const showDateSeparator = idx === 0 ||
+                        new Date(msg.createdAt).toDateString() !== new Date(messages[idx - 1].createdAt).toDateString();
+
                     return (
-                        <div key={msg.id || idx} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                            <div className={`p-3 rounded-lg max-w-xs break-words ${isMe ? 'bg-blue-500 text-white' : 'bg-white border'}`}>
-                                {msg.content}
+                        <React.Fragment key={msg.id ? `msg-${msg.id}` : `temp-${idx}-${msg.createdAt}`}>
+                            {showDateSeparator && (
+                                <div className="flex justify-center my-6">
+                                    <span className="bg-violet-100/50 text-violet-600 font-medium text-xs px-4 py-1.5 rounded-full">
+                                        {formatDateSeparator(msg.createdAt)}
+                                    </span>
+                                </div>
+                            )}
+
+                            <div className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                                <div className={`px-4 py-2.5 max-w-md break-words flex flex-col shadow-sm
+                                    ${isMe
+                                    ? 'bg-indigo-500 text-white rounded-2xl rounded-br-sm'
+                                    : 'bg-white border border-slate-200 text-slate-700 rounded-2xl rounded-bl-sm'}`}
+                                >
+                                    <span className="leading-relaxed">{msg.content}</span>
+
+                                    <span className={`text-[10px] self-end mt-1 font-medium select-none
+                                        ${isMe ? 'text-indigo-100' : 'text-slate-400'}`}>
+                                        {formatTime(msg.createdAt)}
+                                    </span>
+                                </div>
                             </div>
-                        </div>
+                        </React.Fragment>
                     );
                 })}
 
                 {isTyping && (
                     <div className="flex justify-start animate-pulse">
-                        <div className="p-3 rounded-lg bg-gray-200 text-gray-500 text-sm italic shadow-sm">
-                            {selectedUser.nickname} друкує...
+                        <div className="px-4 py-2.5 rounded-2xl rounded-bl-sm bg-white border border-gray-100 text-violet-400 text-sm italic shadow-sm">
+                            <span className="font-medium">{selectedUser.nickname}</span> друкує...
                         </div>
                     </div>
                 )}
@@ -105,15 +147,19 @@ export default function ChatArea({ currentUserId, selectedUser, socket }: ChatAr
                 <div ref={messagesEndRef} />
             </div>
 
-            <form onSubmit={handleSendMessage} className="p-4 bg-white flex gap-2">
+            <form onSubmit={handleSendMessage} className="p-4 bg-white border-t border-gray-100 flex gap-3 items-end">
                 <input
                     value={inputValue}
                     onChange={handleInputChange}
-                    className="flex-1 border rounded-full px-4 outline-none focus:border-blue-500"
+                    className="flex-1 bg-slate-50 border-transparent rounded-2xl px-5 py-3 text-gray-700 outline-none focus:bg-white focus:border-violet-200 focus:ring-4 focus:ring-violet-50 transition-all"
                     placeholder="Напишіть повідомлення..."
                 />
-                <button type="submit" className="bg-blue-600 text-white p-2 rounded-full disabled:opacity-50" disabled={!inputValue.trim()}>
-                    <Send size={20}/>
+                <button
+                    type="submit"
+                    className="bg-violet-500 hover:bg-violet-600 text-white p-3 h-[50px] w-[50px] rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95 disabled:opacity-50 disabled:hover:scale-100 shrink-0"
+                    disabled={!inputValue.trim()}
+                >
+                    <Send size={18} className="ml-0.5" />
                 </button>
             </form>
         </main>
