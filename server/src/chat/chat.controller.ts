@@ -1,35 +1,26 @@
-import { Controller, Get, Param, ParseIntPipe, Req, UseGuards } from "@nestjs/common";
+import {Controller, Get, Param, ParseIntPipe, Query, Req, UseGuards} from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard.js";
 import { PrismaService } from "../prisma/prisma.service.js";
+import {ChatService} from "./chat.service.js";
 
 @Controller('chat')
 export class ChatController {
 
-    constructor(private readonly prisma: PrismaService) {}
+    constructor(private readonly chatService: ChatService) {}
 
     @Get('history/:withUserId')
     @UseGuards(JwtAuthGuard)
     async getChatHistory(
         @Req() req,
         @Param('withUserId', ParseIntPipe) withUserId: number,
+        @Query('cursor') cursor?: string,
     ) {
 
         const currentUserId = req.user.id || req.user.sub;
 
-        return this.prisma.message.findMany({
-            where: {
-                OR: [
-                    { senderId: currentUserId, receiverId: withUserId },
-                    { senderId: withUserId, receiverId: currentUserId },
-                ],
-            },
-            include: {
-                sender: {
-                    select: { nickname: true, id: true }
-                }
-            },
-            orderBy: { createdAt: 'asc' },
-            take: 50,
-        });
+        const parsedCursor = cursor ? parseInt(cursor, 10) : undefined;
+
+        return this.chatService.getChatHistory(currentUserId, withUserId, parsedCursor);
+
     }
 }

@@ -1,45 +1,76 @@
-import {useState, useEffect, useCallback, useRef} from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import api from "@/src/lib/axios";
+
 
 export const useChat = (selectedUserId: string | number | undefined, currentUserId: string | number | undefined, socket: any) => {
     const [messages, setMessages] = useState<any[]>([]);
-
     const [isTyping, setIsTyping] = useState(false);
-    const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+    const [hasMore, setHasMore] = useState(true);
+    const [isLoadingMore, setIsLoadingMore] = useState(false);
+
+    const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
     useEffect(() => {
         if (!selectedUserId) {
             setMessages([]);
             setIsTyping(false);
+            setHasMore(true);
             return;
         }
 
-        const fetchHistory = async () => {
+        const fetchInitialHistory = async () => {
             try {
+
                 const res = await api.get(`/chat/history/${selectedUserId}`);
                 setMessages(res.data);
+
+                if (res.data.length < 20) {
+                    setHasMore(false);
+                } else {
+                    setHasMore(true);
+                }
             } catch (error) {
-                console.error("Failed to fetch chat history");
+                console.error("Failed to fetch chat history", error);
             }
         };
 
-        fetchHistory();
+        fetchInitialHistory();
     }, [selectedUserId]);
 
+    const loadMoreMessages = useCallback(async () => {
+        if (!selectedUserId || isLoadingMore || !hasMore || messages.length === 0) return;
+
+        setIsLoadingMore(true);
+        try {
+            const oldestMessageId = messages[0].id;
+
+            const res = await api.get(`/chat/history/${selectedUserId}?cursor=${oldestMessageId}`);
+            const olderMessages = res.data;
+
+            if (olderMessages.length < 20) {
+                setHasMore(false);
+            }
+
+            setMessages((prev) => [...olderMessages, ...prev]);
+        } catch (error) {
+            console.error("Failed to load older messages", error);
+        } finally {
+            setIsLoadingMore(false);
+        }
+    }, [selectedUserId, isLoadingMore, hasMore, messages]);
 
     useEffect(() => {
         if (!socket) return;
 
         const handleNewMessage = (newMessage: any) => {
             setMessages((prev) => [...prev, newMessage]);
-
-            if (String(newMessage.id) === String(selectedUserId)){
+            if (String(newMessage.senderId) === String(selectedUserId)) {
                 setIsTyping(false);
             }
         };
 
-        const handleTypingEvent = (data: { userId: number | string, isTyping: boolean}) => {
+        const handleTypingEvent = (data: { userId: number | string, isTyping: boolean }) => {
             if (String(data.userId) === String(selectedUserId)) {
                 setIsTyping(data.isTyping);
             }
@@ -54,7 +85,6 @@ export const useChat = (selectedUserId: string | number | undefined, currentUser
         };
     }, [socket, selectedUserId]);
 
-
     const sendMessage = useCallback((content: string) => {
         if (!content.trim() || !selectedUserId || !socket) return;
 
@@ -62,7 +92,6 @@ export const useChat = (selectedUserId: string | number | undefined, currentUser
             toId: selectedUserId,
             content: content,
         });
-
 
         setMessages((prev) => [...prev, {
             content: content,
@@ -80,10 +109,19 @@ export const useChat = (selectedUserId: string | number | undefined, currentUser
 
         if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
 
-        typingTimeoutRef.current = setInterval(() => {
+        typingTimeoutRef.current = setTimeout(() => {
             socket.emit("typing", { toId: selectedUserId, isTyping: false });
         }, 2000);
     }, [socket, selectedUserId]);
 
-    return { messages, sendMessage, isTyping, notifyTyping };
+
+    return {
+        messages,
+        sendMessage,
+        isTyping,
+        notifyTyping,
+        loadMoreMessages,
+        hasMore,
+        isLoadingMore
+    };
 };

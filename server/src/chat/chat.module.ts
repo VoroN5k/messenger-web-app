@@ -4,6 +4,7 @@ import { JwtModule } from "@nestjs/jwt";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { PrismaModule } from "../prisma/prisma.module.js";
 import {ChatController} from "./chat.controller.js";
+import {ChatService} from "./chat.service.js";
 
 @Module({
     imports: [
@@ -18,6 +19,6 @@ import {ChatController} from "./chat.controller.js";
         })
     ],
     controllers: [ChatController],
-    providers: [ChatGateway],
+    providers: [ChatGateway, ChatService],
 })
 export class ChatModule {}

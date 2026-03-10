@@ -16,7 +16,7 @@ export default function ChatPage() {
     const [selectedUser, setSelectedUser] = useState<User | null>(null);
     const [isLoaded, setIsLoaded] = useState(false);
 
-    const currentUserId = user?.id || user?.sub;
+    const currentUserId = user?.id;
 
     useEffect(() => {
         if (user !== undefined) setIsLoaded(true);

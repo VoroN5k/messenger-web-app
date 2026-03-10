@@ -25,7 +25,7 @@ export const LoginForm = () => {
             const decoded: any = jwtDecode<JwtPayload>(token);
 
             const userFromToken: User ={
-                id :decoded.sub,
+                id: decoded.sub,
                 nickname: decoded.nickname,
                 email: decoded.email,
                 role: decoded.role
