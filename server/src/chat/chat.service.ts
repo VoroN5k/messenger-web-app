@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import {ForbiddenException, Injectable, NotFoundException} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 @Injectable()
@@ -30,6 +30,29 @@ export class ChatService {
 
 
         return messages.reverse();
+    }
+
+    async softDeleteMessage(messageId: number, userId: number){
+        const message = await this.prisma.message.findUnique({
+            where: { id: messageId },
+        });
+
+        if (!message) {
+            throw new NotFoundException('Message not found');
+        }
+
+        if (message.senderId !== userId) {
+            throw new ForbiddenException('You can only delete your own messages');
+        }
+
+        if (message.deletedAt){
+            return message;
+        }
+
+        return this.prisma.message.update({
+            where: { id: messageId },
+            data: { deletedAt: new Date() },
+        });
     }
 
 

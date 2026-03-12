@@ -60,6 +60,7 @@ model Message {
   content     String  @db.Text
   createdAt   DateTime @default(now())
   isRead      Boolean @default(false)
+  deletedAt   DateTime?
 
   // Relations with sender
   sender      User   @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)

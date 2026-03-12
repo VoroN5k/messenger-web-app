@@ -96,7 +96,7 @@ export const useChat = (
             readerId: number | string;
             senderId: number | string;
         }) => {
-            if (String(data.readerId) === String(currentUserId)) {
+            if (String(data.readerId) === String(selectedUserId)) {
                 setMessages((prev) =>
                     prev.map((msg) =>
                         String(msg.senderId) === String(currentUserId)
