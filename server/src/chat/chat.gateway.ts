@@ -68,27 +68,55 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     async handleDisconnect(client: Socket) {
         const userId = client.data.userId;
-        if (userId) {
+        if (!userId) return;
 
-            const userSockets = this.activeUsers.get(userId);
+        const userSockets = this.activeUsers.get(userId);
+        if (userSockets) {
+            userSockets.delete(client.id);
 
-            if (userSockets) {
-                userSockets.delete(client.id);
+            if (userSockets.size === 0) {
+                this.activeUsers.delete(userId);
 
-                if (userSockets.size === 0) {
-                    this.activeUsers.delete(userId);
+                await this.prisma.user.update({
+                    where: { id: userId },
+                    data: { isOnline: false, lastSeen: new Date() }
+                });
 
-                    await this.prisma.user.update({
-                        where: { id: userId },
-                        data: { isOnline: false, lastSeen: new Date() }
-                    });
-
-                    this.server.emit('userStatusChanged', { userId, isOnline: false });
-                    this.logger.log(`User ${userId} disconnected and is now Offline`);
-                }
+                this.server.emit('userStatusChanged', { userId, isOnline: false });
+                this.logger.log(`User ${userId} disconnected and is now Offline`);
             }
         }
     }
+
+    @SubscribeMessage('updateToken')
+    async handleUpdateToken(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() data: { token: string},
+    ) {
+        try {
+            if (!data?.token) throw new Error("No token provided");
+
+            const payload = this.jwtService.verify(data.token);
+
+            if (payload.sub !== client.data.userId) {
+                this.logger.warn(
+                    `Token substitution attempt: socket userId=${client.data.userId}, token sub=${payload.sub}`
+                )
+                client.disconnect();
+                return;
+            }
+
+            client.data.currentToken = data.token;
+            client.data.user = {id : payload.sub, nickname: payload.nickname};
+
+            this.logger.log(`Token refreshed for user ${payload.sub}`);
+            client.emit('tokenUpdated', { success: true });
+        } catch (e) {
+            this.logger.warn(`Token update failed for socket ${client.id}: ${e.message}`)
+            client.emit('tokenUpdated', { success: false });
+        }
+    }
+
 
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('sendMessage')
