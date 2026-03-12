@@ -103,6 +103,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         @MessageBody() data: { toId: number; content: string },
     ) {
 
+        if (!data?.content?.trim()) return;
+        if (!data?.toId || data.toId === client.data.user.id) return;
+        if (data.content.length > 4000) return;
+
         const sender = client.data.user;
 
         if (!sender || !sender.id) {
