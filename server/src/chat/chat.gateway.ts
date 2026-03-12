@@ -155,6 +155,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
             content: newMessage.content,
             createdAt: newMessage.createdAt,
             senderId: sender.id,
+            isRead: false,
         });
 
         this.logger.log(`User ${sender.id} → User ${data.toId}: "${data.content.slice(0, 50)}"`);

@@ -86,7 +86,7 @@ export const useChat = (
                 prev.map((msg) =>
                     !msg.id && msg.content === confirmedMsg.content &&
                     String(msg.senderId) === String(confirmedMsg.senderId)
-                        ? confirmedMsg
+                        ? { isRead: msg.isRead ?? false, ...confirmedMsg }
                         : msg,
                 ),
             );
@@ -96,7 +96,7 @@ export const useChat = (
             readerId: number | string;
             senderId: number | string;
         }) => {
-            if (String(data.senderId) === String(currentUserId)) {
+            if (String(data.readerId) === String(currentUserId)) {
                 setMessages((prev) =>
                     prev.map((msg) =>
                         String(msg.senderId) === String(currentUserId)
