@@ -117,7 +117,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
     }
 
-
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('sendMessage')
     async handleMessage(
@@ -154,10 +153,11 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         client.emit('messageSent', {
             id: newMessage.id,
             content: newMessage.content,
-            status: 'sent'
+            createdAt: newMessage.createdAt,
+            senderId: sender.id,
         });
 
-        this.logger.log(`User ${sender.id} sent message to User ${data.toId}: "${data.content}"`)
+        this.logger.log(`User ${sender.id} → User ${data.toId}: "${data.content.slice(0, 50)}"`);
     }
 
     @UseGuards(WsJwtGuard)

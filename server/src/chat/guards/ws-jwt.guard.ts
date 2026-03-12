@@ -14,16 +14,17 @@ export class WsJwtGuard implements CanActivate {
     ) {}
 
     async canActivate(context: ExecutionContext): Promise<boolean> {
-
         const client: Socket = context.switchToWs().getClient();
 
         try {
+            // Пріоритет: client.data.currentToken
+            // Fallback: handshake token
+           const token =
+               client.data.currentToken ||
+               client.handshake.auth?.token ||
+               client.handshake.query?.token;
 
-            const token = client.handshake.auth?.token || client.handshake.query?.token;
-
-            if (!token) {
-                throw new WsException("Unauthorized: No token provided");
-            }
+            if (!token) throw new WsException("Unauthorized: No token provided");
 
             // Перевіряємо токен
             const payload = this.jwtService.verify(token);
@@ -32,9 +33,7 @@ export class WsJwtGuard implements CanActivate {
                 where: { id: payload.sub },
             });
 
-            if (!user) {
-                throw new WsException("Unauthorized: User not found");
-            }
+            if (!user) throw new WsException("Unauthorized: User not found");
 
             client.data.user = user;
             return true;
