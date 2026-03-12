@@ -15,11 +15,13 @@ import { LoginDto } from './dto/login.dto.js';
 import type { Request, Response } from 'express';
 import { JwtAuthGuard } from './guards/jwt-auth.guard.js';
 import { CurrentUser } from './decorators/current-user.decorator.js';
+import { Throttle, SkipThrottle } from '@nestjs/throttler';
 
 @Controller('auth')
 export class AuthController {
     constructor(private readonly authService: AuthService) {}
 
+    @Throttle({ default: { ttl: 60000, limit: 3 } })
     @Post('register')
     async register(
         @Body() dto: RegisterDto,
@@ -33,6 +35,7 @@ export class AuthController {
         return { accessToken: tokens.accessToken };
     }
 
+    @Throttle({ default: { ttl: 60000, limit: 5 } })
     @Post('login')
     async login(
         @Body() dto: LoginDto,
@@ -46,6 +49,7 @@ export class AuthController {
         return { accessToken: tokens.accessToken };
     }
 
+    @SkipThrottle()
     @Post('refresh')
     async refresh(
         @Req() req: Request,
