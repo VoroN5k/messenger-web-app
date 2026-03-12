@@ -55,7 +55,8 @@ export default function ChatPage() {
                 const response = await api.post('/auth/refresh');
                 const newAccessToken = response.data.accessToken;
 
-                setAuth(user, newAccessToken);
+                const { setAuth, user: currentUser } = useAuthStore.getState()
+                setAuth(currentUser, newAccessToken)
 
                 console.log("Token has been refreshed silently");
             } catch (error) {
