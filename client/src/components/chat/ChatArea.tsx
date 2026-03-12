@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, UIEvent } from "react";
-import { Send, Loader2, Trash2 } from "lucide-react";
+import { Send, Loader2, Trash2, Pencil, Check, X } from "lucide-react";
 import { useChat } from "@/src/hooks/useChat";
 import { User } from "@/src/types/auth.types";
 import { Message } from "@/src/types/chat.types";
@@ -11,9 +11,13 @@ interface ChatAreaProps {
     socket: Socket | null;
 }
 
+const EDIT_WINDOW_MS = 15 * 60 * 1000;
+
 const formatTime = (dateString: string | Date) => {
-    const date = new Date(dateString);
-    return date.toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" });
+    return new Date(dateString).toLocaleTimeString("uk-UA", {
+        hour: "2-digit",
+        minute: "2-digit",
+    });
 };
 
 const formatDateSeparator = (dateString: string | Date) => {
@@ -54,8 +58,13 @@ const MessageStatus = ({ message }: { message: Message }) => {
 
 export default function ChatArea({ currentUserId, selectedUser, socket }: ChatAreaProps) {
     const [inputValue, setInputValue] = useState("");
-    const [hoveredMessageId, setHoveredMessageId] = useState<number | string | null>(null);
+    const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
     const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+
+    // Стан редагування
+    const [editingMessageId, setEditingMessageId] = useState<number | null>(null);
+    const [editingContent, setEditingContent] = useState("");
+    const editInputRef = useRef<HTMLInputElement>(null);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -65,6 +74,7 @@ export default function ChatArea({ currentUserId, selectedUser, socket }: ChatAr
         messages,
         sendMessage,
         deleteMessage,
+        editMessage,
         isTyping,
         notifyTyping,
         loadMoreMessages,
@@ -72,6 +82,17 @@ export default function ChatArea({ currentUserId, selectedUser, socket }: ChatAr
         isLoadingMore,
     } = useChat(selectedUser?.id, currentUserId, socket);
 
+    // Фокус на поле редагування при відкритті
+    useEffect(() => {
+        if (editingMessageId !== null) {
+            editInputRef.current?.focus();
+            // Курсор в кінець рядка
+            const len = editInputRef.current?.value.length ?? 0;
+            editInputRef.current?.setSelectionRange(len, len);
+        }
+    }, [editingMessageId]);
+
+    // Скрол до низу при нових повідомленнях
     useEffect(() => {
         if (messages.length === 0) return;
         const lastMessage = messages[messages.length - 1];
@@ -83,12 +104,23 @@ export default function ChatArea({ currentUserId, selectedUser, socket }: ChatAr
         }
     }, [messages, isTyping]);
 
+    // Закриваємо підтвердження видалення кліком поза ним
     useEffect(() => {
         if (confirmDeleteId === null) return;
         const handler = () => setConfirmDeleteId(null);
         document.addEventListener("click", handler);
         return () => document.removeEventListener("click", handler);
     }, [confirmDeleteId]);
+
+    // Скасування редагування по Escape
+    useEffect(() => {
+        if (editingMessageId === null) return;
+        const handler = (e: KeyboardEvent) => {
+            if (e.key === "Escape") cancelEdit();
+        };
+        document.addEventListener("keydown", handler);
+        return () => document.removeEventListener("keydown", handler);
+    }, [editingMessageId]);
 
     const handleScroll = async (e: UIEvent<HTMLDivElement>) => {
         const target = e.currentTarget;
@@ -112,6 +144,7 @@ export default function ChatArea({ currentUserId, selectedUser, socket }: ChatAr
         notifyTyping();
     };
 
+    // ─── Delete ───────────────────────────────────────────────────────────────
     const handleDeleteClick = (e: React.MouseEvent, messageId: number) => {
         e.stopPropagation();
         setConfirmDeleteId(messageId);
@@ -122,6 +155,40 @@ export default function ChatArea({ currentUserId, selectedUser, socket }: ChatAr
         deleteMessage(messageId);
         setConfirmDeleteId(null);
     };
+
+    // ─── Edit ─────────────────────────────────────────────────────────────────
+    const startEdit = (msg: Message) => {
+        if (!msg.id || msg.deletedAt) return;
+
+        // Перевіряємо вікно на клієнті (доп. перевірка є на сервері)
+        const ageMs = Date.now() - new Date(msg.createdAt).getTime();
+        if (ageMs > EDIT_WINDOW_MS) return;
+
+        setEditingMessageId(msg.id);
+        setEditingContent(msg.content);
+        setConfirmDeleteId(null); // закрити підтвердження видалення якщо відкрите
+    };
+
+    const cancelEdit = () => {
+        setEditingMessageId(null);
+        setEditingContent("");
+    };
+
+    const submitEdit = (messageId: number) => {
+        const trimmed = editingContent.trim();
+        if (!trimmed) return;
+
+        editMessage(messageId, trimmed);
+        cancelEdit();
+    };
+
+    const handleEditKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, messageId: number) => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            submitEdit(messageId);
+        }
+    };
+    // ─────────────────────────────────────────────────────────────────────────
 
     if (!selectedUser) {
         return (
@@ -135,7 +202,9 @@ export default function ChatArea({ currentUserId, selectedUser, socket }: ChatAr
         <main className="flex-1 flex flex-col bg-slate-50">
             <header className="px-6 py-4 bg-white border-b border-gray-100 flex items-center justify-between shadow-sm z-10">
                 <div>
-                    <h2 className="font-semibold text-gray-800 text-lg leading-tight">{selectedUser.nickname}</h2>
+                    <h2 className="font-semibold text-gray-800 text-lg leading-tight">
+                        {selectedUser.nickname}
+                    </h2>
                     <p className={`text-xs font-medium mt-0.5 ${selectedUser.isOnline ? "text-violet-500" : "text-slate-400"}`}>
                         {selectedUser.isOnline ? "В мережі" : "Офлайн"}
                     </p>
@@ -156,9 +225,15 @@ export default function ChatArea({ currentUserId, selectedUser, socket }: ChatAr
                 {messages.map((msg: Message, idx: number) => {
                     const isMe = String(msg.senderId) === String(currentUserId);
                     const isDeleted = !!msg.deletedAt;
+                    const isEdited = !!msg.updatedAt && !isDeleted;
                     const msgKey = msg.id ? `msg-${msg.id}` : `temp-${idx}-${msg.createdAt}`;
                     const isHovered = hoveredMessageId === msgKey;
                     const isConfirming = msg.id !== undefined && confirmDeleteId === msg.id;
+                    const isEditing = msg.id !== undefined && editingMessageId === msg.id;
+
+                    // Чи дозволено редагувати (15 хв вікно, тільки свої, не видалені)
+                    const ageMs = Date.now() - new Date(msg.createdAt).getTime();
+                    const canEdit = isMe && !isDeleted && !!msg.id && ageMs <= EDIT_WINDOW_MS;
 
                     const showDateSeparator =
                         idx === 0 ||
@@ -178,15 +253,13 @@ export default function ChatArea({ currentUserId, selectedUser, socket }: ChatAr
                             <div
                                 className={`flex items-end gap-2 ${isMe ? "justify-end" : "justify-start"}`}
                                 onMouseEnter={() => setHoveredMessageId(msgKey)}
-                                onMouseLeave={() => {
-                                    setHoveredMessageId(null);
-                                }}
+                                onMouseLeave={() => setHoveredMessageId(null)}
+                                onDoubleClick={() => canEdit && startEdit(msg)}
                             >
-                                {/* Кнопка видалення — тільки для власних непорожніх повідомлень */}
-                                {isMe && !isDeleted && msg.id && (
-                                    <div className={`relative transition-opacity duration-150 ${isHovered || isConfirming ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
+                                {/* ── Панель дій (delete + edit) ── */}
+                                {isMe && !isDeleted && msg.id && !isEditing && (
+                                    <div className={`flex items-center gap-1 transition-opacity duration-150 ${isHovered || isConfirming ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
                                         {isConfirming ? (
-                                            // Мінімальний попап підтвердження
                                             <div
                                                 className="flex items-center gap-1.5 bg-white border border-red-100 rounded-xl px-2.5 py-1.5 shadow-md"
                                                 onClick={(e) => e.stopPropagation()}
@@ -206,41 +279,90 @@ export default function ChatArea({ currentUserId, selectedUser, socket }: ChatAr
                                                 </button>
                                             </div>
                                         ) : (
-                                            <button
-                                                onClick={(e) => handleDeleteClick(e, msg.id!)}
-                                                className="p-1.5 rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all cursor-pointer"
-                                                title="Видалити повідомлення"
-                                            >
-                                                <Trash2 size={14} />
-                                            </button>
+                                            <>
+                                                {canEdit && (
+                                                    <button
+                                                        onClick={() => startEdit(msg)}
+                                                        className="p-1.5 rounded-full text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 transition-all cursor-pointer"
+                                                        title="Редагувати (або двічі клацніть)"
+                                                    >
+                                                        <Pencil size={14} />
+                                                    </button>
+                                                )}
+                                                <button
+                                                    onClick={(e) => handleDeleteClick(e, msg.id!)}
+                                                    className="p-1.5 rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all cursor-pointer"
+                                                    title="Видалити повідомлення"
+                                                >
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </>
                                         )}
                                     </div>
                                 )}
 
-                                {/* Бульбашка повідомлення */}
+                                {/* ── Бульбашка повідомлення ── */}
                                 <div
                                     className={`px-4 py-2.5 max-w-md break-words flex flex-col shadow-sm
                                         ${isMe
                                         ? "bg-indigo-500 text-white rounded-2xl rounded-br-sm"
                                         : "bg-white border border-slate-200 text-slate-700 rounded-2xl rounded-bl-sm"
                                     }
-                                        ${isDeleted ? "opacity-60" : ""}`}
+                                        ${isDeleted ? "opacity-60" : ""}
+                                        ${isEditing ? "ring-2 ring-indigo-300 ring-offset-1" : ""}
+                                    `}
                                 >
                                     {isDeleted ? (
-                                        // Плейсхолдер видаленого повідомлення
                                         <span className={`text-sm italic ${isMe ? "text-indigo-200" : "text-slate-400"}`}>
                                             Повідомлення видалено
                                         </span>
+                                    ) : isEditing ? (
+                                        // ── Inline edit input ──
+                                        <div className="flex items-center gap-2 min-w-[200px]">
+                                            <input
+                                                ref={editInputRef}
+                                                value={editingContent}
+                                                onChange={(e) => setEditingContent(e.target.value)}
+                                                onKeyDown={(e) => handleEditKeyDown(e, msg.id!)}
+                                                maxLength={4000}
+                                                className="flex-1 bg-transparent text-white placeholder-indigo-300 outline-none text-sm leading-relaxed min-w-0"
+                                                placeholder="Введіть текст..."
+                                            />
+                                            <div className="flex items-center gap-1 shrink-0">
+                                                <button
+                                                    onClick={() => submitEdit(msg.id!)}
+                                                    className="p-1 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors cursor-pointer"
+                                                    title="Зберегти (Enter)"
+                                                >
+                                                    <Check size={13} />
+                                                </button>
+                                                <button
+                                                    onClick={cancelEdit}
+                                                    className="p-1 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors cursor-pointer"
+                                                    title="Скасувати (Esc)"
+                                                >
+                                                    <X size={13} />
+                                                </button>
+                                            </div>
+                                        </div>
                                     ) : (
                                         <span className="leading-relaxed">{msg.content}</span>
                                     )}
 
-                                    <div className="flex items-center gap-1 self-end mt-1">
-                                        <span className={`text-[10px] font-medium select-none leading-none ${isMe ? "text-indigo-200" : "text-slate-400"}`}>
-                                            {formatTime(msg.createdAt)}
-                                        </span>
-                                        {isMe && !isDeleted && <MessageStatus message={msg} />}
-                                    </div>
+                                    {/* ── Час + мітка "(ред.)" + статус ── */}
+                                    {!isEditing && (
+                                        <div className="flex items-center gap-1 self-end mt-1">
+                                            {isEdited && (
+                                                <span className={`text-[10px] select-none leading-none italic ${isMe ? "text-indigo-200" : "text-slate-400"}`}>
+                                                    ред.
+                                                </span>
+                                            )}
+                                            <span className={`text-[10px] font-medium select-none leading-none ${isMe ? "text-indigo-200" : "text-slate-400"}`}>
+                                                {formatTime(msg.createdAt)}
+                                            </span>
+                                            {isMe && !isDeleted && <MessageStatus message={msg} />}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </React.Fragment>

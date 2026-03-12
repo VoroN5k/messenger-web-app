@@ -117,6 +117,20 @@ export const useChat = (
             );
         }
 
+        const handleMessageEdited = (data: {
+            messageId: number;
+            content: string;
+            updatedAt: string;
+        }) => {
+            setMessages((prev) =>
+                prev.map((msg) =>
+                    msg.id === data.messageId
+                        ? { ...msg, content: data.content, updatedAt: data.updatedAt }
+                        : msg
+                )
+             );
+        };
+
         const handleTypingEvent = (data: {
             userId: number | string,
             isTyping: boolean
@@ -130,6 +144,7 @@ export const useChat = (
         socket.on('messageSent', handleMessageSent);
         socket.on('messagesRead', handleMessagesRead);
         socket.on("messageDeleted", handleMessageDeleted);
+        socket.on("messageEdited", handleMessageEdited);
         socket.on("onTyping", handleTypingEvent);
 
 
@@ -139,6 +154,7 @@ export const useChat = (
             socket.off('messageSent', handleMessageSent);
             socket.off('messagesRead', handleMessagesRead);
             socket.off("messageDeleted", handleMessageDeleted);
+            socket.off("messageEdited", handleMessageEdited);
         };
     }, [socket, selectedUserId, currentUserId]);
 
@@ -156,6 +172,7 @@ export const useChat = (
                 createdAt: new Date().toISOString(),
                 isRead: false,
                 deletedAt: null,
+                updatedAt: null,
             }
         ]);
 
@@ -166,6 +183,14 @@ export const useChat = (
         (messageId: number) => {
         if (!socket) return;
         socket.emit("deleteMessage", { messageId });
+        },
+        [socket],
+    );
+
+    const editMessage = useCallback(
+        (messageId: number, content: string) => {
+            if (!socket || !content.trim()) return;
+            socket.emit("editMessage", { messageId, content });
         },
         [socket],
     );
@@ -187,6 +212,7 @@ export const useChat = (
         messages,
         sendMessage,
         deleteMessage,
+        editMessage,
         isTyping,
         notifyTyping,
         loadMoreMessages,
