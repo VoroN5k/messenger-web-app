@@ -16,7 +16,7 @@ export class ChatController {
         @Query('cursor') cursor?: string,
     ) {
 
-        const currentUserId = req.user.id || req.user.sub;
+        const currentUserId = req.user.sub;
 
         const parsedCursor = cursor ? parseInt(cursor, 10) : undefined;
 
