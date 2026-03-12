@@ -33,7 +33,7 @@ export const RegisterForm = () => {
             });
 
             alert("Реєстрація успішна! Тепер підтвердіть email у базі та увійдіть.");
-            router.push("/auth//login");
+            router.push("/auth/login");
         } catch (e: any) {
             const errorMsg = e.response?.data?.message || "Помилка при реєстрації";
             alert(Array.isArray(errorMsg) ? errorMsg[0] : errorMsg);
@@ -127,7 +127,7 @@ export const RegisterForm = () => {
                 <button
                     disabled={isLoading}
                     type="submit"
-                    className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 rounded-xl mt-4 transition-all flex items-center justify-center disabled:opacity-70"
+                    className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 rounded-xl mt-4 transition-all flex items-center justify-center disabled:opacity-70 cursor-pointer"
                 >
                     {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : "Зареєструватися"}
                 </button>

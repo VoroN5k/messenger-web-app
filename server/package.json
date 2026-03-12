@@ -29,6 +29,7 @@
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/platform-socket.io": "^11.1.14",
+    "@nestjs/throttler": "^6.5.0",
     "@nestjs/websockets": "^11.1.14",
     "@prisma/adapter-pg": "^7.4.1",
     "@prisma/client": "^7.4.1",
