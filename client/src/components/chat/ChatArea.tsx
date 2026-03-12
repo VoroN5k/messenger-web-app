@@ -22,26 +22,88 @@ const formatDateSeparator = (dateString: string | Date) => {
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
 
-    if (date.toDateString() === today.toDateString()) {
-        return "Сьогодні";
-    } else if (date.toDateString() === yesterday.toDateString()) {
-        return "Вчора";
-    } else {
-        return date.toLocaleDateString('uk-UA', { day: 'numeric', month: 'long' });
-    }
+    if (date.toDateString() === today.toDateString()) return "Сьогодні";
+    if (date.toDateString() === yesterday.toDateString()) return "Вчора";
+    return date.toLocaleDateString("uk-UA", { day: "numeric", month: "long" });
 };
+
+interface MessageStatusProps {
+    message: Message;
+}
+
+const CHECK_PATH = "M1.5 5L5 8.5L12.5 1";
+
+const MessageStatus = ({ message }: MessageStatusProps) => {
+    const isPending = !message.id;
+    const isRead = message.isRead === true;
+
+    const color = isRead
+        ? "#a5b4fc"
+        : "rgba(255,255,255,0.5)";
+
+    if(isPending) {
+        return (
+            <svg
+                width="14"
+                height="10"
+                viewBox="0 0 14 10"
+                fill="none"
+                aria-label="Надсилається"
+                className="inline-block shrink-0"
+            >
+                <path
+                    d={CHECK_PATH}
+                    stroke={color}
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                />
+            </svg>
+        )
+    }
+
+    return (
+        <svg
+            width="19"
+            height="10"
+            viewBox="0 0 19 10"
+            fill="none"
+            aria-label={isRead ? "Прочитано" : "Доставлено"}
+            className="inline-block shrink-0"
+        >
+            <path
+                d={CHECK_PATH}
+                stroke={color}
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+            />
+            <path
+                d="M5.5 5L9 8.5L16.5 1"
+                stroke={color}
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+            />
+        </svg>
+    );
+}
 
 export default function ChatArea({ currentUserId, selectedUser, socket }: ChatAreaProps) {
     const [inputValue, setInputValue] = useState("");
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
-
     const lastMessageIdRef = useRef<string | number | null>(null);
 
     const {
-        messages, sendMessage, isTyping, notifyTyping,
-        loadMoreMessages, hasMore, isLoadingMore
+        messages,
+        sendMessage,
+        isTyping,
+        notifyTyping,
+        loadMoreMessages,
+        hasMore,
+        isLoadingMore
     } = useChat(selectedUser?.id, currentUserId, socket);
 
     useEffect(() => {
@@ -127,18 +189,27 @@ export default function ChatArea({ currentUserId, selectedUser, socket }: ChatAr
                                 </div>
                             )}
 
-                            <div className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                            <div className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
                                 <div className={`px-4 py-2.5 max-w-md break-words flex flex-col shadow-sm
-                                    ${isMe
-                                    ? 'bg-indigo-500 text-white rounded-2xl rounded-br-sm'
-                                    : 'bg-white border border-slate-200 text-slate-700 rounded-2xl rounded-bl-sm'}`}
+                                        ${
+                                        isMe
+                                            ? "bg-indigo-500 text-white rounded-2xl rounded-br-sm"
+                                            : "bg-white border border-slate-200 text-slate-700 rounded-2xl rounded-bl-sm"
+                                    }`}
                                 >
                                     <span className="leading-relaxed">{msg.content}</span>
 
-                                    <span className={`text-[10px] self-end mt-1 font-medium select-none
-                                        ${isMe ? 'text-indigo-100' : 'text-slate-400'}`}>
-                                        {formatTime(msg.createdAt)}
-                                    </span>
+
+                                    <div className="flex items-center gap-1 self-end mt-1">
+                                        <span
+                                            className={`text-[10px] font-medium select-none leading-none
+                                                ${isMe ? "text-indigo-200" : "text-slate-400"}`}
+                                        >
+                                            {formatTime(msg.createdAt)}
+                                        </span>
+
+                                        {isMe && <MessageStatus message={msg} />}
+                                    </div>
                                 </div>
                             </div>
                         </React.Fragment>
