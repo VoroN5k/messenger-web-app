@@ -39,5 +39,21 @@ export const useSocket = () => {
         }
     }, [socket, accessToken]);
 
+    useEffect(() => {
+        if (!socket) return;
+
+        const handleTokenUpdated = ({ success }: { success: boolean }) => {
+            if (!success) {
+                // Токен не прийнятий сервером — форсуємо повний реконект
+                console.warn('Token update rejected by server, reconnecting...');
+                socket.disconnect().connect();
+            }
+        };
+
+        socket.on('tokenUpdated', handleTokenUpdated);
+        return () => { socket.off('tokenUpdated', handleTokenUpdated); };
+    }, [socket]);
+
     return socket;
 };
+
