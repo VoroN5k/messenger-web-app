@@ -20,23 +20,25 @@ export const useChat = (selectedUserId: string | number | undefined, currentUser
             return;
         }
 
+        const controller = new AbortController();
+
         const fetchInitialHistory = async () => {
             try {
-
-                const res = await api.get(`/chat/history/${selectedUserId}`);
+                const res = await api.get(`/chat/history/${selectedUserId}`, {
+                    signal: controller.signal,
+                });
                 setMessages(res.data);
-
-                if (res.data.length < 20) {
-                    setHasMore(false);
-                } else {
-                    setHasMore(true);
+                setHasMore(res.data.length >= 20);
+            } catch (error: any) {
+                if (error.name !== 'CanceledError') {
+                    console.error("Failed to fetch chat history", error);
                 }
-            } catch (error) {
-                console.error("Failed to fetch chat history", error);
             }
         };
 
         fetchInitialHistory();
+
+        return () => controller.abort();
     }, [selectedUserId]);
 
     const loadMoreMessages = useCallback(async () => {
