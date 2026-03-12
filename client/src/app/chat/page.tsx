@@ -8,6 +8,7 @@ import api from "@/src/lib/axios";
 import Sidebar from "@/src/components/chat/SideBar";
 import ChatArea from "@/src/components/chat/ChatArea";
 import {User} from "@/src/types/auth.types";
+import {jwtDecode} from "jwt-decode";
 
 export default function ChatPage() {
     const { user, logout, setAuth } = useAuthStore();
@@ -45,28 +46,32 @@ export default function ChatPage() {
     // SILENT REFRESH
     useEffect(() => {
 
-        const refreshIntervalTime = 14 * 60 * 1000;
+        const scheduleRefresh = () => {
+            const token = useAuthStore.getState().accessToken;
+            if (!token) return;
 
-        const refreshInterval = setInterval(async () => {
-            try {
-                console.log("🔄 Фонове оновлення токена...");
+            const { exp } = jwtDecode<{exp: number}>(token);
+            const msUntilExpiry = exp * 1000 - Date.now();
+            const refreshIn = Math.max(msUntilExpiry - 60_000, 0); // Оновлюємо за 1 хвилину до закінчення
 
-                // Звертаємось до нашого бекенду за новим токеном
-                const response = await api.post('/auth/refresh');
-                const newAccessToken = response.data.accessToken;
+            const timeout = setTimeout(async () => {
+                try {
+                    const response = await api.post('/auth/refresh');
+                    useAuthStore.getState().setAuth(
+                        useAuthStore.getState().user,
+                        response.data.accessToken
+                    );
+                    scheduleRefresh();
+                } catch {
 
-                const { setAuth, user: currentUser } = useAuthStore.getState()
-                setAuth(currentUser, newAccessToken)
+                }
+            }, refreshIn);
 
-                console.log("Token has been refreshed silently");
-            } catch (error) {
-                console.error("Error while refreshing token:", error);
-            }
-        }, refreshIntervalTime);
+            return () => clearTimeout(timeout);
+        }
 
-        // Очищаємо інтервал при виході з чату
-        return () => clearInterval(refreshInterval);
-    }, [user, setAuth]);
+        return scheduleRefresh();
+    }, []);
 
     const handleLogout = async () => {
         try {

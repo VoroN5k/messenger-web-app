@@ -8,7 +8,7 @@ import {
     WebSocketServer
 } from "@nestjs/websockets";
 import { Server, Socket } from "socket.io";
-import {UseGuards, Logger, UnauthorizedException} from "@nestjs/common";
+import {UseGuards, Logger} from "@nestjs/common";
 import { WsJwtGuard } from "./guards/ws-jwt.guard.js";
 import {PrismaService} from "../prisma/prisma.service.js";
 import {JwtService} from "@nestjs/jwt";
@@ -39,22 +39,18 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
             const payload = await this.jwtService.verify(token);
             const userId = payload.sub;
 
+            client.data.currentToken = token;
+            client.data.user = { id: userId, nickname: payload.nickname || 'Unknown' };
+            client.data.userId = userId;
+
             let userSockets = this.activeUsers.get(userId);
             if (!userSockets) {
                 userSockets = new Set<string>();
                 this.activeUsers.set(userId, userSockets);
             }
-
             userSockets.add(client.id);
 
-            client.data.user = {
-                id: userId,
-                nickname: payload.nickname || 'Unknown'
-            };
-            client.data.userId = userId;
-
-            const roomId = `user_${userId}`;
-            client.join(roomId);
+            client.join(`user_${userId}`);
 
             if (userSockets.size === 1) {
                 await this.prisma.user.update({
@@ -63,10 +59,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
                 });
 
                 this.server.emit(`userStatusChanged`, {userId, isOnline: true})
-                this.logger.log(`User ${userId} is now Online`)
+                this.logger.log(`User ${userId} connected`)
             }
-
-            this.logger.log(`User ${userId} is now Online`)
         } catch (e) {
             client.disconnect();
         }

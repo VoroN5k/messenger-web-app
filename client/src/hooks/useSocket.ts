@@ -6,7 +6,6 @@ export const useSocket = () => {
     const [socket, setSocket] = useState<Socket | null>(null);
     const { accessToken } = useAuthStore();
 
-
     useEffect(() => {
         const newSocket = io("http://localhost:4000", {
             autoConnect: false,
@@ -18,7 +17,6 @@ export const useSocket = () => {
 
         setSocket(newSocket);
 
-
         return () => {
             newSocket.disconnect();
         };
@@ -29,16 +27,14 @@ export const useSocket = () => {
         if (!socket) return;
 
         if (accessToken) {
-
             socket.auth = { token: accessToken };
 
             if (socket.disconnected) {
                 socket.connect();
             } else {
-                socket.disconnect().connect();
+                socket.emit('updateToken', { token: accessToken});
             }
         } else {
-
             socket.disconnect();
         }
     }, [socket, accessToken]);
