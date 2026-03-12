@@ -2,6 +2,7 @@ import {Controller, Get, Param, ParseIntPipe, Query, Req, UseGuards} from "@nest
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import {ChatService} from "./chat.service.js";
+import {CurrentUser} from "../auth/decorators/current-user.decorator.js";
 
 @Controller('chat')
 export class ChatController {
@@ -11,12 +12,12 @@ export class ChatController {
     @Get('history/:withUserId')
     @UseGuards(JwtAuthGuard)
     async getChatHistory(
-        @Req() req,
+        @CurrentUser('sub') userId: number,
         @Param('withUserId', ParseIntPipe) withUserId: number,
         @Query('cursor') cursor?: string,
     ) {
 
-        const currentUserId = req.user.sub;
+        const currentUserId = userId;
 
         const parsedCursor = cursor ? parseInt(cursor, 10) : undefined;
 
