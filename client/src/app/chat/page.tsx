@@ -45,32 +45,43 @@ export default function ChatPage() {
 
     // SILENT REFRESH
     useEffect(() => {
+        let timeoutId: ReturnType<typeof setTimeout>;
 
-        const scheduleRefresh = () => {
-            const token = useAuthStore.getState().accessToken;
+        const scheduleRefresh = (token: string | null) => {
+            clearTimeout(timeoutId);
             if (!token) return;
 
-            const { exp } = jwtDecode<{exp: number}>(token);
-            const msUntilExpiry = exp * 1000 - Date.now();
-            const refreshIn = Math.max(msUntilExpiry - 60_000, 0); // Оновлюємо за 1 хвилину до закінчення
+            try {
+                const { exp } = jwtDecode<{ exp: number }>(token);
+                const msUntilExpiry = exp * 1000 - Date.now();
+                // Оновлюємо за 60 секунд до закінчення, але не раніше ніж через 5 секунд
+                const refreshIn = Math.max(msUntilExpiry - 60_000, 5_000);
 
-            const timeout = setTimeout(async () => {
-                try {
-                    const response = await api.post('/auth/refresh');
-                    useAuthStore.getState().setAuth(
-                        useAuthStore.getState().user,
-                        response.data.accessToken
-                    );
-                    scheduleRefresh();
-                } catch {
+                timeoutId = setTimeout(async () => {
+                    try {
+                        const response = await api.post('/auth/refresh');
+                        useAuthStore.getState().setAuth(
+                            useAuthStore.getState().user,
+                            response.data.accessToken,
+                        );
+                    } catch {
+                    }
+                }, refreshIn);
+            } catch {
+            }
+        };
 
-                }
-            }, refreshIn);
+        scheduleRefresh(useAuthStore.getState().accessToken);
 
-            return () => clearTimeout(timeout);
-        }
+        const unsubscribe = useAuthStore.subscribe(
+            (state) => state.accessToken,
+            (token) => scheduleRefresh(token),
+        );
 
-        return scheduleRefresh();
+        return () => {
+            clearTimeout(timeoutId);
+            unsubscribe();
+        };
     }, []);
 
     const handleLogout = async () => {

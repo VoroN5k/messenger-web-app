@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import {persist, subscribeWithSelector} from 'zustand/middleware';
 import {User} from "@/src/types/auth.types";
 
 interface AuthState {
@@ -12,19 +12,21 @@ interface AuthState {
 }
 
 export const useAuthStore = create<AuthState>()(
-    persist(
-        (set) => ({
-            user: null,
-            accessToken: null,
-            _hasHydrated: false,
-            setAuth: (user, token) => set({ user, accessToken: token }),
-            setHasHydrated: (state) => set({ _hasHydrated: state }),
-            logout: () => set({ user: null, accessToken: null }),
-        }),
-        {
-            name: 'auth-storage',
-            partialize: (state => ({user: state.user})),
+    subscribeWithSelector(
+        persist(
+            (set) => ({
+                user: null,
+                accessToken: null,
+                _hasHydrated: false,
+                setAuth: (user, token) => set({ user, accessToken: token }),
+                setHasHydrated: (state) => set({ _hasHydrated: state }),
+                logout: () => set({ user: null, accessToken: null }),
+            }),
+            {
+                name: 'auth-storage',
+                partialize: (state => ({user: state.user})),
 
-        }
+            }
+        )
     )
 );
