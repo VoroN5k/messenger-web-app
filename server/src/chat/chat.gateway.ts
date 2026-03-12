@@ -239,4 +239,40 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
     }
 
+    @UseGuards(WsJwtGuard)
+    @SubscribeMessage('editMessage')
+    async handleEditMessage(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() data: { messageId: number; content: string },
+    ) {
+        if (!data?.messageId || !data?.content?.trim()) return;
+
+        const userId = client.data.user?.id;
+        if (!userId) return;
+
+        try {
+            const updated = await this.chatService.editMessage(data.messageId, userId, data.content);
+
+            const partnerId = updated.receiverId === userId
+                ? updated.senderId
+                : updated.receiverId;
+
+            const payload = {
+                messageId: updated.id,
+                content: updated.content,
+                updatedAt: updated.updatedAt,
+            };
+
+            client.emit("messageEdited", payload);
+
+            this.server.to(`user_${partnerId}`).emit("messageEdited", payload);
+
+            this.logger.log(`User ${userId} edited message ${data.messageId}`);
+        } catch (e) {
+            this.logger.warn(`Edit failed for message ${data.messageId}: ${e.message}`);
+            client.emit('editFailed', { messageId: data.messageId, reason: e.message})
+        }
+    }
+
+
 }
