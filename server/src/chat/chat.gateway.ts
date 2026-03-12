@@ -12,6 +12,7 @@ import {UseGuards, Logger} from "@nestjs/common";
 import { WsJwtGuard } from "./guards/ws-jwt.guard.js";
 import {PrismaService} from "../prisma/prisma.service.js";
 import {JwtService} from "@nestjs/jwt";
+import {ChatService} from "./chat.service.js";
 
 @WebSocketGateway({
     cors: {
@@ -22,7 +23,8 @@ import {JwtService} from "@nestjs/jwt";
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     constructor(
         private readonly prisma: PrismaService,
-        private readonly jwtService: JwtService
+        private readonly jwtService: JwtService,
+        private readonly chatService: ChatService
     ) {}
 
     private activeUsers = new Map<number, Set<string>>();
@@ -206,5 +208,35 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         })
     }
 
+    @UseGuards(WsJwtGuard)
+    @SubscribeMessage('deleteMessage')
+    async handleDeleteMessage(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() data: { messageId: number },
+    ) {
+        if (!data?.messageId) return;
+
+        const userId = client.data.user?.id;
+        if (!userId) return;
+
+        try {
+            const deleted = await this.chatService.softDeleteMessage(data.messageId, userId)
+
+            const partnerId = deleted.senderId === userId
+                ? deleted.receiverId
+                : deleted.senderId;
+
+            client.emit('messageDeleted', { messageId: data.messageId });
+
+            this.server.to(`user_${partnerId}`).emit('messageDeleted', {
+                messageId: data.messageId,
+            });
+
+            this.logger.log(`User ${userId} deleted message ${data.messageId}`);
+        } catch (e) {
+            this.logger.warn(`Delete failed for message ${data.messageId}: ${e.message}`);
+            client.emit('deleteFailed', { messageId: data.messageId, reason: e.message})
+        }
+    }
 
 }

@@ -5,4 +5,5 @@ export interface Message {
     receiverId?: number | string;
     isRead?: boolean;
     createdAt: string | Date;
+    deletedAt: string | Date | null;
 }

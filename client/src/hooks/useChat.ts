@@ -107,6 +107,16 @@ export const useChat = (
             }
         };
 
+        const handleMessageDeleted = (data: { messageId: number }) => {
+            setMessages((prev) =>
+                prev.map((msg) =>
+                    msg.id === data.messageId
+                        ? { ...msg, deletedAt: new Date().toISOString() }
+                        : msg
+                )
+            );
+        }
+
         const handleTypingEvent = (data: {
             userId: number | string,
             isTyping: boolean
@@ -119,6 +129,7 @@ export const useChat = (
         socket.on("onMessage", handleNewMessage);
         socket.on('messageSent', handleMessageSent);
         socket.on('messagesRead', handleMessagesRead);
+        socket.on("messageDeleted", handleMessageDeleted);
         socket.on("onTyping", handleTypingEvent);
 
 
@@ -127,6 +138,7 @@ export const useChat = (
             socket.off("onTyping", handleTypingEvent);
             socket.off('messageSent', handleMessageSent);
             socket.off('messagesRead', handleMessagesRead);
+            socket.off("messageDeleted", handleMessageDeleted);
         };
     }, [socket, selectedUserId, currentUserId]);
 
@@ -143,11 +155,20 @@ export const useChat = (
                 senderId: currentUserId,
                 createdAt: new Date().toISOString(),
                 isRead: false,
+                deletedAt: null,
             }
         ]);
 
         socket.emit("typing", { toId: selectedUserId, isTyping: false });
     }, [selectedUserId, currentUserId, socket]);
+
+    const deleteMessage = useCallback(
+        (messageId: number) => {
+        if (!socket) return;
+        socket.emit("deleteMessage", { messageId });
+        },
+        [socket],
+    );
 
     const notifyTyping = useCallback(() => {
         if (!socket || !selectedUserId) return;
@@ -165,6 +186,7 @@ export const useChat = (
     return {
         messages,
         sendMessage,
+        deleteMessage,
         isTyping,
         notifyTyping,
         loadMoreMessages,
