@@ -73,6 +73,17 @@ export const useChat = (selectedUserId: string | number | undefined, currentUser
             }
         };
 
+        const handleMessageSent = (confirmedMsg: Message) => {
+            setMessages((prev) =>
+                prev.map((msg) =>
+                    !msg.id && msg.content === confirmedMsg.content &&
+                    String(msg.senderId) === String(confirmedMsg.senderId)
+                        ? confirmedMsg
+                        : msg,
+                ),
+            );
+        };
+
         const handleTypingEvent = (data: { userId: number | string, isTyping: boolean }) => {
             if (String(data.userId) === String(selectedUserId)) {
                 setIsTyping(data.isTyping);
@@ -81,10 +92,12 @@ export const useChat = (selectedUserId: string | number | undefined, currentUser
 
         socket.on("onMessage", handleNewMessage);
         socket.on("onTyping", handleTypingEvent);
+        socket.on('messageSent', handleMessageSent);
 
         return () => {
             socket.off("onMessage", handleNewMessage);
             socket.off("onTyping", handleTypingEvent);
+            socket.off('messageSent', handleMessageSent);
         };
     }, [socket, selectedUserId]);
 
