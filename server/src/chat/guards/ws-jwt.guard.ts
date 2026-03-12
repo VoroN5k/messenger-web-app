@@ -29,15 +29,16 @@ export class WsJwtGuard implements CanActivate {
             // Перевіряємо токен
             const payload = this.jwtService.verify(token);
 
-            const user = await this.prisma.user.findUnique({
-                where: { id: payload.sub },
-            });
+            if (!client.data.user) throw new WsException("Unauthorized: User not found");
 
-            if (!user) throw new WsException("Unauthorized: User not found");
+            client.data.user = {
+                id: payload.sub,
+                nickname: payload.nickname,
+                email: payload.email,
+                role: payload.role,
+            };
 
-            client.data.user = user;
             return true;
-
         } catch (err) {
             this.logger.error(`Ws Auth Error: ${err.message}`);
 
