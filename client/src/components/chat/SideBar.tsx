@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import {
     LogOut, Bell, BellOff, MessageSquare,
     Users, Search, X, UserPlus, Check,
-    Hash, Plus, ChevronDown,
+    Hash, Plus, Settings,
 } from 'lucide-react';
 import { useAuthStore }         from '@/src/store/useAuthStore';
 import api                      from '@/src/lib/axios';
@@ -36,7 +37,6 @@ interface SidebarProps {
     onTogglePush?:         () => void;
 }
 
-// ── Last message preview text ─────────────────────────────────────────────────
 function lastMsgText(conv: Conversation): string {
     const m = conv.lastMessage;
     if (!m) return 'Немає повідомлень';
@@ -46,8 +46,8 @@ function lastMsgText(conv: Conversation): string {
 }
 
 function formatTime(d: string): string {
-    const date  = new Date(d);
-    const now   = new Date();
+    const date    = new Date(d);
+    const now     = new Date();
     const isToday = date.toDateString() === now.toDateString();
     if (isToday) return date.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
     return date.toLocaleDateString('uk-UA', { day: 'numeric', month: 'short' });
@@ -60,6 +60,8 @@ export default function Sidebar({
                                     onSendFriendRequest, onRespondFriendRequest, onRemoveFriend,
                                     onLogout, pushPermission, onTogglePush,
                                 }: SidebarProps) {
+    const router = useRouter();
+
     const [tab,           setTab]           = useState<SidebarTab>('chats');
     const [searchQuery,   setSearchQuery]   = useState('');
     const [searchResults, setSearchResults] = useState<UserSearchResult[]>([]);
@@ -86,13 +88,10 @@ export default function Sidebar({
         setSearchQuery(q);
         if (searchTimer.current) clearTimeout(searchTimer.current);
         if (q.trim().length < 2) { setSearchResults([]); return; }
-
         setIsSearching(true);
         searchTimer.current = setTimeout(async () => {
             try {
-                const res = await api.get<UserSearchResult[]>('/friends/search', {
-                    params: { q: q.trim() },
-                });
+                const res = await api.get<UserSearchResult[]>('/friends/search', { params: { q: q.trim() } });
                 setSearchResults(res.data);
             } finally {
                 setIsSearching(false);
@@ -102,14 +101,12 @@ export default function Sidebar({
 
     // ── Open DM ───────────────────────────────────────────────────────────────
     const openDirect = async (targetUserId: number) => {
-        const res = await api.post('/conversations/direct', { targetUserId });
+        const res  = await api.post('/conversations/direct', { targetUserId });
         const conv = res.data as Conversation;
         onAddConversation(conv);
         onSelectConversation(conv);
         socket?.emit('joinConversation', { conversationId: conv.id });
-        setSearchQuery('');
-        setSearchResults([]);
-        setTab('chats');
+        setSearchQuery(''); setSearchResults([]); setTab('chats');
     };
 
     // ── Send friend request ───────────────────────────────────────────────────
@@ -118,28 +115,23 @@ export default function Sidebar({
         try {
             await onSendFriendRequest(userId);
             setSearchResults((prev) =>
-                prev.map((u) =>
-                    u.id === userId
-                        ? { ...u, friendshipStatus: 'PENDING', isRequester: true }
-                        : u,
-                ),
+                prev.map((u) => u.id === userId ? { ...u, friendshipStatus: 'PENDING', isRequester: true } : u),
             );
         } finally {
             setSendingReq(null);
         }
     };
 
-    // ── Filtered conversations ────────────────────────────────────────────────
     const filteredConvs = conversations.filter((c) => {
         if (!searchQuery.trim() || tab !== 'chats') return true;
         return c.name?.toLowerCase().includes(searchQuery.toLowerCase());
     });
 
     return (
-        <aside className="w-[340px] bg-white border-r border-gray-100 flex flex-col z-20 shrink-0">
+        <aside className="w-[340px] bg-white dark:bg-slate-800 border-r border-gray-100 dark:border-slate-700 flex flex-col z-20 shrink-0 transition-colors duration-200">
 
             {/* ── Header ── */}
-            <div className="px-4 py-4 border-b border-gray-100 flex items-center justify-between">
+            <div className="px-4 py-4 border-b border-gray-100 dark:border-slate-700 flex items-center justify-between">
                 <div className="flex items-center gap-3 min-w-0">
                     <div className="relative group cursor-pointer" onClick={() => setShowCropModal(true)}>
                         {currentUser && (
@@ -153,9 +145,9 @@ export default function Sidebar({
                             </svg>
                         </div>
                     </div>
-                    <span className="font-semibold text-gray-800 truncate text-sm">
-            {currentUser?.nickname}
-          </span>
+                    <span className="font-semibold text-gray-800 dark:text-slate-100 truncate text-sm">
+                        {currentUser?.nickname}
+                    </span>
                 </div>
 
                 <div className="flex items-center gap-0.5">
@@ -168,39 +160,49 @@ export default function Sidebar({
                                     pushPermission === 'denied'  ? 'Заблоковано' : 'Увімкнути сповіщення'
                             }
                             className={`p-2 rounded-full transition-all
-                ${pushPermission === 'granted'
-                                ? 'text-indigo-500 bg-indigo-50 cursor-default'
+                                ${pushPermission === 'granted'
+                                ? 'text-indigo-500 bg-indigo-50 dark:bg-indigo-900/30 cursor-default'
                                 : pushPermission === 'denied'
-                                    ? 'text-slate-300 cursor-not-allowed'
-                                    : 'text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 cursor-pointer'}`}
+                                    ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
+                                    : 'text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 cursor-pointer'}`}
                         >
                             {pushPermission === 'granted' ? <Bell size={15} /> : <BellOff size={15} />}
                         </button>
                     )}
-                    <button onClick={onLogout}
-                            className="p-2 rounded-full text-gray-400 hover:text-violet-600 hover:bg-violet-50 transition-all cursor-pointer"
-                            title="Вийти">
+                    {/* ── Settings button ── */}
+                    <button
+                        onClick={() => router.push('/settings')}
+                        className="p-2 rounded-full text-gray-400 dark:text-slate-500 hover:text-violet-600 dark:hover:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/30 transition-all cursor-pointer"
+                        title="Налаштування"
+                    >
+                        <Settings size={15} />
+                    </button>
+                    <button
+                        onClick={onLogout}
+                        className="p-2 rounded-full text-gray-400 dark:text-slate-500 hover:text-violet-600 dark:hover:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/30 transition-all cursor-pointer"
+                        title="Вийти"
+                    >
                         <LogOut size={15} />
                     </button>
                 </div>
             </div>
 
             {/* ── Tabs ── */}
-            <div className="flex border-b border-gray-100">
+            <div className="flex border-b border-gray-100 dark:border-slate-700">
                 {(['chats', 'friends'] as SidebarTab[]).map((t) => (
                     <button key={t} onClick={() => setTab(t)}
                             className={`flex-1 py-3 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer
-              ${tab === t
-                                ? 'text-violet-600 border-b-2 border-violet-500 -mb-px'
-                                : 'text-slate-400 hover:text-slate-600'}`}
+                                ${tab === t
+                                ? 'text-violet-600 dark:text-violet-400 border-b-2 border-violet-500 -mb-px'
+                                : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
                     >
                         {t === 'chats'
                             ? <><MessageSquare size={14} />Чати</>
                             : <><Users size={14} />Друзі
                                 {pendingRequests.length > 0 && (
                                     <span className="ml-1 bg-red-500 text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center leading-none">
-                      {pendingRequests.length}
-                    </span>
+                                        {pendingRequests.length}
+                                    </span>
                                 )}
                             </>
                         }
@@ -209,18 +211,18 @@ export default function Sidebar({
             </div>
 
             {/* ── Search bar ── */}
-            <div className="px-3 py-2.5 border-b border-gray-100">
+            <div className="px-3 py-2.5 border-b border-gray-100 dark:border-slate-700">
                 <div className="relative">
                     <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                     <input
                         value={searchQuery}
                         onChange={(e) => handleSearch(e.target.value)}
                         placeholder={tab === 'chats' ? 'Пошук чатів...' : 'Знайти людей...'}
-                        className="w-full pl-8 pr-8 py-2 bg-slate-50 rounded-xl text-sm outline-none focus:bg-white focus:ring-2 focus:ring-violet-100 transition-all"
+                        className="w-full pl-8 pr-8 py-2 bg-slate-50 dark:bg-slate-700 dark:text-slate-200 dark:placeholder-slate-400 rounded-xl text-sm outline-none focus:bg-white dark:focus:bg-slate-600 focus:ring-2 focus:ring-violet-100 dark:focus:ring-violet-800 transition-all"
                     />
                     {searchQuery && (
                         <button onClick={() => { setSearchQuery(''); setSearchResults([]); }}
-                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer">
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer">
                             <X size={13} />
                         </button>
                     )}
@@ -233,14 +235,13 @@ export default function Sidebar({
                 {/* ══ CHATS tab ══ */}
                 {tab === 'chats' && (
                     <>
-                        {/* New group / channel buttons */}
                         <div className="flex gap-1.5 px-3 py-2">
                             <button onClick={() => setShowNewGroup(true)}
-                                    className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-xl border border-slate-200 text-xs text-slate-500 hover:bg-violet-50 hover:border-violet-200 hover:text-violet-600 transition-all cursor-pointer">
+                                    className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-600 text-xs text-slate-500 dark:text-slate-400 hover:bg-violet-50 dark:hover:bg-violet-900/20 hover:border-violet-200 dark:hover:border-violet-700 hover:text-violet-600 dark:hover:text-violet-400 transition-all cursor-pointer">
                                 <Plus size={12} />Група
                             </button>
                             <button onClick={() => setShowNewChan(true)}
-                                    className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-xl border border-slate-200 text-xs text-slate-500 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-600 transition-all cursor-pointer">
+                                    className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-600 text-xs text-slate-500 dark:text-slate-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 hover:border-indigo-200 dark:hover:border-indigo-700 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all cursor-pointer">
                                 <Hash size={12} />Канал
                             </button>
                         </div>
@@ -250,7 +251,7 @@ export default function Sidebar({
                                 <div className="w-5 h-5 border-2 border-violet-400 border-t-transparent rounded-full animate-spin" />
                             </div>
                         ) : filteredConvs.length === 0 ? (
-                            <p className="text-center text-slate-400 text-sm py-10">
+                            <p className="text-center text-slate-400 dark:text-slate-500 text-sm py-10">
                                 {searchQuery ? 'Нічого не знайдено' : 'Немає чатів. Додайте друзів!'}
                             </p>
                         ) : (
@@ -263,9 +264,9 @@ export default function Sidebar({
                                 return (
                                     <div key={conv.id} onClick={() => onSelectConversation(conv)}
                                          className={`px-3 py-3 cursor-pointer transition-all flex items-center gap-3 border-l-[3px]
-                      ${isSelected
-                                             ? 'bg-violet-50 border-l-violet-500'
-                                             : 'hover:bg-slate-50 border-l-transparent'}`}
+                                            ${isSelected
+                                             ? 'bg-violet-50 dark:bg-violet-900/20 border-l-violet-500'
+                                             : 'hover:bg-slate-50 dark:hover:bg-slate-700/50 border-l-transparent'}`}
                                     >
                                         <div className="relative shrink-0">
                                             {conv.avatarUrl
@@ -274,7 +275,7 @@ export default function Sidebar({
                                                     ? <Avatar user={{ nickname: conv.name ?? '?', avatarUrl: null }} size="lg" />
                                                     : (
                                                         <div className={`w-12 h-12 rounded-full flex items-center justify-center
-                              ${conv.type === 'GROUP' ? 'bg-violet-100' : 'bg-indigo-100'}`}>
+                                                            ${conv.type === 'GROUP' ? 'bg-violet-100 dark:bg-violet-900/40' : 'bg-indigo-100 dark:bg-indigo-900/40'}`}>
                                                             {conv.type === 'GROUP'
                                                                 ? <Users size={20} className="text-violet-500" />
                                                                 : <Hash  size={20} className="text-indigo-500" />}
@@ -282,8 +283,8 @@ export default function Sidebar({
                                                     )
                                             }
                                             {conv.type === 'DIRECT' && (
-                                                <span className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white
-                          ${conv.isOnline ? 'bg-emerald-400' : 'bg-slate-300'}`} />
+                                                <span className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white dark:border-slate-800
+                                                    ${conv.isOnline ? 'bg-emerald-400' : 'bg-slate-300 dark:bg-slate-600'}`} />
                                             )}
                                         </div>
 
@@ -292,20 +293,20 @@ export default function Sidebar({
                                                 <div className="flex items-center gap-1 min-w-0">
                                                     {typeIcon}
                                                     <p className={`font-medium text-sm truncate
-                            ${isSelected ? 'text-violet-900' : 'text-gray-800'}`}>
+                                                        ${isSelected ? 'text-violet-900 dark:text-violet-300' : 'text-gray-800 dark:text-slate-200'}`}>
                                                         {conv.name ?? 'Чат'}
                                                     </p>
                                                 </div>
-                                                <span className="text-[10px] text-slate-400 shrink-0">
-                          {conv.lastMessage ? formatTime(conv.lastMessage.createdAt) : ''}
-                        </span>
+                                                <span className="text-[10px] text-slate-400 dark:text-slate-500 shrink-0">
+                                                    {conv.lastMessage ? formatTime(conv.lastMessage.createdAt) : ''}
+                                                </span>
                                             </div>
                                             <div className="flex items-center justify-between gap-1 mt-0.5">
-                                                <p className="text-xs text-slate-400 truncate">{lastMsgText(conv)}</p>
+                                                <p className="text-xs text-slate-400 dark:text-slate-500 truncate">{lastMsgText(conv)}</p>
                                                 {conv.unreadCount > 0 && (
                                                     <span className="bg-violet-500 text-white text-[10px] font-semibold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 shrink-0">
-                            {conv.unreadCount > 99 ? '99+' : conv.unreadCount}
-                          </span>
+                                                        {conv.unreadCount > 99 ? '99+' : conv.unreadCount}
+                                                    </span>
                                                 )}
                                             </div>
                                         </div>
@@ -319,59 +320,49 @@ export default function Sidebar({
                 {/* ══ FRIENDS tab ══ */}
                 {tab === 'friends' && (
                     <>
-                        {/* Pending requests */}
                         {pendingRequests.length > 0 && (
                             <div className="px-3 py-2">
-                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-2">
-                                    Вхідні запити
-                                </p>
+                                <p className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-2">Вхідні запити</p>
                                 {pendingRequests.map((req) => (
                                     <div key={req.id} className="flex items-center gap-2 py-2">
                                         <Avatar user={req.sender!} size="md" />
                                         <div className="flex-1 min-w-0">
-                                            <p className="text-sm font-medium text-gray-800 truncate">
-                                                {req.sender?.nickname}
-                                            </p>
+                                            <p className="text-sm font-medium text-gray-800 dark:text-slate-200 truncate">{req.sender?.nickname}</p>
                                         </div>
                                         <button onClick={() => onRespondFriendRequest(req.id, 'ACCEPTED')}
-                                                className="p-1.5 rounded-full bg-emerald-50 text-emerald-600 hover:bg-emerald-100 cursor-pointer transition-colors">
+                                                className="p-1.5 rounded-full bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 hover:bg-emerald-100 cursor-pointer transition-colors">
                                             <Check size={13} />
                                         </button>
                                         <button onClick={() => onRespondFriendRequest(req.id, 'DECLINED')}
-                                                className="p-1.5 rounded-full bg-red-50 text-red-500 hover:bg-red-100 cursor-pointer transition-colors">
+                                                className="p-1.5 rounded-full bg-red-50 dark:bg-red-900/30 text-red-500 hover:bg-red-100 cursor-pointer transition-colors">
                                             <X size={13} />
                                         </button>
                                     </div>
                                 ))}
-                                <div className="border-b border-slate-100 mt-2 mb-1" />
+                                <div className="border-b border-slate-100 dark:border-slate-700 mt-2 mb-1" />
                             </div>
                         )}
 
-                        {/* Search results */}
                         {searchQuery.trim().length >= 2 && (
                             <div className="px-3 py-2">
-                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-2">
-                                    Результати пошуку
-                                </p>
+                                <p className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-2">Результати пошуку</p>
                                 {isSearching ? (
                                     <div className="flex justify-center py-4">
                                         <div className="w-4 h-4 border-2 border-violet-400 border-t-transparent rounded-full animate-spin" />
                                     </div>
                                 ) : searchResults.length === 0 ? (
-                                    <p className="text-xs text-slate-400 text-center py-3">Нікого не знайдено</p>
+                                    <p className="text-xs text-slate-400 dark:text-slate-500 text-center py-3">Нікого не знайдено</p>
                                 ) : (
                                     searchResults.map((u) => (
                                         <div key={u.id} className="flex items-center gap-2 py-2">
                                             <Avatar user={u} size="md" />
                                             <div className="flex-1 min-w-0">
-                                                <p className="text-sm font-medium text-gray-800 truncate">{u.nickname}</p>
-                                                <p className="text-xs text-slate-400">
-                                                    {u.isOnline ? 'В мережі' : 'Офлайн'}
-                                                </p>
+                                                <p className="text-sm font-medium text-gray-800 dark:text-slate-200 truncate">{u.nickname}</p>
+                                                <p className="text-xs text-slate-400 dark:text-slate-500">{u.isOnline ? 'В мережі' : 'Офлайн'}</p>
                                             </div>
                                             {u.friendshipStatus === 'ACCEPTED' ? (
                                                 <button onClick={() => openDirect(u.id)}
-                                                        className="text-xs px-2.5 py-1 rounded-lg bg-violet-50 text-violet-600 hover:bg-violet-100 cursor-pointer transition-colors font-medium">
+                                                        className="text-xs px-2.5 py-1 rounded-lg bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400 hover:bg-violet-100 cursor-pointer transition-colors font-medium">
                                                     Написати
                                                 </button>
                                             ) : u.friendshipStatus === 'PENDING' && u.isRequester ? (
@@ -379,38 +370,33 @@ export default function Sidebar({
                                             ) : u.friendshipStatus === 'PENDING' ? (
                                                 <div className="flex gap-1">
                                                     <button onClick={() => onRespondFriendRequest(u.friendshipId!, 'ACCEPTED')}
-                                                            className="p-1.5 rounded-full bg-emerald-50 text-emerald-600 hover:bg-emerald-100 cursor-pointer">
+                                                            className="p-1.5 rounded-full bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 hover:bg-emerald-100 cursor-pointer">
                                                         <Check size={13} />
                                                     </button>
                                                     <button onClick={() => onRespondFriendRequest(u.friendshipId!, 'DECLINED')}
-                                                            className="p-1.5 rounded-full bg-red-50 text-red-500 hover:bg-red-100 cursor-pointer">
+                                                            className="p-1.5 rounded-full bg-red-50 dark:bg-red-900/30 text-red-500 hover:bg-red-100 cursor-pointer">
                                                         <X size={13} />
                                                     </button>
                                                 </div>
                                             ) : (
-                                                <button
-                                                    onClick={() => handleSendRequest(u.id)}
-                                                    disabled={sendingReq === u.id}
-                                                    className="p-1.5 rounded-full bg-violet-50 text-violet-600 hover:bg-violet-100 cursor-pointer disabled:opacity-50 transition-colors">
+                                                <button onClick={() => handleSendRequest(u.id)} disabled={sendingReq === u.id}
+                                                        className="p-1.5 rounded-full bg-violet-50 dark:bg-violet-900/30 text-violet-600 hover:bg-violet-100 cursor-pointer disabled:opacity-50 transition-colors">
                                                     <UserPlus size={13} />
                                                 </button>
                                             )}
                                         </div>
                                     ))
                                 )}
-                                <div className="border-b border-slate-100 mt-2 mb-1" />
+                                <div className="border-b border-slate-100 dark:border-slate-700 mt-2 mb-1" />
                             </div>
                         )}
 
-                        {/* Friends list */}
                         {friends.length === 0 && searchQuery.trim().length < 2 ? (
-                            <p className="text-center text-slate-400 text-sm py-10">
-                                Немає друзів. Знайдіть людей вгорі!
-                            </p>
+                            <p className="text-center text-slate-400 dark:text-slate-500 text-sm py-10">Немає друзів. Знайдіть людей вгорі!</p>
                         ) : (
                             <div className="px-3 py-2">
                                 {searchQuery.trim().length < 2 && (
-                                    <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-2">
+                                    <p className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-2">
                                         Друзі · {friends.length}
                                     </p>
                                 )}
@@ -418,24 +404,20 @@ export default function Sidebar({
                                     <div key={f.friendshipId} className="flex items-center gap-2 py-2 group">
                                         <div className="relative shrink-0">
                                             <Avatar user={f.friend} size="md" />
-                                            <span className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-white
-                        ${f.friend.isOnline ? 'bg-emerald-400' : 'bg-slate-300'}`} />
+                                            <span className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-white dark:border-slate-800
+                                                ${f.friend.isOnline ? 'bg-emerald-400' : 'bg-slate-300 dark:bg-slate-600'}`} />
                                         </div>
                                         <div className="flex-1 min-w-0">
-                                            <p className="text-sm font-medium text-gray-800 truncate">{f.friend.nickname}</p>
-                                            <p className="text-xs text-slate-400">
-                                                {f.friend.isOnline ? 'В мережі' : 'Офлайн'}
-                                            </p>
+                                            <p className="text-sm font-medium text-gray-800 dark:text-slate-200 truncate">{f.friend.nickname}</p>
+                                            <p className="text-xs text-slate-400 dark:text-slate-500">{f.friend.isOnline ? 'В мережі' : 'Офлайн'}</p>
                                         </div>
                                         <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                             <button onClick={() => openDirect(f.friend.id)}
-                                                    className="p-1.5 rounded-full text-slate-400 hover:text-violet-600 hover:bg-violet-50 cursor-pointer transition-colors"
-                                                    title="Написати">
+                                                    className="p-1.5 rounded-full text-slate-400 hover:text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-900/30 cursor-pointer transition-colors" title="Написати">
                                                 <MessageSquare size={13} />
                                             </button>
                                             <button onClick={() => onRemoveFriend(f.friend.id)}
-                                                    className="p-1.5 rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 cursor-pointer transition-colors"
-                                                    title="Видалити з друзів">
+                                                    className="p-1.5 rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 cursor-pointer transition-colors" title="Видалити з друзів">
                                                 <X size={13} />
                                             </button>
                                         </div>
@@ -479,64 +461,73 @@ export default function Sidebar({
 }
 
 // ── Create Group Modal ────────────────────────────────────────────────────────
-function CreateGroupModal({
-                              friends, onClose, onCreated,
-                          }: {
-    friends:   FriendItem[];
-    onClose:   () => void;
-    onCreated: (c: Conversation) => void;
+function CreateGroupModal({ friends, onClose, onCreated }: {
+    friends: FriendItem[]; onClose: () => void; onCreated: (c: Conversation) => void;
 }) {
     const [name,     setName]     = useState('');
     const [selected, setSelected] = useState<number[]>([]);
     const [loading,  setLoading]  = useState(false);
+    const [error,    setError]    = useState('');
 
     const toggle = (id: number) =>
         setSelected((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
 
     const submit = async () => {
-        if (!name.trim() || selected.length === 0) return;
-        setLoading(true);
+        const trimmedName = name.trim();
+        if (!trimmedName) { setError('Введіть назву групи'); return; }
+        if (trimmedName.length < 2) { setError('Мінімум 2 символи'); return; }
+        setError(''); setLoading(true);
         try {
-            const res = await api.post('/conversations/group', {
-                name: name.trim(), memberIds: selected,
-            });
+            const res = await api.post('/conversations/group', { name: trimmedName, memberIds: selected });
             onCreated(res.data as Conversation);
-        } finally {
-            setLoading(false);
-        }
+        } catch (e: any) {
+            const msg = e.response?.data?.message || 'Помилка створення';
+            setError(Array.isArray(msg) ? msg[0] : msg);
+        } finally { setLoading(false); }
     };
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
-                <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-                    <h3 className="font-semibold text-slate-800">Нова група</h3>
-                    <button onClick={onClose} className="p-1.5 rounded-full hover:bg-slate-100 cursor-pointer text-slate-400">
-                        <X size={15} />
-                    </button>
+            <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-sm">
+                <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-700">
+                    <h3 className="font-semibold text-slate-800 dark:text-slate-100">Нова група</h3>
+                    <button onClick={onClose} className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer text-slate-400"><X size={15} /></button>
                 </div>
                 <div className="p-5 space-y-4">
-                    <input value={name} onChange={(e) => setName(e.target.value)}
-                           placeholder="Назва групи"
-                           className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-violet-200" />
-                    <div className="max-h-48 overflow-y-auto space-y-1">
-                        {friends.map((f) => (
-                            <label key={f.friendshipId} className="flex items-center gap-3 py-2 px-2 rounded-xl hover:bg-slate-50 cursor-pointer">
-                                <input type="checkbox" checked={selected.includes(f.friend.id)}
-                                       onChange={() => toggle(f.friend.id)}
-                                       className="accent-violet-500 w-4 h-4" />
-                                <Avatar user={f.friend} size="sm" />
-                                <span className="text-sm text-slate-700">{f.friend.nickname}</span>
-                            </label>
-                        ))}
+                    <div>
+                        <input value={name} onChange={(e) => { setName(e.target.value); setError(''); }}
+                               onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+                               placeholder="Назва групи *" autoFocus
+                               className={`w-full px-4 py-2.5 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-violet-200 dark:bg-slate-700 dark:text-slate-200 dark:placeholder-slate-400 transition-all
+                                   ${error ? 'border-red-400' : 'border-slate-200 dark:border-slate-600'}`} />
+                        {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
                     </div>
+                    {friends.length === 0 ? (
+                        <p className="text-xs text-slate-400 dark:text-slate-500 text-center py-2">Немає друзів. Групу буде створено лише з вами.</p>
+                    ) : (
+                        <>
+                            <p className="text-xs text-slate-400 dark:text-slate-500">Оберіть учасників (необов'язково):</p>
+                            <div className="max-h-48 overflow-y-auto space-y-1">
+                                {friends.map((f) => (
+                                    <label key={f.friendshipId} className="flex items-center gap-3 py-2 px-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer">
+                                        <input type="checkbox" checked={selected.includes(f.friend.id)}
+                                               onChange={() => toggle(f.friend.id)}
+                                               className="accent-violet-500 w-4 h-4 cursor-pointer" />
+                                        <Avatar user={f.friend} size="sm" />
+                                        <span className="text-sm text-slate-700 dark:text-slate-300">{f.friend.nickname}</span>
+                                    </label>
+                                ))}
+                            </div>
+                            {selected.length > 0 && (
+                                <p className="text-xs text-violet-500 font-medium">Вибрано: {selected.length} учасник(ів)</p>
+                            )}
+                        </>
+                    )}
                 </div>
                 <div className="px-5 pb-5 flex gap-2">
-                    <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 cursor-pointer">
-                        Скасувати
-                    </button>
-                    <button onClick={submit} disabled={loading || !name.trim() || selected.length === 0}
-                            className="flex-1 py-2.5 rounded-xl bg-violet-500 hover:bg-violet-600 text-white text-sm font-semibold cursor-pointer disabled:opacity-50 transition-colors">
+                    <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600 text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer transition-colors">Скасувати</button>
+                    <button onClick={submit} disabled={loading || !name.trim()}
+                            className="flex-1 py-2.5 rounded-xl bg-violet-500 hover:bg-violet-600 text-white text-sm font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
                         {loading ? 'Створення...' : 'Створити'}
                     </button>
                 </div>
@@ -546,53 +537,50 @@ function CreateGroupModal({
 }
 
 // ── Create Channel Modal ──────────────────────────────────────────────────────
-function CreateChannelModal({
-                                onClose, onCreated,
-                            }: {
-    onClose:   () => void;
-    onCreated: (c: Conversation) => void;
+function CreateChannelModal({ onClose, onCreated }: {
+    onClose: () => void; onCreated: (c: Conversation) => void;
 }) {
     const [name,    setName]    = useState('');
     const [desc,    setDesc]    = useState('');
     const [loading, setLoading] = useState(false);
+    const [error,   setError]   = useState('');
 
     const submit = async () => {
-        if (!name.trim()) return;
-        setLoading(true);
+        const trimmedName = name.trim();
+        if (!trimmedName) { setError('Введіть назву каналу'); return; }
+        setError(''); setLoading(true);
         try {
-            const res = await api.post('/conversations/channel', {
-                name: name.trim(), description: desc.trim() || undefined,
-            });
+            const res = await api.post('/conversations/channel', { name: trimmedName, description: desc.trim() || undefined });
             onCreated(res.data as Conversation);
-        } finally {
-            setLoading(false);
-        }
+        } catch (e: any) {
+            const msg = e.response?.data?.message || 'Помилка створення';
+            setError(Array.isArray(msg) ? msg[0] : msg);
+        } finally { setLoading(false); }
     };
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
-                <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-                    <h3 className="font-semibold text-slate-800">Новий канал</h3>
-                    <button onClick={onClose} className="p-1.5 rounded-full hover:bg-slate-100 cursor-pointer text-slate-400">
-                        <X size={15} />
-                    </button>
+            <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-sm">
+                <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-700">
+                    <h3 className="font-semibold text-slate-800 dark:text-slate-100">Новий канал</h3>
+                    <button onClick={onClose} className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer text-slate-400"><X size={15} /></button>
                 </div>
                 <div className="p-5 space-y-3">
-                    <input value={name} onChange={(e) => setName(e.target.value)}
-                           placeholder="Назва каналу"
-                           className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-200" />
+                    <div>
+                        <input value={name} onChange={(e) => { setName(e.target.value); setError(''); }}
+                               placeholder="Назва каналу *" autoFocus
+                               className={`w-full px-4 py-2.5 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-indigo-200 dark:bg-slate-700 dark:text-slate-200 dark:placeholder-slate-400 transition-all
+                                   ${error ? 'border-red-400' : 'border-slate-200 dark:border-slate-600'}`} />
+                        {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
+                    </div>
                     <textarea value={desc} onChange={(e) => setDesc(e.target.value)}
-                              placeholder="Опис (необов'язково)"
-                              rows={3}
-                              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-indigo-200 resize-none" />
+                              placeholder="Опис (необов'язково)" rows={3}
+                              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:placeholder-slate-400 text-sm outline-none focus:ring-2 focus:ring-indigo-200 resize-none" />
                 </div>
                 <div className="px-5 pb-5 flex gap-2">
-                    <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 cursor-pointer">
-                        Скасувати
-                    </button>
+                    <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600 text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer">Скасувати</button>
                     <button onClick={submit} disabled={loading || !name.trim()}
-                            className="flex-1 py-2.5 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-semibold cursor-pointer disabled:opacity-50 transition-colors">
+                            className="flex-1 py-2.5 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
                         {loading ? 'Створення...' : 'Створити'}
                     </button>
                 </div>
