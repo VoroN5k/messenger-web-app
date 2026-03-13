@@ -27,9 +27,11 @@ export default function ChatPage() {
         if (user !== undefined) setIsLoaded(true);
     }, [user]);
 
+
+
     const { users } = useUsers(currentUserId, isLoaded, socket);
 
-    const { isSupported, permission, requestPermission } = usePushNotifications();
+    const { isSupported, permission, requestPermission } = usePushNotifications(!!user);
 
     // Показуємо банер один раз якщо дозвіл ще не запитувався
     useEffect(() => {

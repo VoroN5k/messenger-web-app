@@ -1,29 +1,30 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import api from '@/src/lib/axios';
 
-// Конвертація VAPID public key з base64 у Uint8Array
+// Конвертація VAPID public key з base64 у Uint8Array для підписки
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
-    const padding  = '='.repeat((4 - (base64String.length % 4)) % 4);
-    const base64   = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-    const rawData  = window.atob(base64);
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const rawData = window.atob(base64);
     return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
 }
 
 type PermissionState = 'idle' | 'requesting' | 'granted' | 'denied' | 'unsupported';
 
-export const usePushNotifications = () => {
-    const [permission, setPermission]   = useState<PermissionState>('idle');
+export const usePushNotifications = (isAuthenticated: boolean) => {
+    const [permission, setPermission] = useState<PermissionState>('idle');
     const subscriptionRef = useRef<PushSubscription | null>(null);
     const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
 
     const isSupported =
         typeof window !== 'undefined' &&
         'serviceWorker' in navigator &&
-        'PushManager'   in window;
+        'PushManager' in window &&
+        'Notification' in window;
 
     // ── Реєстрація Service Worker ─────────────────────────────────────────────
     useEffect(() => {
-        if (!isSupported) return;
+        if (!isSupported || !isAuthenticated) return;
 
         const init = async () => {
             try {
@@ -46,7 +47,7 @@ export const usePushNotifications = () => {
 
         init();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [isSupported, isAuthenticated]);
 
     // ── Підписка / переконатись що підписка існує ─────────────────────────────
     const ensureSubscription = async (
@@ -64,27 +65,26 @@ export const usePushNotifications = () => {
 
             if (!sub) {
                 sub = await registration.pushManager.subscribe({
-                    userVisibleOnly:      true,
-                    applicationServerKey: urlBase64ToUint8Array(vapidKey).buffer as ArrayBuffer,
+                    userVisibleOnly: true,
+                    applicationServerKey: urlBase64ToUint8Array(vapidKey),
                 });
             }
 
             subscriptionRef.current = sub;
 
-            // Надсилаємо підписку на сервер (upsert — безпечно викликати повторно)
+            // Використовуємо вбудований toJSON(), який ідеально форматує ключі
+            const subData = sub.toJSON();
+
+            if (!subData.keys) {
+                throw new Error("Браузер не повернув ключі шифрування");
+            }
+
+            // Надсилаємо підписку на сервер
             await api.post('/push/subscribe', {
-                endpoint: sub.endpoint,
+                endpoint: subData.endpoint,
                 keys: {
-                    p256dh: btoa(
-                        String.fromCharCode(
-                            ...new Uint8Array(sub.getKey('p256dh')!),
-                        ),
-                    ),
-                    auth: btoa(
-                        String.fromCharCode(
-                            ...new Uint8Array(sub.getKey('auth')!),
-                        ),
-                    ),
+                    p256dh: subData.keys.p256dh,
+                    auth: subData.keys.auth,
                 },
             });
         } catch (err) {

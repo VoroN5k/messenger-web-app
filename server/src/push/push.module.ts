@@ -5,6 +5,6 @@ import { PushController } from './push.controller.js';
 @Module({
     controllers: [PushController],
     providers:   [PushService],
-    exports:     [PushService],
+    exports:     [PushService],   // ← потрібен ChatModule
 })
 export class PushModule {}

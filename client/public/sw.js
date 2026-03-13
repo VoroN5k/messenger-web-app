@@ -1,3 +1,5 @@
+/* eslint-disable no-restricted-globals */
+
 // ── Push-сповіщення ──────────────────────────────────────────────────────────
 self.addEventListener('push', (event) => {
     if (!event.data) return;

@@ -2,10 +2,30 @@ import { Body, Controller, Delete, Post, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser }  from '../auth/decorators/current-user.decorator.js';
 import { PushService }  from './push.service.js';
+import { IsString, IsNotEmpty, ValidateNested, IsObject } from 'class-validator';
+import { Type } from 'class-transformer';
 
-class SubscribeDto {
+// 1. Описуємо вкладений об'єкт ключів
+class PushKeysDto {
+    @IsString()
+    @IsNotEmpty()
+    p256dh: string;
+
+    @IsString()
+    @IsNotEmpty()
+    auth: string;
+}
+
+// 2. Описуємо головний DTO
+export class SubscribeDto {
+    @IsString()
+    @IsNotEmpty()
     endpoint: string;
-    keys: { p256dh: string; auth: string };
+
+    @IsObject()
+    @ValidateNested()
+    @Type(() => PushKeysDto)
+    keys: PushKeysDto;
 }
 
 @Controller('push')
