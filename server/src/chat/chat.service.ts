@@ -136,4 +136,30 @@ export class ChatService {
             receiverId: message.receiverId,
         }
     }
+
+    async searchMessages(currentUserId: number, partnerId: number, query: string, limit = 30) {
+        const q = query.trim();
+        if (!q || q.length < 2) return [];
+
+        const messages = await this.prisma.message.findMany({
+            where: {
+                OR: [
+                    { senderId: currentUserId, receiverId: partnerId },
+                    { senderId: partnerId,     receiverId: currentUserId },
+                ],
+                deletedAt: null,
+                content: { contains: q, mode: 'insensitive' },
+            },
+            include: {
+                reactions: {select: {emoji: true, userId: true}, orderBy: {createdAt: 'asc'}},
+            },
+            orderBy: { id: 'desc' },
+            take: limit,
+        });
+
+        return messages.reverse().map((msg) => {
+            const { reactions, ...rest } = msg;
+            return { ...rest, reactions: this.groupReactions(reactions) };
+        })
+    }
 }
