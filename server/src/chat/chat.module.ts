@@ -5,22 +5,24 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { PrismaModule } from '../prisma/prisma.module.js';
 import { ChatController } from './chat.controller.js';
 import { ChatService }  from './chat.service.js';
-import { PushModule }   from '../push/push.module.js';  // ← додати
+import { PushModule }   from '../push/push.module.js';
+import {ConversationsModule} from "../conversations/conversations.module.js";
+import {FriendsModule} from "../friends/friends.module.js";  // ← додати
 
 @Module({
     imports: [
         PrismaModule,
+        ConversationsModule,
+        FriendsModule,
         PushModule,   // ← додати
         JwtModule.registerAsync({
             imports:    [ConfigModule],
             inject:     [ConfigService],
-            useFactory: (config: ConfigService) => ({
-                secret: config.get('JWT_SECRET'),
-                signOptions: { expiresIn: '7d' },
+            useFactory: (cfg: ConfigService) => ({secret: cfg.get('JWT_SECRET'),
             }),
         }),
     ],
     controllers: [ChatController],
-    providers:   [ChatGateway, ChatService],
+    providers:   [ChatGateway],
 })
 export class ChatModule {}

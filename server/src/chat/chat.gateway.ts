@@ -1,336 +1,266 @@
 import {
-    WebSocketGateway,
-    SubscribeMessage,
-    MessageBody,
-    ConnectedSocket,
-    OnGatewayConnection,
-    OnGatewayDisconnect,
-    WebSocketServer
-} from "@nestjs/websockets";
-import { Server, Socket } from "socket.io";
-import {UseGuards, Logger} from "@nestjs/common";
-import { WsJwtGuard } from "./guards/ws-jwt.guard.js";
-import {PrismaService} from "../prisma/prisma.service.js";
-import {JwtService} from "@nestjs/jwt";
-import {ChatService} from "./chat.service.js";
-import {PushService} from "../push/push.service.js";
+    WebSocketGateway, SubscribeMessage, MessageBody,
+    ConnectedSocket, OnGatewayConnection, OnGatewayDisconnect, WebSocketServer,
+} from '@nestjs/websockets';
+import { Server, Socket }         from 'socket.io';
+import { Logger, UseGuards }      from '@nestjs/common';
+import { WsJwtGuard }             from './guards/ws-jwt.guard.js';
+import { PrismaService }          from '../prisma/prisma.service.js';
+import { JwtService }             from '@nestjs/jwt';
+import { ConversationsService }   from '../conversations/conversations.service.js';
+import { FriendsService }         from '../friends/friends.service.js';
+import { PushService }            from '../push/push.service.js';
 
-@WebSocketGateway({
-    cors: {
-        origin: "http://localhost:3000",
-        credentials: true,
-    },
-})
+@WebSocketGateway({ cors: { origin: 'http://localhost:3000', credentials: true } })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
+    @WebSocketServer() server: Server;
+    private logger      = new Logger('ChatGateway');
+    private activeUsers = new Map<number, Set<string>>();
+
     constructor(
-        private readonly prisma: PrismaService,
-        private readonly jwtService: JwtService,
-        private readonly chatService: ChatService,
-        private readonly pushService: PushService,
+        private readonly prisma:      PrismaService,
+        private readonly jwtService:  JwtService,
+        private readonly convService: ConversationsService,
+        private readonly friends:     FriendsService,
+        private readonly push:        PushService,
     ) {}
 
-    private activeUsers = new Map<number, Set<string>>();
-    @WebSocketServer() server: Server;
-    private logger = new Logger("ChatGateway");
-
-    // Calls when user opens the socket
-
-    async handleConnection(client: Socket){
+    // ── Connection ────────────────────────────────────────────────────────────
+    async handleConnection(client: Socket) {
         try {
             const token = client.handshake.auth?.token || client.handshake.query?.token;
             if (!token) return client.disconnect();
 
-            const payload = await this.jwtService.verify(token);
-            const userId = payload.sub;
+            const payload = this.jwtService.verify(token);
+            const userId  = payload.sub as number;
 
             client.data.currentToken = token;
-            client.data.user = { id: userId, nickname: payload.nickname || 'Unknown' };
-            client.data.userId = userId;
+            client.data.userId       = userId;
+            client.data.user         = { id: userId, nickname: payload.nickname };
 
-            let userSockets = this.activeUsers.get(userId);
-            if (!userSockets) {
-                userSockets = new Set<string>();
-                this.activeUsers.set(userId, userSockets);
-            }
-            userSockets.add(client.id);
+            if (!this.activeUsers.has(userId)) this.activeUsers.set(userId, new Set());
+            this.activeUsers.get(userId)!.add(client.id);
 
+            // Personal room (friend requests, notifications)
             client.join(`user_${userId}`);
 
-            if (userSockets.size === 1) {
-                await this.prisma.user.update({
-                    where: { id: userId },
-                    data: { isOnline: true },
-                });
+            // Join all conversation rooms
+            const memberships = await this.prisma.conversationMember.findMany({
+                where: { userId }, select: { conversationId: true },
+            });
+            for (const m of memberships) client.join(`conv_${m.conversationId}`);
 
-                this.server.emit(`userStatusChanged`, {userId, isOnline: true})
-                this.logger.log(`User ${userId} connected`)
+            if (this.activeUsers.get(userId)!.size === 1) {
+                await this.prisma.user.update({ where: { id: userId }, data: { isOnline: true } });
+                this.server.emit('userStatusChanged', { userId, isOnline: true });
+                this.logger.log(`User ${userId} connected`);
             }
-        } catch (e) {
+        } catch {
             client.disconnect();
         }
     }
 
     async handleDisconnect(client: Socket) {
-        const userId = client.data.userId;
+        const userId = client.data.userId as number | undefined;
         if (!userId) return;
 
-        const userSockets = this.activeUsers.get(userId);
-        if (userSockets) {
-            userSockets.delete(client.id);
-
-            if (userSockets.size === 0) {
+        const sockets = this.activeUsers.get(userId);
+        if (sockets) {
+            sockets.delete(client.id);
+            if (sockets.size === 0) {
                 this.activeUsers.delete(userId);
-
                 await this.prisma.user.update({
                     where: { id: userId },
-                    data: { isOnline: false, lastSeen: new Date() }
+                    data:  { isOnline: false, lastSeen: new Date() },
                 });
-
                 this.server.emit('userStatusChanged', { userId, isOnline: false });
-                this.logger.log(`User ${userId} disconnected and is now Offline`);
+                this.logger.log(`User ${userId} offline`);
             }
         }
     }
 
+    // ── Token update ──────────────────────────────────────────────────────────
     @SubscribeMessage('updateToken')
-    async handleUpdateToken(
-        @ConnectedSocket() client: Socket,
-        @MessageBody() data: { token: string},
-    ) {
+    async handleUpdateToken(@ConnectedSocket() client: Socket, @MessageBody() data: { token: string }) {
         try {
-            if (!data?.token) throw new Error("No token provided");
-
             const payload = this.jwtService.verify(data.token);
-
-            if (payload.sub !== client.data.userId) {
-                this.logger.warn(
-                    `Token substitution attempt: socket userId=${client.data.userId}, token sub=${payload.sub}`
-                )
-                client.disconnect();
-                return;
-            }
-
+            if (payload.sub !== client.data.userId) return client.disconnect();
             client.data.currentToken = data.token;
-            client.data.user = {id : payload.sub, nickname: payload.nickname};
-
-            this.logger.log(`Token refreshed for user ${payload.sub}`);
             client.emit('tokenUpdated', { success: true });
-        } catch (e) {
-            this.logger.warn(`Token update failed for socket ${client.id}: ${e.message}`)
+        } catch {
             client.emit('tokenUpdated', { success: false });
         }
     }
 
+    // ── Send message ──────────────────────────────────────────────────────────
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('sendMessage')
     async handleMessage(
         @ConnectedSocket() client: Socket,
         @MessageBody() data: {
-            toId: number;
-            content?: string;
-            fileUrl?: string;
-            fileName?: string;
-            fileType?: string;
-            fileSize?: number;
+            conversationId: number; content?: string;
+            fileUrl?: string; fileName?: string; fileType?: string; fileSize?: number;
+            replyToId?: number;
         },
     ) {
-        const hasContent = !!data?.content?.trim();
-        const hasFile    = !!data?.fileUrl;
+        const userId = client.data.user.id as number;
+        if (!data?.conversationId) return;
+        if (!data.content?.trim() && !data.fileUrl) return;
 
-        if (!hasContent && !hasFile) return;
-        if (!data?.toId || data.toId === client.data.user?.id) return;
-        if (hasContent && data.content!.length > 4000) return;
+        try {
+            const message = await this.convService.saveMessage(userId, data.conversationId, data);
 
-        const sender = client.data.user;
-        if (!sender?.id) return;
+            // Broadcast to everyone in room (including sender for optimistic replacement)
+            this.server.to(`conv_${data.conversationId}`).emit('onMessage', message);
 
-        const newMessage = await this.prisma.message.create({
-            data: {
-                content:    data.content?.trim() ?? '',
-                senderId:   sender.id,
-                receiverId: data.toId,
-                ...(hasFile && {
-                    fileUrl:  data.fileUrl,
-                    fileName: data.fileName,
-                    fileType: data.fileType,
-                    fileSize: data.fileSize,
-                }),
-            },
-        });
+            // Push to offline members
+            const members = await this.prisma.conversationMember.findMany({
+                where: { conversationId: data.conversationId, userId: { not: userId } },
+                select: { userId: true },
+            });
 
-        const payload = {
-            id:        newMessage.id,
-            content:   newMessage.content,
-            senderId:  sender.id,
-            createdAt: newMessage.createdAt,
-            isRead:    false,
-            reactions: [],
-            fileUrl:   newMessage.fileUrl  ?? null,
-            fileName:  newMessage.fileName ?? null,
-            fileType:  newMessage.fileType ?? null,
-            fileSize:  newMessage.fileSize ?? null,
-        };
+            const bodyText = data.fileUrl
+                ? `📎 ${data.fileName ?? 'Файл'}`
+                : (data.content!.length > 100 ? data.content!.slice(0, 97) + '…' : data.content!);
 
-        this.server.to(`user_${data.toId}`).emit('onMessage', payload);
-        client.emit('messageSent', payload);
-
-        this.logger.log(
-            `User ${sender.id} → User ${data.toId}: ${
-                hasFile ? `[file: ${data.fileName}]` : `"${data.content!.slice(0, 50)}"`
-            }`,
-        );
-
-        // ── Web Push ──────────────────────────────────────────────────────────────
-        // Відправляємо push завжди
-        // залежно від того, чи активна вкладка
-        const bodyText = hasFile
-            ? `📎 ${data.fileName ?? 'Файл'}`
-            : (newMessage.content.length > 100
-                ? newMessage.content.slice(0, 97) + '…'
-                : newMessage.content);
-
-        this.pushService.sendToUser(data.toId, {
-            title:    sender.nickname,
-            body:     bodyText,
-            senderId: sender.id,
-            url:      '/chat',
-        }).catch(() => {}); // fire-and-forget, не блокуємо відповідь
+            for (const m of members) {
+                this.push.sendToUser(m.userId, {
+                    title:    client.data.user.nickname,
+                    body:     bodyText,
+                    senderId: userId,
+                    url:      '/chat',
+                }).catch(() => {});
+            }
+        } catch (e: any) {
+            client.emit('messageFailed', { error: e.message });
+        }
     }
 
+    // ── Mark as read ──────────────────────────────────────────────────────────
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('markAsRead')
     async handleMarkAsRead(
         @ConnectedSocket() client: Socket,
-        @MessageBody() data: { senderId: number }
+        @MessageBody() data: { conversationId: number },
     ) {
-
-        const userId = client.data.user?.id;
-
-        if (!userId) return;
-
-
-        await this.prisma.message.updateMany({
-            where: {
-                senderId: data.senderId,
-                receiverId: userId,
-                isRead: false,
-            },
-            data: { isRead: true },
+        const userId = client.data.user.id as number;
+        await this.convService.markAsRead(userId, data.conversationId);
+        client.to(`conv_${data.conversationId}`).emit('conversationRead', {
+            userId, conversationId: data.conversationId,
         });
-
-
-        this.server.to(`user_${data.senderId}`).emit('messagesRead', {
-            readerId: userId,
-            senderId: data.senderId
-        });
-
-        this.logger.log(`User ${userId} marked messages from ${data.senderId} as read`);
     }
 
+    // ── Typing ────────────────────────────────────────────────────────────────
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('typing')
-    async handleTyping(
+    handleTyping(
         @ConnectedSocket() client: Socket,
-        @MessageBody() data: {toId: number, isTyping: boolean},
+        @MessageBody() data: { conversationId: number; isTyping: boolean },
     ) {
-        const sender = client.data.user;
-        if (!sender) return;
-
-        this.server.to(`user_${data.toId}`).emit('onTyping', {
-            userId: sender.id,
-            isTyping: data.isTyping
-        })
+        client.to(`conv_${data.conversationId}`).emit('onTyping', {
+            userId:         client.data.user.id,
+            nickname:       client.data.user.nickname,
+            conversationId: data.conversationId,
+            isTyping:       data.isTyping,
+        });
     }
 
+    // ── Delete / Edit / React ─────────────────────────────────────────────────
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('deleteMessage')
-    async handleDeleteMessage(
-        @ConnectedSocket() client: Socket,
-        @MessageBody() data: { messageId: number },
-    ) {
-        if (!data?.messageId) return;
-
-        const userId = client.data.user?.id;
-        if (!userId) return;
-
+    async handleDelete(@ConnectedSocket() client: Socket, @MessageBody() data: { messageId: number }) {
         try {
-            const deleted = await this.chatService.softDeleteMessage(data.messageId, userId)
-
-            const partnerId = deleted.senderId === userId
-                ? deleted.receiverId
-                : deleted.senderId;
-
-            client.emit('messageDeleted', { messageId: data.messageId });
-
-            this.server.to(`user_${partnerId}`).emit('messageDeleted', {
-                messageId: data.messageId,
+            const deleted = await this.convService.deleteMessage(data.messageId, client.data.user.id);
+            this.server.to(`conv_${deleted.conversationId}`).emit('messageDeleted', {
+                messageId: deleted.id, conversationId: deleted.conversationId,
             });
-
-            this.logger.log(`User ${userId} deleted message ${data.messageId}`);
-        } catch (e) {
-            this.logger.warn(`Delete failed for message ${data.messageId}: ${e.message}`);
-            client.emit('deleteFailed', { messageId: data.messageId, reason: e.message})
+        } catch (e: any) {
+            client.emit('deleteFailed', { messageId: data.messageId, error: e.message });
         }
     }
 
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('editMessage')
-    async handleEditMessage(
+    async handleEdit(
         @ConnectedSocket() client: Socket,
         @MessageBody() data: { messageId: number; content: string },
     ) {
-        if (!data?.messageId || !data?.content?.trim()) return;
-
-        const userId = client.data.user?.id;
-        if (!userId) return;
-
         try {
-            const updated = await this.chatService.editMessage(data.messageId, userId, data.content);
-
-            const partnerId = updated.receiverId === userId
-                ? updated.senderId
-                : updated.receiverId;
-
-            const payload = {
-                messageId: updated.id,
-                content: updated.content,
-                updatedAt: updated.editedAt,
-            };
-
-            client.emit("messageEdited", payload);
-
-            this.server.to(`user_${partnerId}`).emit("messageEdited", payload);
-
-            this.logger.log(`User ${userId} edited message ${data.messageId}`);
-        } catch (e) {
-            this.logger.warn(`Edit failed for message ${data.messageId}: ${e.message}`);
-            client.emit('editFailed', { messageId: data.messageId, reason: e.message})
+            const updated = await this.convService.editMessage(data.messageId, client.data.user.id, data.content);
+            this.server.to(`conv_${updated.conversationId}`).emit('messageEdited', {
+                messageId:      updated.id,
+                content:        updated.content,
+                editedAt:       updated.editedAt,
+                conversationId: updated.conversationId,
+            });
+        } catch (e: any) {
+            client.emit('editFailed', { messageId: data.messageId, error: e.message });
         }
     }
 
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('toggleReaction')
-    async handleToggleReaction(
+    async handleReaction(
         @ConnectedSocket() client: Socket,
         @MessageBody() data: { messageId: number; emoji: string },
     ) {
-        if (!data?.messageId || !data?.emoji) return;
-        const userId = client.data.user?.id;
-        if (!userId) return;
-
         try {
-            const { grouped, senderId, receiverId } = await this.chatService.toggleReactions(
-                data.messageId, userId, data.emoji
+            const { grouped, conversationId } = await this.convService.toggleReaction(
+                data.messageId, client.data.user.id, data.emoji,
             );
-
-            const partnerId = senderId === userId ? receiverId : senderId;
-            const payload = { messageId: data.messageId, reactions: grouped };
-
-            client.emit('reactionToggled', payload);
-            this.server.to(`user_${partnerId}`).emit('reactionToggled', payload);
-            this.logger.log(`User ${userId} toggled ${data.emoji} on message ${data.messageId}`);
-        } catch (e) {
-            this.logger.warn(`Toggle reaction failed: ${e.message}`);
+            this.server.to(`conv_${conversationId}`).emit('reactionToggled', {
+                messageId: data.messageId, reactions: grouped, conversationId,
+            });
+        } catch (e: any) {
+            this.logger.warn(`Reaction failed: ${e.message}`);
         }
+    }
+
+    // ── Friend requests via WS ────────────────────────────────────────────────
+    @UseGuards(WsJwtGuard)
+    @SubscribeMessage('sendFriendRequest')
+    async handleFriendRequest(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() data: { receiverId: number },
+    ) {
+        try {
+            const friendship = await this.friends.sendRequest(client.data.user.id, data.receiverId);
+            this.server.to(`user_${data.receiverId}`).emit('friendRequestReceived', { friendship });
+            client.emit('friendRequestSent', { friendship });
+        } catch (e: any) {
+            client.emit('friendRequestFailed', { error: e.message });
+        }
+    }
+
+    @UseGuards(WsJwtGuard)
+    @SubscribeMessage('respondFriendRequest')
+    async handleRespondFriend(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() data: { friendshipId: number; action: 'ACCEPTED' | 'DECLINED' },
+    ) {
+        try {
+            const friendship = await this.friends.respond(client.data.user.id, data.friendshipId, data.action);
+            this.server.to(`user_${friendship.senderId}`).emit('friendRequestResponded', {
+                friendship, action: data.action,
+            });
+            client.emit('friendRequestResponded', { friendship, action: data.action });
+        } catch (e: any) {
+            client.emit('respondFailed', { error: e.message });
+        }
+    }
+
+    // ── Join room after being added to conversation ───────────────────────────
+    @UseGuards(WsJwtGuard)
+    @SubscribeMessage('joinConversation')
+    handleJoin(@ConnectedSocket() client: Socket, @MessageBody() data: { conversationId: number }) {
+        client.join(`conv_${data.conversationId}`);
+        client.emit('joinedConversation', { conversationId: data.conversationId });
+    }
+
+    // Helper: notify a user's sockets to join a new room
+    async notifyUserJoinRoom(userId: number, conversationId: number) {
+        const sockets = await this.server.in(`user_${userId}`).fetchSockets();
+        for (const s of sockets) s.join(`conv_${conversationId}`);
+        this.server.to(`user_${userId}`).emit('addedToConversation', { conversationId });
     }
 }

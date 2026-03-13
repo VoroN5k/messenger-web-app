@@ -6,6 +6,8 @@ import { ChatModule }    from './chat/chat.module.js';
 import { UsersModule }   from './users/users.module.js';
 import { UploadModule }  from './upload/upload.module.js';
 import { PushModule }    from './push/push.module.js';
+import {FriendsModule} from "./friends/friends.module.js";
+import {ConversationsModule} from "./conversations/conversations.module.js";
 
 @Module({
     imports: [
@@ -15,7 +17,9 @@ import { PushModule }    from './push/push.module.js';
         ChatModule,
         UsersModule,
         UploadModule,
-        PushModule,   // ← додати
+        PushModule,
+        FriendsModule,
+        ConversationsModule,
     ],
 })
 export class AppModule {}
