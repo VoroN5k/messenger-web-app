@@ -64,6 +64,11 @@ model Message {
   isRead      Boolean @default(false)
   deletedAt   DateTime?
 
+  fileUrl     String?
+  fileName    String?
+  fileType    String?
+  fileSize    Int?
+
   // Relations with sender
   sender      User   @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
   senderId    Int
