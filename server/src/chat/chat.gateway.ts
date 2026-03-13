@@ -123,44 +123,64 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @SubscribeMessage('sendMessage')
     async handleMessage(
         @ConnectedSocket() client: Socket,
-        @MessageBody() data: { toId: number; content: string },
+        @MessageBody() data: {
+            toId: number;
+            content?: string;
+            fileUrl?: string;
+            fileName?: string;
+            fileType?: string;
+            fileSize?: number;
+        },
     ) {
 
-        if (!data?.content?.trim()) return;
-        if (!data?.toId || data.toId === client.data.user.id) return;
-        if (data.content.length > 4000) return;
+        const hasContent = !!data?.content?.trim();
+        const hasFile = !!data?.fileUrl;
+
+        if (!hasContent && !hasFile) return;
+        if (!data?.toId || data.toId === client.data.user?.id) return;
+        if (hasContent && data.content!.length > 4000) return;
 
         const sender = client.data.user;
-
-        if (!sender || !sender.id) {
+        if (!sender?.id) {
             this.logger.error('Sender not found in socket data');
             return;
         }
 
         const newMessage = await this.prisma.message.create({
             data: {
-                content: data.content,
+                content: data.content?.trim() ?? '',
                 senderId: sender.id,
                 receiverId: data.toId,
+                ...(hasFile && {
+                    fileUrl: data.fileUrl,
+                    fileName: data.fileName,
+                    fileType: data.fileType,
+                    fileSize: data.fileSize,
+                }),
             },
         });
 
-        this.server.to(`user_${data.toId}`).emit('onMessage', {
-            id: newMessage.id,
-            senderId: sender.id,
-            content: newMessage.content,
-            createdAt: newMessage.createdAt,
-        });
+        const payload = {
+            id:         newMessage.id,
+            content:    newMessage.content,
+            senderId:   sender.id,
+            createdAt:  newMessage.createdAt,
+            isRead:     false,
+            reactions:  [],
+            fileUrl:    newMessage.fileUrl ?? null,
+            fileName:   newMessage.fileName ?? null,
+            fileType:   newMessage.fileType ?? null,
+            fileSize:   newMessage.fileSize ?? null,
+        };
 
-        client.emit('messageSent', {
-            id: newMessage.id,
-            content: newMessage.content,
-            createdAt: newMessage.createdAt,
-            senderId: sender.id,
-            isRead: false,
-        });
+        this.server.to(`user_${data.toId}`).emit('onMessage', payload);
+        client.emit('messageSent', payload);
 
-        this.logger.log(`User ${sender.id} → User ${data.toId}: "${data.content.slice(0, 50)}"`);
+        this.logger.log(
+            `User ${sender.id} → User ${data.toId}: ${
+                hasFile ? `[file: ${data.fileName}]` : `"${data.content!.slice(0, 50)}"`
+            }`
+        );
     }
 
     @UseGuards(WsJwtGuard)
