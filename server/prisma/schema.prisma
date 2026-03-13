@@ -14,7 +14,7 @@ enum Role {
   ADMIN
 }
 enum ConversationType {
-  PRIVATE
+  DIRECT
   GROUP
   CHANNEL
 }
