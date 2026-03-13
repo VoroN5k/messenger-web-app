@@ -3,8 +3,6 @@ import { ChatGateway }  from './chat.gateway.js';
 import { JwtModule }    from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { PrismaModule } from '../prisma/prisma.module.js';
-import { ChatController } from './chat.controller.js';
-import { ChatService }  from './chat.service.js';
 import { PushModule }   from '../push/push.module.js';
 import {ConversationsModule} from "../conversations/conversations.module.js";
 import {FriendsModule} from "../friends/friends.module.js";  // ← додати
@@ -22,7 +20,7 @@ import {FriendsModule} from "../friends/friends.module.js";  // ← додати
             }),
         }),
     ],
-    controllers: [ChatController],
     providers:   [ChatGateway],
+    exports: [ChatGateway]
 })
 export class ChatModule {}
