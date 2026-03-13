@@ -160,6 +160,28 @@ export class ChatService {
         return messages.reverse().map((msg) => {
             const { reactions, ...rest } = msg;
             return { ...rest, reactions: this.groupReactions(reactions) };
-        })
+        });
+    }
+
+    async getMessagesAround(currentUserId: number, partnerId: number, around: number) {
+        const messages = await this.prisma.message.findMany({
+            where: {
+                OR: [
+                    { senderId: currentUserId, receiverId: partnerId },
+                    { senderId: partnerId,     receiverId: currentUserId },
+                ],
+                id: { lte: around },
+            },
+            include: {
+                reactions: {select: {emoji: true, userId: true}, orderBy: {createdAt: 'asc'}},
+            },
+            take: 20,
+            orderBy: { id: 'desc' },
+        });
+
+        return messages.reverse().map((msg) => {
+            const { reactions, ...rest } = msg;
+            return { ...rest, reactions: this.groupReactions(reactions) };
+        });
     }
 }
