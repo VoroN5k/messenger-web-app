@@ -13,6 +13,7 @@ import { User }          from '@/src/types/auth.types';
 import { Message, Reaction } from '@/src/types/chat.types';
 import { Socket }        from 'socket.io-client';
 import { EmojiPicker }   from './EmojiPicker';
+import {Avatar} from "@/src/components/chat/Avatar";
 
 interface ChatAreaProps {
     currentUserId: string | number;
@@ -323,24 +324,29 @@ export default function ChatArea({ currentUserId, selectedUser, socket }: ChatAr
 
             {/* ── Шапка ── */}
             <header className="px-6 py-4 bg-white border-b border-gray-100 flex items-center justify-between shadow-sm z-10">
-                <div>
-                    <h2 className="font-semibold text-gray-800 text-lg leading-tight">{selectedUser.nickname}</h2>
-                    <p className={`text-xs font-medium mt-0.5 ${selectedUser.isOnline ? 'text-violet-500' : 'text-slate-400'}`}>
-                        {selectedUser.isOnline ? 'В мережі' : 'Офлайн'}
-                    </p>
+                <div className="flex items-center gap-3">
+                    <div className="relative">
+                        <Avatar user={selectedUser} size="md" />
+                        <span className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white
+                ${selectedUser.isOnline ? 'bg-emerald-400' : 'bg-slate-300'}`} />
+                    </div>
+                    <div>
+                        <h2 className="font-semibold text-gray-800 text-base leading-tight">{selectedUser.nickname}</h2>
+                        <p className={`text-xs font-medium mt-0.5 ${selectedUser.isOnline ? 'text-violet-500' : 'text-slate-400'}`}>
+                            {selectedUser.isOnline ? 'В мережі' : 'Офлайн'}
+                        </p>
+                    </div>
                 </div>
-
                 {/* Кнопка пошуку */}
                 <button
                     onClick={() => { if (isOpen) closeSearch(); else setIsOpen(true); }}
                     className={`p-2 rounded-full transition-all cursor-pointer
-                        ${isOpen ? 'text-indigo-600 bg-indigo-50' : 'text-slate-400 hover:text-indigo-500 hover:bg-indigo-50'}`}
+            ${isOpen ? 'text-indigo-600 bg-indigo-50' : 'text-slate-400 hover:text-indigo-500 hover:bg-indigo-50'}`}
                     title="Пошук по повідомленнях"
                 >
                     <Search size={18} />
                 </button>
             </header>
-
             {/* ── SearchBar ── */}
             {isOpen && (
                 <div className="bg-white border-b border-gray-100 px-4 py-3 flex flex-col gap-2 z-10 shadow-sm">

@@ -5,6 +5,7 @@ export interface User {
     role?: string;
     isOnline?: boolean;
     lastSeen?: Date | string;
+    avatarUrl?: string | null;
 }
 
 export interface JwtPayload {
