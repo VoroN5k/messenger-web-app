@@ -13,6 +13,7 @@ import { WsJwtGuard } from "./guards/ws-jwt.guard.js";
 import {PrismaService} from "../prisma/prisma.service.js";
 import {JwtService} from "@nestjs/jwt";
 import {ChatService} from "./chat.service.js";
+import {PushService} from "../push/push.service.js";
 
 @WebSocketGateway({
     cors: {
@@ -24,7 +25,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     constructor(
         private readonly prisma: PrismaService,
         private readonly jwtService: JwtService,
-        private readonly chatService: ChatService
+        private readonly chatService: ChatService,
+        private readonly pushService: PushService,
     ) {}
 
     private activeUsers = new Map<number, Set<string>>();
@@ -132,27 +134,23 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
             fileSize?: number;
         },
     ) {
-
         const hasContent = !!data?.content?.trim();
-        const hasFile = !!data?.fileUrl;
+        const hasFile    = !!data?.fileUrl;
 
         if (!hasContent && !hasFile) return;
         if (!data?.toId || data.toId === client.data.user?.id) return;
         if (hasContent && data.content!.length > 4000) return;
 
         const sender = client.data.user;
-        if (!sender?.id) {
-            this.logger.error('Sender not found in socket data');
-            return;
-        }
+        if (!sender?.id) return;
 
         const newMessage = await this.prisma.message.create({
             data: {
-                content: data.content?.trim() ?? '',
-                senderId: sender.id,
+                content:    data.content?.trim() ?? '',
+                senderId:   sender.id,
                 receiverId: data.toId,
                 ...(hasFile && {
-                    fileUrl: data.fileUrl,
+                    fileUrl:  data.fileUrl,
                     fileName: data.fileName,
                     fileType: data.fileType,
                     fileSize: data.fileSize,
@@ -161,16 +159,16 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         });
 
         const payload = {
-            id:         newMessage.id,
-            content:    newMessage.content,
-            senderId:   sender.id,
-            createdAt:  newMessage.createdAt,
-            isRead:     false,
-            reactions:  [],
-            fileUrl:    newMessage.fileUrl ?? null,
-            fileName:   newMessage.fileName ?? null,
-            fileType:   newMessage.fileType ?? null,
-            fileSize:   newMessage.fileSize ?? null,
+            id:        newMessage.id,
+            content:   newMessage.content,
+            senderId:  sender.id,
+            createdAt: newMessage.createdAt,
+            isRead:    false,
+            reactions: [],
+            fileUrl:   newMessage.fileUrl  ?? null,
+            fileName:  newMessage.fileName ?? null,
+            fileType:  newMessage.fileType ?? null,
+            fileSize:  newMessage.fileSize ?? null,
         };
 
         this.server.to(`user_${data.toId}`).emit('onMessage', payload);
@@ -179,8 +177,24 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.logger.log(
             `User ${sender.id} → User ${data.toId}: ${
                 hasFile ? `[file: ${data.fileName}]` : `"${data.content!.slice(0, 50)}"`
-            }`
+            }`,
         );
+
+        // ── Web Push ──────────────────────────────────────────────────────────────
+        // Відправляємо push завжди
+        // залежно від того, чи активна вкладка
+        const bodyText = hasFile
+            ? `📎 ${data.fileName ?? 'Файл'}`
+            : (newMessage.content.length > 100
+                ? newMessage.content.slice(0, 97) + '…'
+                : newMessage.content);
+
+        this.pushService.sendToUser(data.toId, {
+            title:    sender.nickname,
+            body:     bodyText,
+            senderId: sender.id,
+            url:      '/chat',
+        }).catch(() => {}); // fire-and-forget, не блокуємо відповідь
     }
 
     @UseGuards(WsJwtGuard)

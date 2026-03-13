@@ -5,10 +5,12 @@ import { ConfigModule, ConfigService } from "@nestjs/config";
 import { PrismaModule } from "../prisma/prisma.module.js";
 import {ChatController} from "./chat.controller.js";
 import {ChatService} from "./chat.service.js";
+import {PushModule} from "../push/push.module.js";
 
 @Module({
     imports: [
         PrismaModule,
+        PushModule,
         JwtModule.registerAsync({
             imports: [ConfigModule],
             inject: [ConfigService],
