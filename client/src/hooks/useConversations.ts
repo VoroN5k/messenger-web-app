@@ -1,0 +1,123 @@
+import { useState, useEffect, useCallback } from 'react';
+import api from '@/src/lib/axios';
+import { useAuthStore } from '@/src/store/useAuthStore';
+import { Conversation, Message } from '@/src/types/conversation.types';
+
+export const useConversations = (socket: any) => {
+    const [conversations, setConversations] = useState<Conversation[]>([]);
+    const [isLoading,     setIsLoading]     = useState(false);
+    const accessToken = useAuthStore((s) => s.accessToken);
+
+    const fetchConversations = useCallback(async () => {
+        setIsLoading(true);
+        try {
+            const res = await api.get<Conversation[]>('/conversations');
+            setConversations(res.data);
+        } catch (e) {
+            console.error('fetchConversations:', e);
+        } finally {
+            setIsLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!accessToken) return;
+        fetchConversations();
+    }, [accessToken, fetchConversations]);
+
+    useEffect(() => {
+        if (!socket) return;
+
+        const onMessage = (msg: Message) => {
+            setConversations((prev) =>
+                prev
+                    .map((c) =>
+                        c.id !== msg.conversationId
+                            ? c
+                            : {
+                                ...c,
+                                lastMessage: {
+                                    id:        msg.id!,
+                                    content:   msg.content,
+                                    senderId:  Number(msg.senderId),
+                                    createdAt: msg.createdAt as string,
+                                    fileType:  msg.fileType  ?? null,
+                                    fileUrl:   msg.fileUrl   ?? null,
+                                },
+                                unreadCount: c.unreadCount + 1,
+                                updatedAt:   msg.createdAt as string,
+                            },
+                    )
+                    .sort(
+                        (a, b) =>
+                            new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+                    ),
+            );
+        };
+
+        const onUserStatus = (data: { userId: number; isOnline: boolean }) => {
+            setConversations((prev) =>
+                prev.map((c) => {
+                    if (c.type !== 'DIRECT') return c;
+                    if (!c.members.some((m) => m.userId === data.userId)) return c;
+                    return {
+                        ...c,
+                        isOnline: data.isOnline,
+                        members:  c.members.map((m) =>
+                            m.userId === data.userId
+                                ? { ...m, user: { ...m.user, isOnline: data.isOnline } }
+                                : m,
+                        ),
+                    };
+                }),
+            );
+        };
+
+        const onRead = (data: { userId: number; conversationId: number }) => {
+            // Don't reset OUR unread here — handled by markConversationRead
+            // But update for other users if needed in future
+        };
+
+        const onAdded = () => fetchConversations();
+
+        socket.on('onMessage',           onMessage);
+        socket.on('userStatusChanged',   onUserStatus);
+        socket.on('conversationRead',    onRead);
+        socket.on('addedToConversation', onAdded);
+
+        return () => {
+            socket.off('onMessage',           onMessage);
+            socket.off('userStatusChanged',   onUserStatus);
+            socket.off('conversationRead',    onRead);
+            socket.off('addedToConversation', onAdded);
+        };
+    }, [socket, fetchConversations]);
+
+    const markConversationRead = useCallback((conversationId: number) => {
+        setConversations((prev) =>
+            prev.map((c) => (c.id === conversationId ? { ...c, unreadCount: 0 } : c)),
+        );
+    }, []);
+
+    const addConversation = useCallback((conv: Conversation) => {
+        setConversations((prev) => {
+            if (prev.some((c) => c.id === conv.id)) return prev;
+            return [conv, ...prev];
+        });
+    }, []);
+
+    const updateConversation = useCallback((updated: Partial<Conversation> & { id: number }) => {
+        setConversations((prev) =>
+            prev.map((c) => (c.id === updated.id ? { ...c, ...updated } : c)),
+        );
+    }, []);
+
+    return {
+        conversations,
+        isLoading,
+        fetchConversations,
+        markConversationRead,
+        addConversation,
+        updateConversation,
+    };
+};

@@ -1,110 +1,115 @@
-"use client";
+'use client';
 
-import { useEffect, useState } from "react";
-import { useAuthStore }           from "@/src/store/useAuthStore";
-import { useSocket }              from "@/src/hooks/useSocket";
-import { useUsers }               from "@/src/hooks/useUsers";
-import { usePushNotifications }   from "@/src/hooks/usePushNotifications";
-import api                        from "@/src/lib/axios";
-import Sidebar                    from "@/src/components/chat/SideBar";
-import ChatArea                   from "@/src/components/chat/ChatArea";
-import { User }                   from "@/src/types/auth.types";
-import { jwtDecode }              from "jwt-decode";
-import { Bell, BellOff, X }       from "lucide-react";
+import { useEffect, useState } from 'react';
+import { useAuthStore }         from '@/src/store/useAuthStore';
+import { useSocket }            from '@/src/hooks/useSocket';
+import { useConversations }     from '@/src/hooks/useConversations';
+import { useFriends }           from '@/src/hooks/useFriends';
+import { usePushNotifications } from '@/src/hooks/usePushNotifications';
+import api                      from '@/src/lib/axios';
+import { jwtDecode }            from 'jwt-decode';
+import { Bell, X }              from 'lucide-react';
+import Sidebar                  from '@/src/components/chat/SideBar';
+import ChatArea                 from '@/src/components/chat/ChatArea';
+import { Conversation }         from '@/src/types/conversation.types';
 
 export default function ChatPage() {
-    const { user, logout }   = useAuthStore();
-    const socket             = useSocket();
+    const { user, logout, setAuth } = useAuthStore();
+    const socket                    = useSocket();
 
-    const [selectedUser, setSelectedUser] = useState<User | null>(null);
-    const [isLoaded,     setIsLoaded]     = useState(false);
-    // Банер з пропозицією увімкнути сповіщення
-    const [showBanner,   setShowBanner]   = useState(false);
-
-    const currentUserId = user?.id;
+    const [selectedConv,  setSelectedConv]  = useState<Conversation | null>(null);
+    const [isLoaded,      setIsLoaded]      = useState(false);
+    const [showBanner,    setShowBanner]    = useState(false);
 
     useEffect(() => {
         if (user !== undefined) setIsLoaded(true);
     }, [user]);
 
-    const { users } = useUsers(currentUserId, isLoaded, socket);
+    // ── Proactive refresh on load ─────────────────────────────────────────────
+    useEffect(() => {
+        if (!useAuthStore.getState().accessToken) {
+            api.post('/auth/refresh')
+                .then((res) => {
+                    useAuthStore.getState().setAuth(
+                        useAuthStore.getState().user,
+                        res.data.accessToken,
+                    );
+                })
+                .catch(() => { window.location.href = '/auth/login'; });
+        }
+    }, []);
+
+    const {
+        conversations,
+        isLoading: convsLoading,
+        fetchConversations,
+        markConversationRead,
+        addConversation,
+        updateConversation,
+    } = useConversations(socket);
+
+    const {
+        friends,
+        pendingRequests,
+        fetchAll:      fetchFriends,
+        respondToRequest,
+        removeFriend,
+        sendRequest,
+    } = useFriends(socket);
 
     const { isSupported, permission, requestPermission } = usePushNotifications(!!user);
 
-    // Показуємо банер один раз якщо дозвіл ще не запитувався
+    // ── Push banner ───────────────────────────────────────────────────────────
     useEffect(() => {
         if (!isSupported) return;
-        if (typeof window === 'undefined') return;
-
         const dismissed = localStorage.getItem('push-banner-dismissed');
         if (dismissed) return;
-
-        const timer = setTimeout(() => {
-            if (Notification.permission === 'default') {
-                setShowBanner(true);
-            }
+        const t = setTimeout(() => {
+            if (Notification.permission === 'default') setShowBanner(true);
         }, 3000);
-
-        return () => clearTimeout(timer);
+        return () => clearTimeout(t);
     }, [isSupported]);
 
-    const handleEnableNotifications = async () => {
-        setShowBanner(false);
-        await requestPermission();
-    };
-
-    const handleDismissBanner = () => {
-        setShowBanner(false);
-        localStorage.setItem('push-banner-dismissed', '1');
-    };
-
-    // Резервний захист WebSocket
+    // ── Silent refresh ────────────────────────────────────────────────────────
     useEffect(() => {
-        if (!socket) return;
-        const handleError = () => { api.get('/auth/sessions').catch(() => {}); };
-        socket.on("auth_error",     handleError);
-        socket.on("connect_error",  handleError);
-        return () => {
-            socket.off("auth_error",    handleError);
-            socket.off("connect_error", handleError);
-        };
-    }, [socket]);
+        let tid: ReturnType<typeof setTimeout>;
 
-    // Silent Refresh
-    useEffect(() => {
-        let timeoutId: ReturnType<typeof setTimeout>;
-
-        const scheduleRefresh = (token: string | null) => {
-            clearTimeout(timeoutId);
+        const schedule = (token: string | null) => {
+            clearTimeout(tid);
             if (!token) return;
             try {
                 const { exp } = jwtDecode<{ exp: number }>(token);
-                const refreshIn = Math.max(exp * 1000 - Date.now() - 60_000, 5_000);
-                timeoutId = setTimeout(async () => {
+                const delay   = Math.max(exp * 1000 - Date.now() - 60_000, 5_000);
+                tid = setTimeout(async () => {
                     try {
-                        const response = await api.post('/auth/refresh');
+                        const res = await api.post('/auth/refresh');
                         useAuthStore.getState().setAuth(
                             useAuthStore.getState().user,
-                            response.data.accessToken,
+                            res.data.accessToken,
                         );
                     } catch {}
-                }, refreshIn);
+                }, delay);
             } catch {}
         };
 
-        scheduleRefresh(useAuthStore.getState().accessToken);
-        const unsubscribe = useAuthStore.subscribe(
+        schedule(useAuthStore.getState().accessToken);
+        const unsub = useAuthStore.subscribe(
             (s) => s.accessToken,
-            (token) => scheduleRefresh(token),
+            (t) => schedule(t),
         );
-        return () => { clearTimeout(timeoutId); unsubscribe(); };
+        return () => { clearTimeout(tid); unsub(); };
     }, []);
 
     const handleLogout = async () => {
-        try { await api.post("/auth/logout"); } catch {}
+        try { await api.post('/auth/logout'); } catch {}
         logout();
         localStorage.removeItem('auth-storage');
         window.location.href = '/auth/login';
+    };
+
+    const handleSelectConversation = (conv: Conversation) => {
+        setSelectedConv(conv);
+        markConversationRead(conv.id);
     };
 
     if (!isLoaded) return null;
@@ -112,7 +117,7 @@ export default function ChatPage() {
     return (
         <div className="flex h-screen bg-gray-100 flex-col">
 
-            {/* ── Банер дозволу на сповіщення ── */}
+            {/* Push banner */}
             {showBanner && (
                 <div className="flex items-center justify-between gap-3 px-5 py-3 bg-indigo-600 text-white text-sm z-50">
                     <div className="flex items-center gap-2">
@@ -121,14 +126,14 @@ export default function ChatPage() {
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                         <button
-                            onClick={handleEnableNotifications}
+                            onClick={async () => { setShowBanner(false); await requestPermission(); }}
                             className="bg-white text-indigo-600 font-semibold px-3 py-1 rounded-lg hover:bg-indigo-50 transition-colors cursor-pointer text-xs"
                         >
                             Увімкнути
                         </button>
                         <button
-                            onClick={handleDismissBanner}
-                            className="text-indigo-200 hover:text-white transition-colors cursor-pointer"
+                            onClick={() => { setShowBanner(false); localStorage.setItem('push-banner-dismissed', '1'); }}
+                            className="text-indigo-200 hover:text-white cursor-pointer"
                         >
                             <X size={16} />
                         </button>
@@ -139,17 +144,27 @@ export default function ChatPage() {
             <div className="flex flex-1 overflow-hidden">
                 <Sidebar
                     currentUser={user}
-                    users={users}
-                    selectedUser={selectedUser}
-                    onSelectUser={setSelectedUser}
+                    conversations={conversations}
+                    convsLoading={convsLoading}
+                    friends={friends}
+                    pendingRequests={pendingRequests}
+                    selectedConvId={selectedConv?.id}
+                    socket={socket}
+                    onSelectConversation={handleSelectConversation}
+                    onAddConversation={addConversation}
+                    onSendFriendRequest={sendRequest}
+                    onRespondFriendRequest={respondToRequest}
+                    onRemoveFriend={removeFriend}
                     onLogout={handleLogout}
                     pushPermission={permission}
                     onTogglePush={permission === 'granted' ? undefined : requestPermission}
                 />
+
                 <ChatArea
-                    currentUserId={currentUserId!}
-                    selectedUser={selectedUser}
+                    currentUser={user}
+                    conversation={selectedConv}
                     socket={socket}
+                    onConversationUpdate={updateConversation}
                 />
             </div>
         </div>

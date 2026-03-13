@@ -1,16 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
 import api from '@/src/lib/axios';
-import { Message } from '@/src/types/chat.types';
+import { Message } from '@/src/types/conversation.types';
 
-export const useSearch = (selectedUserId: string | number | undefined) => {
-    const [query,      setQuery]      = useState('');
-    const [results,    setResults]    = useState<Message[]>([]);
-    const [isSearching,setIsSearching]= useState(false);
-    const [isOpen,     setIsOpen]     = useState(false);
+export const useSearch = (conversationId: number | undefined) => {
+    const [query,       setQuery]       = useState('');
+    const [results,     setResults]     = useState<Message[]>([]);
+    const [isSearching, setIsSearching] = useState(false);
+    const [isOpen,      setIsOpen]      = useState(false);
 
-    // Debounce 350ms
     useEffect(() => {
-        if (!query.trim() || query.trim().length < 2 || !selectedUserId) {
+        if (!query.trim() || query.trim().length < 2 || !conversationId) {
             setResults([]);
             setIsSearching(false);
             return;
@@ -20,12 +19,12 @@ export const useSearch = (selectedUserId: string | number | undefined) => {
 
         const timer = setTimeout(async () => {
             try {
-                const res = await api.get('/chat/search', {
-                    params: { q: query.trim(), withUserId: selectedUserId },
-                });
+                const res = await api.get(
+                    `/conversations/${conversationId}/messages/search`,
+                    { params: { q: query.trim() } },
+                );
                 setResults(res.data);
-            } catch (e) {
-                console.error('Search failed', e);
+            } catch {
                 setResults([]);
             } finally {
                 setIsSearching(false);
@@ -33,19 +32,15 @@ export const useSearch = (selectedUserId: string | number | undefined) => {
         }, 350);
 
         return () => clearTimeout(timer);
-    }, [query, selectedUserId]);
+    }, [query, conversationId]);
 
-    // Закрити і скинути
     const close = useCallback(() => {
         setIsOpen(false);
         setQuery('');
         setResults([]);
     }, []);
 
-    // Скинути результати при зміні співрозмовника
-    useEffect(() => {
-        close();
-    }, [selectedUserId]);
+    useEffect(() => { close(); }, [conversationId]);
 
     return { query, setQuery, results, isSearching, isOpen, setIsOpen, close };
 };
