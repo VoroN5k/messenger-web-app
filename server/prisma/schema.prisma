@@ -33,6 +33,7 @@ model User {
 
   sentMessages      Message[] @relation("SentMessages")
   receivedMessages  Message[] @relation("ReceivedMessages")
+  reactions         Reaction[]
 
   isOnline  Boolean   @default(false)
   lastSeen   DateTime @default(now())
@@ -59,7 +60,7 @@ model Message {
   id          Int     @id @default(autoincrement())
   content     String  @db.Text
   createdAt   DateTime @default(now())
-  updatedAt   DateTime? @updatedAt
+  editedAt    DateTime?
   isRead      Boolean @default(false)
   deletedAt   DateTime?
 
@@ -71,7 +72,26 @@ model Message {
   receiver    User   @relation("ReceivedMessages", fields: [receiverId], references: [id], onDelete: Cascade)
   receiverId  Int
 
+  reactions   Reaction[]
+
   @@index([senderId])
   @@index([receiverId])
+}
+
+model Reaction {
+  id        Int     @id @default(autoincrement())
+  emoji     String  @db.VarChar(10)
+  createdAt DateTime @default(now())
+
+  userId    Int
+  messageId Int
+
+  // Relations with user
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  message  Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, messageId, emoji])
+  @@index([messageId])
+  @@index([userId])
 }
 
