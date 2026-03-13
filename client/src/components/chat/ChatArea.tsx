@@ -60,7 +60,7 @@ const HighlightText = ({ text, query }: { text: string; query: string }) => {
 // ── Статус ────────────────────────────────────────────────────────────────────
 const CHECK_PATH = 'M1.5 5L5 8.5L12.5 1';
 const MessageStatus = ({ message }: { message: Message }) => {
-    const color = message.isRead ? '#a5b4fc' : 'rgba(255,255,255,0.5)';
+    const color = message.isRead ? '#549eff' : 'rgba(255,255,255,0.5)';
     if (!message.id)
         return <svg width="14" height="10" viewBox="0 0 14 10" fill="none" className="inline-block shrink-0"><path d={CHECK_PATH} stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>;
     return (

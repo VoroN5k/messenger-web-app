@@ -39,6 +39,8 @@ model User {
   lastSeen   DateTime @default(now())
 
   sessions  Session[]
+
+  pushSubscriptions PushSubscription[]
 }
 
 model Session {
@@ -97,6 +99,19 @@ model Reaction {
 
   @@unique([userId, messageId, emoji])
   @@index([messageId])
+  @@index([userId])
+}
+
+model PushSubscription {
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  endpoint     String   @unique
+  p256dh       String
+  auth         String
+  createdAt    DateTime @default(now())
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@index([userId])
 }
 

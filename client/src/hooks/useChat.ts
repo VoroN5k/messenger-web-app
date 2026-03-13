@@ -72,7 +72,7 @@ export const useChat = (
                     !m.id &&
                     m.content === confirmed.content &&
                     String(m.senderId) === String(confirmed.senderId) &&
-                    m.fileUrl === confirmed.fileUrl
+                    (m.fileUrl ?? null) === (confirmed.fileUrl ?? null)
                         ? { isRead: m.isRead ?? false, ...confirmed }
                         : m,
                 ),

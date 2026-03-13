@@ -5,6 +5,7 @@ import { ChatModule } from "./chat/chat.module.js";
 import {UsersModule} from "./users/users.module.js";
 import { ThrottlerModule } from '@nestjs/throttler';
 import {UploadModule} from "./upload/upload.module.js";
+import {PushModule} from "./push/push.module.js";
 
 
 @Module({
@@ -14,7 +15,8 @@ import {UploadModule} from "./upload/upload.module.js";
         AuthModule,
         ChatModule,
         UsersModule,
-        UploadModule
+        UploadModule,
+        PushModule
     ],
     controllers: [],
     providers: [],
