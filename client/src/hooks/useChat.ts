@@ -199,7 +199,7 @@ export const useChat = (
     }) => {
         if (!selectedUserId || !currentUserId || !socket) return;
         socket.emit('sendMessage', { toId: selectedUserId, ...payload });
-        //Optimisctic message
+        //Optimistic message
         setMessages((prev) => [
             ...prev,
             {
