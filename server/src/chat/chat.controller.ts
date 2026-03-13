@@ -15,13 +15,26 @@ export class ChatController {
         @CurrentUser('sub') userId: number,
         @Param('withUserId', ParseIntPipe) withUserId: number,
         @Query('cursor') cursor?: string,
+        @Query('around') around?: string,
     ) {
 
-        const currentUserId = userId;
+        if (around) {
+            const aroundId = parseInt(around, 10);
+            return this.chatService.getMessagesAround(userId, withUserId, aroundId);
+        }
 
         const parsedCursor = cursor ? parseInt(cursor, 10) : undefined;
+        return this.chatService.getChatHistory(userId, withUserId, parsedCursor);
+    }
 
-        return this.chatService.getChatHistory(currentUserId, withUserId, parsedCursor);
-
+    @Get('search')
+    @UseGuards(JwtAuthGuard)
+    async searchMessages(
+        @CurrentUser('sub') userId: number,
+        @Query('q')             q:      string,
+        @Query('withUserId') withUserIdStr: string,
+    ) {
+        const withUserId = parseInt(withUserIdStr, 10);
+        return this.chatService.searchMessages(userId, withUserId, q ?? '');
     }
 }
