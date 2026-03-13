@@ -1,3 +1,9 @@
+export interface Reaction {
+    emoji: string;
+    count: number;
+    userIds: (number | string)[];
+}
+
 export interface Message {
     id?: number;
     content: string;
@@ -5,6 +11,7 @@ export interface Message {
     receiverId?: number | string;
     isRead?: boolean;
     createdAt: string | Date;
-    updatedAt: string | Date | null;
+    editedAt: string | Date | null;
     deletedAt: string | Date | null;
+    reactions?: Reaction[];
 }
