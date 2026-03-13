@@ -1,12 +1,15 @@
 import { useState, useEffect } from "react";
 import api from "@/src/lib/axios";
 import {User} from "@/src/types/auth.types";
+import {useAuthStore} from "@/src/store/useAuthStore";
 
 export const useUsers = (currentUserId: string | number | undefined, isLoaded: boolean, socket: any) => {
     const [users, setUsers] = useState<User[]>([]);
 
+    const accessToken = useAuthStore((s) => s.accessToken);
+
     useEffect(() => {
-        if (!isLoaded || !currentUserId) return;
+        if (!isLoaded || !currentUserId || !accessToken) return;
 
         const fetchUsers = async () => {
             try {
@@ -18,7 +21,7 @@ export const useUsers = (currentUserId: string | number | undefined, isLoaded: b
         };
 
         fetchUsers();
-    }, [isLoaded, currentUserId]);
+    }, [isLoaded, currentUserId, accessToken]);
 
     useEffect(() => {
         if (!socket) return;
