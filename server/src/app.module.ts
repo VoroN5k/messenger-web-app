@@ -1,22 +1,20 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module.js';
 import { ChatModule } from "./chat/chat.module.js";
 import {UsersModule} from "./users/users.module.js";
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
-import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerModule } from '@nestjs/throttler';
+import {UploadModule} from "./upload/upload.module.js";
 
 
 @Module({
     imports: [
-        ThrottlerModule.forRoot([{
-            ttl: 60000,
-            limit: 10,
-        }]),
+        ThrottlerModule.forRoot([{ttl: 60000, limit: 10}]),
         ConfigModule.forRoot({ isGlobal: true }),
         AuthModule,
         ChatModule,
-        UsersModule
+        UsersModule,
+        UploadModule
     ],
     controllers: [],
     providers: [],
