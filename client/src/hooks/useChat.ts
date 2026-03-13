@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import api from "@/src/lib/axios";
-import {Message} from "@/src/types/chat.types";
+import {Message, Reaction} from "@/src/types/chat.types";
 
 
 export const useChat = (
@@ -131,6 +131,14 @@ export const useChat = (
              );
         };
 
+        const handleReactionToggled = ( data: { messageId: number; reactions: Reaction[] }) => {
+            setMessages((prev) =>
+                prev.map((msg) =>
+                    msg.id === data.messageId ? { ...msg, reactions: data.reactions } : msg
+                )
+            );
+        }
+
         const handleTypingEvent = (data: {
             userId: number | string,
             isTyping: boolean
@@ -145,6 +153,7 @@ export const useChat = (
         socket.on('messagesRead', handleMessagesRead);
         socket.on("messageDeleted", handleMessageDeleted);
         socket.on("messageEdited", handleMessageEdited);
+        socket.on("reactionToggled", handleReactionToggled);
         socket.on("onTyping", handleTypingEvent);
 
 
@@ -155,6 +164,7 @@ export const useChat = (
             socket.off('messagesRead', handleMessagesRead);
             socket.off("messageDeleted", handleMessageDeleted);
             socket.off("messageEdited", handleMessageEdited);
+            socket.off("reactionToggled", handleReactionToggled);
         };
     }, [socket, selectedUserId, currentUserId]);
 
@@ -172,7 +182,7 @@ export const useChat = (
                 createdAt: new Date().toISOString(),
                 isRead: false,
                 deletedAt: null,
-                updatedAt: null,
+                editedAt: null,
             }
         ]);
 
@@ -195,6 +205,14 @@ export const useChat = (
         [socket],
     );
 
+    const toggleReaction = useCallback(
+        (messageId: number, emoji: string) => {
+            if (!socket) return;
+            socket.emit("toggleReaction", { messageId, emoji });
+        },
+        [socket]
+    );
+
     const notifyTyping = useCallback(() => {
         if (!socket || !selectedUserId) return;
 
@@ -213,6 +231,7 @@ export const useChat = (
         sendMessage,
         deleteMessage,
         editMessage,
+        toggleReaction,
         isTyping,
         notifyTyping,
         loadMoreMessages,
