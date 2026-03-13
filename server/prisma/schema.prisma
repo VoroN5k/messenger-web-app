@@ -13,36 +13,48 @@ enum Role {
   USER
   ADMIN
 }
+enum ConversationType {
+  PRIVATE
+  GROUP
+  CHANNEL
+}
+
+enum MemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  BLOCKED
+}
 
 model User {
   id        Int       @id @default(autoincrement())
   email     String    @unique
   nickname  String    @unique
   password  String
-
-  avatarUrl String?
-
   role      Role      @default(USER)
-
+  avatarUrl String?
   isEmailVerified Boolean @default(false)
   emailVerifyToken String?
-
   passwordResetToken String?
   passwordResetExpires DateTime?
-
+  isOnline   Boolean   @default(false)
+  lastSeen   DateTime @default(now())
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
-  sentMessages      Message[] @relation("SentMessages")
-  receivedMessages  Message[] @relation("ReceivedMessages")
-  reactions         Reaction[]
-
-  isOnline  Boolean   @default(false)
-  lastSeen   DateTime @default(now())
-
   sessions  Session[]
-
   pushSubscriptions PushSubscription[]
+  conversationMembers ConversationMember[]
+  sentMessages      Message[]   @relation("MessageSender")
+  reactions         Reaction[]
+  sentFriendRequests Friendship[] @relation("FriendshipSender")
+  receivedFriendRequests Friendship[] @relation("FriendshipReceiver")
 }
 
 model Session {
@@ -54,66 +66,107 @@ model Session {
   ipAddress    String?
   expiresAt    DateTime
   createdAt    DateTime @default(now())
-
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
   @@index([userId])
 }
 
+model Conversation {
+  id          Int              @id @default(autoincrement())
+  type        ConversationType
+  name        String?
+  description String?
+  avatarUrl   String?
+  createdById Int?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  members  ConversationMember[]
+  messages Message[]
+
+  @@index([createdById])
+}
+
+model ConversationMember {
+  id             Int        @id @default(autoincrement())
+  conversationId Int
+  userId         Int
+  role           MemberRole @default(MEMBER)
+  joinedAt       DateTime   @default(now())
+  lastReadAt     DateTime   @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+  @@index([conversationId])
+}
+
 model Message {
-  id          Int     @id @default(autoincrement())
-  content     String  @db.Text
-  createdAt   DateTime @default(now())
-  editedAt    DateTime?
-  isRead      Boolean @default(false)
-  deletedAt   DateTime?
+  id             Int       @id @default(autoincrement())
+  content        String    @db.Text @default("")
+  createdAt      DateTime  @default(now())
+  editedAt       DateTime?
+  deletedAt      DateTime?
+  fileUrl        String?
+  fileName       String?
+  fileType       String?
+  fileSize       Int?
+  senderId       Int
+  conversationId Int
+  replyToId      Int?
 
-  fileUrl     String?
-  fileName    String?
-  fileType    String?
-  fileSize    Int?
+  sender       User         @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  replyTo      Message?     @relation("MessageReplies", fields: [replyToId], references: [id])
+  replies      Message[]    @relation("MessageReplies")
+  reactions    Reaction[]
 
-  // Relations with sender
-  sender      User   @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
-  senderId    Int
-
-  // Relations with recipient
-  receiver    User   @relation("ReceivedMessages", fields: [receiverId], references: [id], onDelete: Cascade)
-  receiverId  Int
-
-  reactions   Reaction[]
-
+  @@index([conversationId])
   @@index([senderId])
-  @@index([receiverId])
+  @@index([conversationId, id])
 }
 
 model Reaction {
-  id        Int     @id @default(autoincrement())
-  emoji     String  @db.VarChar(10)
-  createdAt DateTime @default(now())
-
+  id        Int      @id @default(autoincrement())
+  emoji     String   @db.VarChar(10)
   userId    Int
   messageId Int
+  createdAt DateTime @default(now())
 
-  // Relations with user
-  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  message  Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
 
   @@unique([userId, messageId, emoji])
   @@index([messageId])
   @@index([userId])
 }
 
+model Friendship {
+  id         Int              @id @default(autoincrement())
+  senderId   Int
+  receiverId Int
+  status     FriendshipStatus @default(PENDING)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  sender   User @relation("FriendshipSender",   fields: [senderId],   references: [id], onDelete: Cascade)
+  receiver User @relation("FriendshipReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@unique([senderId, receiverId])
+  @@index([senderId])
+  @@index([receiverId])
+  @@index([status])
+}
+
 model PushSubscription {
-  id           Int      @id @default(autoincrement())
-  userId       Int
-  endpoint     String   @unique
-  p256dh       String
-  auth         String
-  createdAt    DateTime @default(now())
-
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   @@index([userId])
 }
 
