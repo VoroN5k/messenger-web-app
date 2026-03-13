@@ -112,6 +112,11 @@ export default function ChatPage() {
         markConversationRead(conv.id);
     };
 
+    // FIX 3: Коли ChatArea отримує нове повідомлення в активному чаті — скидаємо unread
+    const handleMarkRead = (conversationId: number) => {
+        markConversationRead(conversationId);
+    };
+
     if (!isLoaded) return null;
 
     return (
@@ -165,6 +170,7 @@ export default function ChatPage() {
                     conversation={selectedConv}
                     socket={socket}
                     onConversationUpdate={updateConversation}
+                    onMarkRead={handleMarkRead}
                 />
             </div>
         </div>

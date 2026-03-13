@@ -8,6 +8,8 @@ export const useConversations = (socket: any) => {
     const [isLoading,     setIsLoading]     = useState(false);
     const accessToken = useAuthStore((s) => s.accessToken);
 
+    const currentUserId = useAuthStore((s) => s.user?.id);
+
     const fetchConversations = useCallback(async () => {
         setIsLoading(true);
         try {
@@ -29,6 +31,8 @@ export const useConversations = (socket: any) => {
         if (!socket) return;
 
         const onMessage = (msg: Message) => {
+            const isOwnMessage = String(msg.senderId) === String(currentUserId);
+
             setConversations((prev) =>
                 prev
                     .map((c) =>
@@ -44,7 +48,7 @@ export const useConversations = (socket: any) => {
                                     fileType:  msg.fileType  ?? null,
                                     fileUrl:   msg.fileUrl   ?? null,
                                 },
-                                unreadCount: c.unreadCount + 1,
+                                unreadCount: isOwnMessage ? c.unreadCount : c.unreadCount + 1,
                                 updatedAt:   msg.createdAt as string,
                             },
                     )

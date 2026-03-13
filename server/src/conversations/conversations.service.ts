@@ -50,6 +50,37 @@ export class ConversationsService {
         return { ...rest, reactions: this.groupReactions(reactions) };
     }
 
+    // FIX: mapMessage з isRead — перевіряємо чи хтось інший прочитав після createdAt
+    private mapMessageWithRead(
+        msg: any,
+        senderId: number,
+        otherMembersLastRead: Map<number, Date>,
+    ) {
+        const { reactions, ...rest } = msg;
+
+        // isRead = true якщо хоч один інший учасник має lastReadAt >= createdAt повідомлення
+        // і це повідомлення від нашого senderId
+        let isRead = false;
+        if (rest.senderId === senderId) {
+            const msgTime = new Date(rest.createdAt).getTime();
+            for (const lastRead of otherMembersLastRead.values()) {
+                if (lastRead.getTime() >= msgTime) {
+                    isRead = true;
+                    break;
+                }
+            }
+        } else {
+            // Чужі повідомлення — завжди вважаємо прочитаними (ми їх завантажили = побачили)
+            isRead = true;
+        }
+
+        return {
+            ...rest,
+            isRead,
+            reactions: this.groupReactions(reactions),
+        };
+    }
+
     private async assertMember(userId: number, conversationId: number) {
         const m = await this.prisma.conversationMember.findUnique({
             where: { conversationId_userId: { conversationId, userId } },
@@ -62,6 +93,22 @@ export class ConversationsService {
         const m = await this.assertMember(userId, conversationId);
         if (m.role === 'MEMBER') throw new ForbiddenException('Admin required');
         return m;
+    }
+
+    // ── Отримуємо lastReadAt інших учасників для визначення isRead ────────────
+    private async getOtherMembersLastRead(
+        conversationId: number,
+        currentUserId: number,
+    ): Promise<Map<number, Date>> {
+        const members = await this.prisma.conversationMember.findMany({
+            where: { conversationId, userId: { not: currentUserId } },
+            select: { userId: true, lastReadAt: true },
+        });
+        const map = new Map<number, Date>();
+        for (const m of members) {
+            map.set(m.userId, m.lastReadAt);
+        }
+        return map;
     }
 
     // ── My conversations ──────────────────────────────────────────────────────
@@ -218,6 +265,7 @@ export class ConversationsService {
     // ── Messages ──────────────────────────────────────────────────────────────
     async getMessages(userId: number, conversationId: number, cursor?: number) {
         await this.assertMember(userId, conversationId);
+
         const msgs = await this.prisma.message.findMany({
             where:   { conversationId },
             select:  MSG_SELECT,
@@ -225,18 +273,30 @@ export class ConversationsService {
             ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
             orderBy: { id: 'desc' },
         });
-        return msgs.reverse().map(this.mapMessage.bind(this));
+
+        // FIX: отримуємо lastReadAt інших учасників для розрахунку isRead
+        const otherMembersLastRead = await this.getOtherMembersLastRead(conversationId, userId);
+
+        return msgs.reverse().map((msg) =>
+            this.mapMessageWithRead(msg, userId, otherMembersLastRead),
+        );
     }
 
     async getMessagesAround(userId: number, conversationId: number, around: number) {
         await this.assertMember(userId, conversationId);
+
         const msgs = await this.prisma.message.findMany({
             where:   { conversationId, id: { lte: around } },
             select:  MSG_SELECT,
             take:    30,
             orderBy: { id: 'desc' },
         });
-        return msgs.reverse().map(this.mapMessage.bind(this));
+
+        const otherMembersLastRead = await this.getOtherMembersLastRead(conversationId, userId);
+
+        return msgs.reverse().map((msg) =>
+            this.mapMessageWithRead(msg, userId, otherMembersLastRead),
+        );
     }
 
     async searchMessages(userId: number, conversationId: number, query: string) {
@@ -249,7 +309,12 @@ export class ConversationsService {
             orderBy: { id: 'desc' },
             take:    30,
         });
-        return msgs.reverse().map(this.mapMessage.bind(this));
+
+        const otherMembersLastRead = await this.getOtherMembersLastRead(conversationId, userId);
+
+        return msgs.reverse().map((msg) =>
+            this.mapMessageWithRead(msg, userId, otherMembersLastRead),
+        );
     }
 
     // ── Save message (from gateway) ───────────────────────────────────────────
@@ -283,7 +348,8 @@ export class ConversationsService {
             data:  { updatedAt: new Date() },
         });
 
-        return this.mapMessage(msg);
+        // Новe повідомлення завжди isRead: false (ніхто ще не прочитав)
+        return { ...this.mapMessage(msg), isRead: false };
     }
 
     // ── Mark as read ──────────────────────────────────────────────────────────

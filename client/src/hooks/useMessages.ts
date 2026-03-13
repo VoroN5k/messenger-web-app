@@ -73,7 +73,6 @@ export const useMessages = (
             if (msg.conversationId !== conversationId) return;
 
             setMessages((prev) => {
-                // Replace optimistic message if exists
                 const idx = prev.findIndex(
                     (m) =>
                         !m.id &&
@@ -89,12 +88,10 @@ export const useMessages = (
                 return [...prev, msg];
             });
 
-            // Clear typing indicator for sender
             setTypingUsers((prev) =>
                 prev.filter((t) => t.userId !== Number(msg.senderId)),
             );
 
-            // Mark as read if not from current user
             if (String(msg.senderId) !== String(currentUserId)) {
                 socket.emit('markAsRead', { conversationId });
             }
@@ -140,6 +137,21 @@ export const useMessages = (
             );
         };
 
+        // FIX 1: Коли інший юзер прочитав — ставимо isRead=true на наші повідомлення
+        const onRead = (data: { userId: number; conversationId: number }) => {
+            if (data.conversationId !== conversationId) return;
+            // Позначаємо всі наші повідомлення як прочитані
+            if (String(data.userId) !== String(currentUserId)) {
+                setMessages((prev) =>
+                    prev.map((m) =>
+                        String(m.senderId) === String(currentUserId)
+                            ? { ...m, isRead: true }
+                            : m,
+                    ),
+                );
+            }
+        };
+
         const onTyping = (data: {
             userId:         number;
             nickname:       string;
@@ -155,7 +167,6 @@ export const useMessages = (
                     return [...prev, { userId: data.userId, nickname: data.nickname }];
                 });
 
-                // Auto-clear after 3.5s if no update
                 const existing = typingTimers.current.get(data.userId);
                 if (existing) clearTimeout(existing);
 
@@ -175,18 +186,20 @@ export const useMessages = (
             }
         };
 
-        socket.on('onMessage',       onMessage);
-        socket.on('messageDeleted',  onDeleted);
-        socket.on('messageEdited',   onEdited);
-        socket.on('reactionToggled', onReaction);
-        socket.on('onTyping',        onTyping);
+        socket.on('onMessage',        onMessage);
+        socket.on('messageDeleted',   onDeleted);
+        socket.on('messageEdited',    onEdited);
+        socket.on('reactionToggled',  onReaction);
+        socket.on('onTyping',         onTyping);
+        socket.on('conversationRead', onRead);  // FIX 1
 
         return () => {
-            socket.off('onMessage',       onMessage);
-            socket.off('messageDeleted',  onDeleted);
-            socket.off('messageEdited',   onEdited);
-            socket.off('reactionToggled', onReaction);
-            socket.off('onTyping',        onTyping);
+            socket.off('onMessage',        onMessage);
+            socket.off('messageDeleted',   onDeleted);
+            socket.off('messageEdited',    onEdited);
+            socket.off('reactionToggled',  onReaction);
+            socket.off('onTyping',         onTyping);
+            socket.off('conversationRead', onRead);
         };
     }, [socket, conversationId, currentUserId]);
 
@@ -196,7 +209,6 @@ export const useMessages = (
 
         socket.emit('sendMessage', { conversationId, content, replyToId });
 
-        // Optimistic message
         setMessages((prev) => [
             ...prev,
             {
@@ -208,6 +220,7 @@ export const useMessages = (
                 editedAt:       null,
                 reactions:      [],
                 replyToId:      replyToId ?? null,
+                isRead:         false,
             },
         ]);
 
@@ -237,6 +250,7 @@ export const useMessages = (
                 editedAt:       null,
                 reactions:      [],
                 replyToId:      payload.replyToId ?? null,
+                isRead:         false,
                 ...payload,
             },
         ]);

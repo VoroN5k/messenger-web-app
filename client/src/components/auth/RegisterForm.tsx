@@ -17,22 +17,22 @@ export const RegisterForm = () => {
         formState: { errors }
     } = useForm();
 
-
     const password = watch("password");
 
     const onSubmit = async (data: any) => {
         setIsLoading(true);
         try {
-
-            const response = await api.post("/auth/register", {
-                ...data,
-                meta: {
-                    userAgent: window.navigator.userAgent,
-                    ip: "127.0.0.1"
-                }
+            // FIX 2: Не передаємо зайвий meta — бекенд сам витягне IP та userAgent
+            await api.post("/auth/register", {
+                email:           data.email,
+                password:        data.password,
+                confirmPassword: data.confirmPassword,
+                nickname:        data.nickname,
             });
 
-            alert("Реєстрація успішна! Тепер підтвердіть email у базі та увійдіть.");
+            // FIX 2: Після реєстрації завжди перекидаємо на login (не на /chat)
+            // Бо потрібно підтвердити email, а потім залогінитись щоб отримати правильний токен
+            alert("Реєстрація успішна! Перевірте email для підтвердження, потім увійдіть.");
             router.push("/auth/login");
         } catch (e: any) {
             const errorMsg = e.response?.data?.message || "Помилка при реєстрації";

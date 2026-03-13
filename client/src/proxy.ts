@@ -11,7 +11,7 @@ export function proxy(request: NextRequest) {
 
     // groups of paths
     const isAuthRoute = pathname.startsWith("/auth/login") || pathname.startsWith("/auth/register");
-    const isProtectedRoute = pathname.startsWith("/chat") || pathname.startsWith("/profile");
+    const isProtectedRoute = pathname.startsWith("/chat") || pathname.startsWith("/profile") || pathname.startsWith("/settings");
 
     // Scenario A: User without token is trying to access protected route
     if ( isProtectedRoute && !refreshToken ) {

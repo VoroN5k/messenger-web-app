@@ -25,6 +25,8 @@ interface ChatAreaProps {
     conversation:          Conversation | null;
     socket:                Socket | null;
     onConversationUpdate?: (updated: any) => void;
+    // FIX 3: callback щоб скидати unread коли чат активний
+    onMarkRead?:           (conversationId: number) => void;
 }
 
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
@@ -62,7 +64,9 @@ const HighlightText = ({ text, query }: { text: string; query: string }) => {
 // ── MessageStatus ─────────────────────────────────────────────────────────────
 const CP = 'M1.5 5L5 8.5L12.5 1';
 const MessageStatus = ({ msg }: { msg: Message }) => {
-    const c = msg.isRead ? '#69dafa' : 'rgba(255,255,255,0.5)';
+    // FIX 1: isRead може бути undefined — трактуємо як false
+    const isRead = msg.isRead === true;
+    const c = isRead ? '#69dafa' : 'rgba(255,255,255,0.5)';
     if (!msg.id)
         return <svg width="14" height="10" viewBox="0 0 14 10" fill="none" className="inline-block shrink-0"><path d={CP} stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>;
     return (
@@ -148,6 +152,7 @@ const ReplyBubble = ({ reply, isMe }: { reply: NonNullable<Message['replyTo']>; 
 // ─────────────────────────────────────────────────────────────────────────────
 export default function ChatArea({
                                      currentUser, conversation, socket, onConversationUpdate,
+                                     onMarkRead,
                                  }: ChatAreaProps) {
     const currentUserId = currentUser?.id;
 
@@ -193,7 +198,17 @@ export default function ChatArea({
             messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
             lastMsgIdRef.current = id;
         }
-    }, [messages, typingUsers]);
+    }, [messages]);
+
+    // FIX 3: Коли приходить нове повідомлення і цей чат активний — одразу скидаємо unread
+    useEffect(() => {
+        if (!messages.length || !conversation) return;
+        const last = messages[messages.length - 1];
+        // Якщо повідомлення не від нас — скидаємо лічильник в sidebar
+        if (String(last.senderId) !== String(currentUserId)) {
+            onMarkRead?.(conversation.id);
+        }
+    }, [messages]);
 
     // ── Scroll to jump ─────────────────────────────────────────────────────────
     useEffect(() => {
@@ -352,7 +367,6 @@ export default function ChatArea({
             {/* ── Header ── */}
             <header className="px-5 py-3.5 bg-white border-b border-gray-100 flex items-center justify-between shadow-sm z-10">
                 <div className="flex items-center gap-3 min-w-0">
-                    {/* Avatar / icon */}
                     {conversation.avatarUrl || conversation.type === 'DIRECT' ? (
                         <div className="relative shrink-0">
                             <Avatar
@@ -473,7 +487,6 @@ export default function ChatArea({
                     const showSep = idx === 0 ||
                         new Date(msg.createdAt).toDateString() !== new Date(messages[idx - 1].createdAt).toDateString();
 
-                    // sender display (for group/channel)
                     const senderName = msg.sender?.nickname ?? '';
                     const showSender = !isMe && (isGroup || isChannel);
 
@@ -493,7 +506,6 @@ export default function ChatArea({
                                 onMouseEnter={() => setHoveredKey(msgKey)}
                                 onMouseLeave={() => setHoveredKey(null)}
                             >
-                                {/* Sender name (groups) */}
                                 {showSender && !isDeleted && (
                                     <div className="flex items-center gap-2 mb-1 ml-1">
                                         {msg.sender && <Avatar user={msg.sender} size="sm" />}
@@ -503,18 +515,15 @@ export default function ChatArea({
 
                                 <div className={`flex items-end gap-2 ${isMe ? 'flex-row' : 'flex-row-reverse'}`}>
 
-                                    {/* Actions */}
                                     {!isDeleted && msg.id && !isEditing && (
                                         <div className={`flex items-center gap-1 transition-opacity duration-150
                       ${showAct ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
 
-                                            {/* Reply */}
                                             <button onClick={() => setReplyTo(msg)}
                                                     className="p-1.5 rounded-full text-slate-400 hover:text-violet-500 hover:bg-violet-50 cursor-pointer transition-all">
                                                 <Reply size={13} />
                                             </button>
 
-                                            {/* Emoji */}
                                             <div className="relative">
                                                 <button onClick={() => setPickerKey((p) => p === msgKey ? null : msgKey)}
                                                         className={`p-1.5 rounded-full transition-all cursor-pointer
@@ -560,7 +569,6 @@ export default function ChatArea({
                                         </div>
                                     )}
 
-                                    {/* Bubble */}
                                     <div className={`
                     ${isImage ? 'p-1.5' : 'px-4 py-2.5'}
                     max-w-md break-words flex flex-col shadow-sm transition-all duration-300
@@ -591,7 +599,6 @@ export default function ChatArea({
                                             </div>
                                         ) : (
                                             <>
-                                                {/* Reply preview */}
                                                 {msg.replyTo && !isDeleted && (
                                                     <ReplyBubble reply={msg.replyTo} isMe={isMe} />
                                                 )}
@@ -634,20 +641,20 @@ export default function ChatArea({
                     );
                 })}
 
-                {/* Typing indicators */}
-                {typingUsers.length > 0 && (
-                    <div className="flex justify-start animate-pulse">
-                        <div className="px-4 py-2.5 rounded-2xl rounded-bl-sm bg-white border border-gray-100 text-violet-400 text-sm italic shadow-sm">
-              <span className="font-medium">
-                {typingUsers.map((t) => t.nickname).join(', ')}
-              </span>
-                            {typingUsers.length === 1 ? ' друкує...' : ' друкують...'}
-                        </div>
-                    </div>
-                )}
-
                 <div ref={messagesEndRef} />
             </div>
+
+            {/* FIX 5: Typing indicator ПОЗА scroll-контейнером — фіксований над input */}
+            {typingUsers.length > 0 && (
+                <div className="px-5 py-1.5 bg-slate-50 border-t border-gray-100/50">
+                    <div className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl rounded-bl-sm bg-white border border-gray-100 text-violet-400 text-sm italic shadow-sm animate-pulse">
+                        <span className="font-medium">
+                            {typingUsers.map((t) => t.nickname).join(', ')}
+                        </span>
+                        {typingUsers.length === 1 ? ' друкує...' : ' друкують...'}
+                    </div>
+                </div>
+            )}
 
             {/* Upload progress */}
             {uploadProgress !== null && (
@@ -721,7 +728,6 @@ export default function ChatArea({
     );
 }
 
-// ── Empty state icon ──────────────────────────────────────────────────────────
 function MessageSquarePlaceholder() {
     return (
         <svg width="56" height="56" viewBox="0 0 56 56" fill="none" className="text-slate-200">
