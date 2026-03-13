@@ -260,7 +260,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
             const payload = {
                 messageId: updated.id,
                 content: updated.content,
-                updatedAt: updated.updatedAt,
+                updatedAt: updated.editedAt,
             };
 
             client.emit("messageEdited", payload);
@@ -274,5 +274,29 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
     }
 
+    @UseGuards(WsJwtGuard)
+    @SubscribeMessage('toggleReaction')
+    async handleToggleReaction(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() data: { messageId: number; emoji: string },
+    ) {
+        if (!data?.messageId || !data?.emoji) return;
+        const userId = client.data.user?.id;
+        if (!userId) return;
 
+        try {
+            const { grouped, senderId, receiverId } = await this.chatService.toggleReactions(
+                data.messageId, userId, data.emoji
+            );
+
+            const partnerId = senderId === userId ? receiverId : senderId;
+            const payload = { messageId: data.messageId, reactions: grouped };
+
+            client.emit('reactionToggled', payload);
+            this.server.to(`user_${partnerId}`).emit('reactionToggled', payload);
+            this.logger.log(`User ${userId} toggled ${data.emoji} on message ${data.messageId}`);
+        } catch (e) {
+            this.logger.warn(`Toggle reaction failed: ${e.message}`);
+        }
+    }
 }
