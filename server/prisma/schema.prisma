@@ -20,6 +20,8 @@ model User {
   nickname  String    @unique
   password  String
 
+  avatarUrl String?
+
   role      Role      @default(USER)
 
   isEmailVerified Boolean @default(false)

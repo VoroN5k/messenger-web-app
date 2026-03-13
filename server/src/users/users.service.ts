@@ -19,6 +19,7 @@ export class UsersService {
                 email: true,
                 isOnline: true,
                 lastSeen: true,
+                avatarUrl: true,
             },
             orderBy: {
                 isOnline: 'desc',
@@ -31,6 +32,14 @@ export class UsersService {
         return this.prisma.user.findUnique({
             where: { id },
             select: { id: true, nickname: true, isOnline: true },
+        });
+    }
+
+    async updateAvatar(userId: number, avatarUrl: string) {
+        return this.prisma.user.update({
+            where: { id: userId },
+            data: { avatarUrl },
+            select: { avatarUrl: true},
         });
     }
 }
