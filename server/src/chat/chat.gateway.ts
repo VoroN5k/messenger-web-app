@@ -263,4 +263,166 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         for (const s of sockets) s.join(`conv_${conversationId}`);
         this.server.to(`user_${userId}`).emit('addedToConversation', { conversationId });
     }
+
+    // ── Call tracking ──────────────────────────────────────────────────────────────────
+    private activeCalls = new Map<string, {
+        callerId: number;
+        calleeId: number;
+        conversationId: number;
+        callType: string;
+    }>();
+
+    @UseGuards(WsJwtGuard)
+    @SubscribeMessage('callUser')
+    async handleCallUser(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() data: {
+            callId: string;
+            conversationId: number;
+            targetUserId: number;
+            callType: 'audio' | 'video';
+        },
+    ) {
+        const callerId = client.data.user.id as number;
+        const { callId, targetUserId, conversationId, callType } = data;
+
+        if (this.activeCalls.has(callId)) return;
+
+        this.activeCalls.set(callId, {
+            callerId,
+            calleeId: targetUserId,
+            conversationId,
+            callType,
+        });
+
+        const caller = await this.prisma.user.findUnique({
+            where: { id: callerId },
+            select: { nickname: true, avatarUrl: true },
+        });
+
+        this.server.to(`user_${targetUserId}`).emit('incomingCall', {
+            callId,
+            conversationId,
+            callerId,
+            callerName: caller?.nickname ?? 'Unknown',
+            callerAvatar: caller?.avatarUrl ?? null,
+            callType,
+        });
+
+        this.logger.log(`Call ${callId}: ${callerId} -> ${targetUserId} [${callType}]`);
+    }
+
+    @UseGuards(WsJwtGuard)
+    @SubscribeMessage('callAccept')
+    handleCallAccept(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() data: { callId: string; callType: 'audio' | 'video' },
+    ) {
+        const call = this.activeCalls.get(data.callId);
+        if (!call) return;
+
+        this.server.to(`user_${call.callerId}`).emit('callAccepted', {
+        callId: data.callId,
+            callType: data.callType,
+        });
+    }
+
+    @UseGuards(WsJwtGuard)
+    @SubscribeMessage('callReject')
+    handleCallReject(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() data: { callId: string; conversationId: number },
+    ) {
+        const call = this.activeCalls.get(data.callId);
+        if (!call) return;
+
+        this.activeCalls.delete(data.callId);
+        this.server.to(`user_${call.callerId}`).emit('callRejected', { callId: data.callId });
+        this.logger.log(`Call ${data.callId} rejected`);
+    }
+
+    @UseGuards(WsJwtGuard)
+    @SubscribeMessage('callEnd')
+    handleCallEnd(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() data: { callId: string; conversationId: number },
+    ) {
+        const call = this.activeCalls.get(data.callId);
+        if (!call) return;
+
+        this.activeCalls.delete(data.callId);
+
+        const userId    = client.data.user.id as number;
+        const remoteId  = userId === call.callerId ? call.calleeId : call.callerId;
+
+        this.server.to(`user_${remoteId}`).emit('callEnded', { callId: data.callId });
+        this.logger.log(`Call ${data.callId} ended by user ${userId}`);
+    }
+
+    @UseGuards(WsJwtGuard)
+    @SubscribeMessage('callBusy')
+    handleCallBusy(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() data: { callId: string },
+    ) {
+        const call = this.activeCalls.get(data.callId);
+        if (!call) return;
+
+        this.activeCalls.delete(data.callId);
+        this.server.to(`user_${call.callerId}`).emit('callBusy', { callId: data.callId });
+    }
+
+    @UseGuards(WsJwtGuard)
+    @SubscribeMessage('sdpOffer')
+    handleSdpOffer(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() data: { callId: string; offer: RTCSessionDescriptionInit },
+    ) {
+        const call = this.activeCalls.get(data.callId);
+        if (!call) return;
+
+        const userId = client.data.user.id as number;
+        const remoteId = userId === call.callerId ? call.calleeId : call.callerId;
+
+        this.server.to(`user_${remoteId}`).emit('sdpOffer', {
+            callId: data.callId,
+            offer: data.offer,
+        });
+    }
+
+    @UseGuards(WsJwtGuard)
+    @SubscribeMessage('sdpAnswer')
+    handleSdpAnswer(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() data: { callId: string; answer: RTCSessionDescriptionInit },
+    ) {
+        const call   = this.activeCalls.get(data.callId);
+        if (!call) return;
+
+        const userId   = client.data.user.id as number;
+        const remoteId = userId === call.callerId ? call.calleeId : call.callerId;
+
+        this.server.to(`user_${remoteId}`).emit('sdpAnswer', {
+            callId: data.callId,
+            answer: data.answer,
+        });
+    }
+
+    @UseGuards(WsJwtGuard)
+    @SubscribeMessage('iceCandidate')
+    handleIceCandidate(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() data: { callId: string; candidate: RTCIceCandidateInit },
+    ) {
+        const call   = this.activeCalls.get(data.callId);
+        if (!call) return;
+
+        const userId   = client.data.user.id as number;
+        const remoteId = userId === call.callerId ? call.calleeId : call.callerId;
+
+        this.server.to(`user_${remoteId}`).emit('iceCandidate', {
+            callId:    data.callId,
+            candidate: data.candidate,
+        });
+    }
 }
