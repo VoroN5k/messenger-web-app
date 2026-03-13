@@ -2,22 +2,26 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import api from '@/src/lib/axios';
 import { useAuthStore } from '@/src/store/useAuthStore';
 
-function urlBase64ToUint8Array(base64String: string): Uint8Array {
+// Повертає ArrayBuffer (не ArrayBufferLike) — без TS помилки в applicationServerKey
+function urlBase64ToArrayBuffer(base64String: string): ArrayBuffer {
     const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
     const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
     const rawData = window.atob(base64);
-    return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
+    const buffer = new ArrayBuffer(rawData.length);
+    const view = new Uint8Array(buffer);
+    for (let i = 0; i < rawData.length; i++) {
+        view[i] = rawData.charCodeAt(i);
+    }
+    return buffer;
 }
 
 type PermissionState = 'idle' | 'requesting' | 'granted' | 'denied' | 'unsupported';
 
 export const usePushNotifications = (isAuthenticated: boolean) => {
     const [permission, setPermission] = useState<PermissionState>('idle');
-    const subscriptionRef = useRef<PushSubscription | null>(null);
-    const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
-
-    // ── Читаємо accessToken зі стору ─────────────────────────────────────────
-    const accessToken = useAuthStore((s) => s.accessToken);
+    const subscriptionRef  = useRef<PushSubscription | null>(null);
+    const registrationRef  = useRef<ServiceWorkerRegistration | null>(null);
+    const subscribedRef    = useRef(false); // щоб не дублювати POST /push/subscribe
 
     const isSupported =
         typeof window !== 'undefined' &&
@@ -25,7 +29,7 @@ export const usePushNotifications = (isAuthenticated: boolean) => {
         'PushManager' in window &&
         'Notification' in window;
 
-    // ── Реєстрація SW — запускаємо лише один раз (не залежить від токена) ────
+    // ── 1. Реєстрація SW ─────────────────────────────────────────────────────
     useEffect(() => {
         if (!isSupported || !isAuthenticated) return;
 
@@ -33,28 +37,14 @@ export const usePushNotifications = (isAuthenticated: boolean) => {
             .register('/sw.js', { scope: '/' })
             .then((reg) => {
                 registrationRef.current = reg;
-                // Статус дозволу
-                if (Notification.permission === 'denied') setPermission('denied');
+                if (Notification.permission === 'denied')  setPermission('denied');
                 else if (Notification.permission === 'granted') setPermission('granted');
             })
             .catch((err) => console.error('[Push] SW registration failed:', err));
     }, [isSupported, isAuthenticated]);
 
-    // ── Відновлення підписки — ТІЛЬКИ коли є токен ───────────────────────────
-    // Це вирішує проблему 401: чекаємо поки silent refresh поверне accessToken
-    useEffect(() => {
-        if (!isSupported || !isAuthenticated || !accessToken) return;
-        if (Notification.permission !== 'granted') return;
-        const reg = registrationRef.current;
-        if (!reg) return;
-
-        ensureSubscription(reg);
-        // ensureSubscription навмисно не в deps — це стабільна функція
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [accessToken, isAuthenticated, isSupported]);
-
-    // ── Надсилає підписку на сервер ───────────────────────────────────────────
-    const ensureSubscription = async (
+    // ── 2. Надсилає підписку на сервер ───────────────────────────────────────
+    const ensureSubscription = useCallback(async (
         registration: ServiceWorkerRegistration,
     ): Promise<void> => {
         const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
@@ -63,22 +53,18 @@ export const usePushNotifications = (isAuthenticated: boolean) => {
             return;
         }
 
-        // Додатковий захист: перевіряємо токен безпосередньо перед запитом
-        const token = useAuthStore.getState().accessToken;
-        if (!token) {
-            console.warn('[Push] No access token yet, skipping subscription');
-            return;
-        }
-
         try {
             let sub = await registration.pushManager.getSubscription();
             if (!sub) {
                 sub = await registration.pushManager.subscribe({
                     userVisibleOnly: true,
-                    applicationServerKey: urlBase64ToUint8Array(vapidKey),
+                    applicationServerKey: urlBase64ToArrayBuffer(vapidKey), // ← ArrayBuffer, без TS помилки
                 });
             }
             subscriptionRef.current = sub;
+
+            // Не надсилаємо повторно якщо вже підписали в цій сесії
+            if (subscribedRef.current) return;
 
             const subData = sub.toJSON();
             if (!subData.keys) throw new Error('Браузер не повернув ключі шифрування');
@@ -88,13 +74,41 @@ export const usePushNotifications = (isAuthenticated: boolean) => {
                 keys: { p256dh: subData.keys.p256dh, auth: subData.keys.auth },
             });
 
+            subscribedRef.current = true;
             console.log('[Push] Subscription saved to server');
         } catch (err) {
             console.error('[Push] Subscription failed:', err);
         }
-    };
+    }, []);
 
-    // ── Запит дозволу ─────────────────────────────────────────────────────────
+    // ── 3. Відновлення підписки після отримання токена ───────────────────────
+    // Використовуємо useAuthStore.subscribe замість useEffect на accessToken,
+    // щоб не викликати зайвих ре-рендерів і не словити Request aborted
+    useEffect(() => {
+        if (!isSupported || !isAuthenticated) return;
+        if (Notification.permission !== 'granted') return;
+
+        // Підписуємось на зміну accessToken у сторі (без ре-рендеру компонента)
+        const unsubscribe = useAuthStore.subscribe(
+            (s) => s.accessToken,
+            (token) => {
+                if (!token || subscribedRef.current) return;
+                const reg = registrationRef.current;
+                if (reg) ensureSubscription(reg);
+            },
+        );
+
+        // Якщо токен вже є — запускаємо одразу
+        const currentToken = useAuthStore.getState().accessToken;
+        if (currentToken && !subscribedRef.current) {
+            const reg = registrationRef.current;
+            if (reg) ensureSubscription(reg);
+        }
+
+        return () => unsubscribe();
+    }, [isSupported, isAuthenticated, ensureSubscription]);
+
+    // ── 4. Запит дозволу ─────────────────────────────────────────────────────
     const requestPermission = useCallback(async (): Promise<boolean> => {
         if (!isSupported) return false;
         if (permission === 'granted') return true;
@@ -104,6 +118,7 @@ export const usePushNotifications = (isAuthenticated: boolean) => {
             const result = await Notification.requestPermission();
             if (result === 'granted') {
                 setPermission('granted');
+                subscribedRef.current = false; // дозволити повторну підписку
                 const reg = registrationRef.current;
                 if (reg) await ensureSubscription(reg);
                 return true;
@@ -116,10 +131,9 @@ export const usePushNotifications = (isAuthenticated: boolean) => {
             setPermission('idle');
             return false;
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [permission, isSupported]);
+    }, [permission, isSupported, ensureSubscription]);
 
-    // ── Відписатись ───────────────────────────────────────────────────────────
+    // ── 5. Відписатись ───────────────────────────────────────────────────────
     const unsubscribe = useCallback(async (): Promise<void> => {
         const sub = subscriptionRef.current;
         if (!sub) return;
@@ -127,6 +141,7 @@ export const usePushNotifications = (isAuthenticated: boolean) => {
             await api.delete('/push/unsubscribe', { data: { endpoint: sub.endpoint } });
             await sub.unsubscribe();
             subscriptionRef.current = null;
+            subscribedRef.current = false;
             setPermission('idle');
         } catch (err) {
             console.error('[Push] Unsubscribe failed:', err);

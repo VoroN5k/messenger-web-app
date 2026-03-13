@@ -27,8 +27,6 @@ export default function ChatPage() {
         if (user !== undefined) setIsLoaded(true);
     }, [user]);
 
-
-
     const { users } = useUsers(currentUserId, isLoaded, socket);
 
     const { isSupported, permission, requestPermission } = usePushNotifications(!!user);
