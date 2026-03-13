@@ -20,7 +20,7 @@ export const uploadFile = (
         xhr.open('POST', 'http://localhost:4000/api/upload');
 
         const token = useAuthStore.getState().accessToken;
-        if (token) xhr.setRequestHeader('Authorization', `Bearer${token}`);
+        if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
 
         xhr.upload.onprogress = (e) => {
             if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
