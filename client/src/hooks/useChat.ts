@@ -183,10 +183,39 @@ export const useChat = (
                 isRead: false,
                 deletedAt: null,
                 editedAt: null,
+                reactions: [],
             }
         ]);
 
         socket.emit("typing", { toId: selectedUserId, isTyping: false });
+    }, [selectedUserId, currentUserId, socket]);
+
+    const sendFileMessage = useCallback((payload: {
+        fileUrl: string;
+        fileName: string;
+        fileType: string;
+        fileSize: number;
+        content?: string;
+    }) => {
+        if (!selectedUserId || !currentUserId || !socket) return;
+        socket.emit('sendMessage', { toId: selectedUserId, ...payload });
+        //Optimisctic message
+        setMessages((prev) => [
+            ...prev,
+            {
+                content:    payload.content ?? '',
+                senderId:   currentUserId,
+                createdAt:  new Date().toISOString(),
+                isRead:     false,
+                deletedAt:  null,
+                editedAt:   null,
+                reactions:  [],
+                fileUrl:    payload.fileUrl,
+                fileName:   payload.fileName,
+                fileType:   payload.fileType,
+                fileSize:   payload.fileSize,
+            }
+        ]);
     }, [selectedUserId, currentUserId, socket]);
 
     const deleteMessage = useCallback(
@@ -229,6 +258,7 @@ export const useChat = (
     return {
         messages,
         sendMessage,
+        sendFileMessage,
         deleteMessage,
         editMessage,
         toggleReaction,
