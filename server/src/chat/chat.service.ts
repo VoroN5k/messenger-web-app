@@ -10,7 +10,6 @@ export class ChatService {
     constructor(private readonly prisma: PrismaService) {}
 
     // ─── Helpers ───────────────────────────────────────────────────────────────────────────────
-
     private groupReactions(reactions: { emoji: string; userId: number } []) {
         const map = new Map<string, number[]>();
         for (const r of reactions) {
@@ -28,45 +27,33 @@ export class ChatService {
         }));
     }
 
-    private transformMessage(msg: any) {
-        const { reactions, ...rest } = msg;
-        return {
-            ...rest,
-            reactions: this.groupReactions(reactions ?? []),
-        };
-    }
-
     // ─── History ────────────────────────────────────────────────────────────────────────────────────────
 
     async getChatHistory(currentUserId: number, partnerId: number, cursor?: number) {
-        const limit = 20;
-
         const messages = await this.prisma.message.findMany({
             where: {
                 OR: [
                     { senderId: currentUserId, receiverId: partnerId },
-                    { senderId: partnerId, receiverId: currentUserId },
+                    { senderId: partnerId,     receiverId: currentUserId },
                 ],
             },
             include: {
-                sender: { select: { nickname: true, id: true } }
+                sender:    { select: { nickname: true, id: true } },
+                reactions: { select: { emoji: true, userId: true }, orderBy: { createdAt: 'asc' } },
             },
-            take: limit,
-            ...(cursor ? {
-                skip: 1,
-                cursor: { id: cursor },
-            } : {}),
-            // ВАЖЛИВО: DESC,
-
+            take: 20,
+            ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
             orderBy: { id: 'desc' },
         });
 
 
-        return messages.reverse();
+        return messages.reverse().map((msg) => {
+            const { reactions, ...rest } = msg;
+            return { ...rest, reactions: this.groupReactions(reactions) };
+        });
     }
 
     // ─── Delete ─────────────────────────────────────────────────────────────────────────────────────────────────
-
     async softDeleteMessage(messageId: number, userId: number){
         const message = await this.prisma.message.findUnique({
             where: { id: messageId },
@@ -85,7 +72,6 @@ export class ChatService {
     }
 
     // ─── Edit ──────────────────────────────────────────────────────────────────────────────────────────────────
-
     async editMessage(messageId: number, userId: number, newContent: string) {
         const message = await this.prisma.message.findUnique({
             where: {id: messageId},
@@ -125,9 +111,8 @@ export class ChatService {
         if (message.deletedAt) throw new BadRequestException('Cannot react to a deleted message');
 
         // Only sender and receiver can react
-        if (message.senderId !== userId && message.receiverId !== userId) {
+        if (message.senderId !== userId && message.receiverId !== userId)
             throw new ForbiddenException('Cannot react to this message');
-        }
 
         const existing = await this.prisma.reaction.findUnique({
             where: { userId_messageId_emoji: { userId, messageId, emoji } },
