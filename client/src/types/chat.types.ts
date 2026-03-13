@@ -14,4 +14,8 @@ export interface Message {
     editedAt: string | Date | null;
     deletedAt: string | Date | null;
     reactions?: Reaction[];
+    fileUrl?:    string | null;
+    fileName?:   string | null;
+    fileType?:   string | null;
+    fileSize?:   number | null;
 }
