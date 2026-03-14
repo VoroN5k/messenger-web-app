@@ -13,6 +13,7 @@ export interface JwtPayload {
     nickname: string;
     email: string;
     role: string;
+    avatarUrl: string | null;
     iat: number;
     exp: number;
 }

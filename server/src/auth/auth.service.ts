@@ -170,7 +170,8 @@ export class AuthService {
             sub: user.id,
             email: user.email,
             nickname: user.nickname,
-            role: user.role
+            role: user.role,
+            avatarUrl: user.avatarUrl ?? null,
         };
 
         return {

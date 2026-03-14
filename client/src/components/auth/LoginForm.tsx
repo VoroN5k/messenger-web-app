@@ -28,7 +28,8 @@ export const LoginForm = () => {
                 id: decoded.sub,
                 nickname: decoded.nickname,
                 email: decoded.email,
-                role: decoded.role
+                role: decoded.role,
+                avatarUrl: decoded.avatarUrl
             }
             console.log("Backend response data: ", response.data);
 

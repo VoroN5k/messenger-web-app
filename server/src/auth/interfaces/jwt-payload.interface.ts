@@ -3,4 +3,5 @@ export interface JWTPayload {
     email: string;
     nickname: string;
     role: string;
+    avatarUrl: string | null;
 }
