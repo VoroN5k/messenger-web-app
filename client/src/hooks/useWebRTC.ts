@@ -165,11 +165,49 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
 
     // ── Get media ─────────────────────────────────────────────────────────────
     const getMedia = useCallback(async (callType: CallType): Promise<MediaStream> => {
+        // ── спочатку пробуємо запитаний тип ──────────────────────────────────────
+        if (callType === 'video') {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+                    video: true, // мінімальні constraints — без ideal width/height/facingMode
+                });
+                localStreamRef.current = stream;
+                setLocalStream(stream);
+                return stream;
+            } catch (videoErr: any) {
+                const isNotFound =
+                    videoErr.name === 'NotFoundError' ||
+                    videoErr.name === 'DevicesNotFoundError' ||
+                    videoErr.message?.includes('not be found');
+
+                if (isNotFound) {
+                    // ── камери немає — fallback на аудіо ─────────────────────────
+                    console.warn('[WebRTC] No camera found, falling back to audio-only');
+                    try {
+                        const stream = await navigator.mediaDevices.getUserMedia({
+                            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+                            video: false,
+                        });
+                        localStreamRef.current = stream;
+                        setLocalStream(stream);
+                        // Оновлюємо callType в стані щоб UI відобразив аудіо-режим
+                        setCallState(prev => ({ ...prev, callType: 'audio' }));
+                        callStateRef.current = { ...callStateRef.current, callType: 'audio' };
+                        return stream;
+                    } catch (audioErr) {
+                        throw audioErr;
+                    }
+                }
+
+                throw videoErr; // інша помилка — пробрасуємо далі
+            }
+        }
+
+        // ── аудіо дзвінок ────────────────────────────────────────────────────────
         const stream = await navigator.mediaDevices.getUserMedia({
             audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-            video: callType === 'video'
-                ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }
-                : false,
+            video: false,
         });
         localStreamRef.current = stream;
         setLocalStream(stream);
@@ -200,11 +238,19 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
                     setTimeout(() => setCallState({ status: 'idle' }), 2000);
                 }
             }, 45_000);
-        } catch (err) {
-            console.error('[WebRTC] getMedia failed:', err);
+        } catch (err: any) {
+            console.error('[WebRTC] startCall failed:', err.name, err.message);
             cleanup();
-            setCallState({ status: 'ended', endReason: 'error' });
-            setTimeout(() => setCallState({ status: 'idle' }), 2000);
+
+            const msg =
+                err.name === 'NotFoundError'      ? 'Камеру не знайдено. Перевірте підключення.' :
+                    err.name === 'NotAllowedError'    ? 'Немає дозволу на мікрофон/камеру.' :
+                        err.name === 'NotReadableError'   ? 'Камера або мікрофон зайняті іншим додатком.' :
+                            err.name === 'OverconstrainedError' ? 'Камера не підтримує потрібні параметри.' :
+                                `Помилка медіа: ${err.message}`;
+
+            alert(msg); // або заміни на свій toast
+            setCallState({ status: 'idle' });
         }
     }, [socket, currentUserId, getMedia, cleanup]);
 
