@@ -12,6 +12,10 @@ import { Bell, X }              from 'lucide-react';
 import Sidebar                  from '@/src/components/chat/SideBar';
 import ChatArea                 from '@/src/components/chat/ChatArea';
 import { Conversation }         from '@/src/types/conversation.types';
+import { useWebRTC }           from '@/src/hooks/useWebRTC';
+import { IncomingCallModal }   from '@/src/components/call/IncomingCallModal';
+import { ActiveCallOverlay }   from '@/src/components/call/ActiveCallOverlay';
+import { Phone, Video }        from 'lucide-react';
 
 export default function ChatPage() {
     const { user, logout, setAuth } = useAuthStore();
@@ -56,6 +60,13 @@ export default function ChatPage() {
         removeFriend,
         sendRequest,
     } = useFriends(socket);
+
+    const {
+        callState, localStream, remoteStream,
+        isMuted, isCameraOff,
+        startCall, acceptCall, rejectCall, endCall,
+        toggleMute, toggleCamera,
+    } = useWebRTC(socket, user?.id);
 
     const { isSupported, permission, requestPermission } = usePushNotifications(!!user);
 
@@ -171,8 +182,44 @@ export default function ChatPage() {
                     socket={socket}
                     onConversationUpdate={updateConversation}
                     onMarkRead={handleMarkRead}
+                    onStartCall={startCall}
                 />
             </div>
+            {/* ── Incoming call ── */}
+            {callState.status === 'incoming' && callState.incomingData && (
+                <IncomingCallModal
+                    data={callState.incomingData}
+                    onAccept={acceptCall}
+                    onReject={rejectCall}
+                />
+            )}
+
+            {/* ── Active / calling / connecting call ── */}
+            {(callState.status === 'calling' ||
+                callState.status === 'connecting' ||
+                callState.status === 'active' ||
+                callState.status === 'ended') && (
+                <ActiveCallOverlay
+                    callState={callState}
+                    localStream={localStream}
+                    remoteStream={remoteStream}
+                    isMuted={isMuted}
+                    isCameraOff={isCameraOff}
+                    peerName={
+                        callState.incomingData?.callerName ??
+                        conversations.find(c => c.id === callState.conversationId)?.name ??
+                        'Невідомий'
+                    }
+                    peerAvatar={
+                        callState.incomingData?.callerAvatar ??
+                        conversations.find(c => c.id === callState.conversationId)?.avatarUrl ??
+                        null
+                    }
+                    onEnd={endCall}
+                    onToggleMute={toggleMute}
+                    onToggleCamera={toggleCamera}
+                />
+            )}
         </div>
     );
 }

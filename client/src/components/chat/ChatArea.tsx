@@ -7,7 +7,7 @@ import {
     Send, Loader2, Trash2, Pencil, Check, X,
     SmilePlus, Paperclip, FileText, Download,
     ImageOff, Search, ChevronUp, ChevronDown,
-    Reply, Users, Hash,
+    Reply, Users, Hash, Phone, Video,
 } from 'lucide-react';
 import { useMessages }   from '@/src/hooks/useMessages';
 import { useSearch }     from '@/src/hooks/useSearch';
@@ -26,6 +26,7 @@ interface ChatAreaProps {
     socket:                Socket | null;
     onConversationUpdate?: (updated: any) => void;
     onMarkRead?:           (conversationId: number) => void;
+    onStartCall?: (convId: number, targetUserId: number, type: 'audio' | 'video') => void;
 }
 
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
@@ -138,7 +139,7 @@ const ReplyBubble = ({ reply, isMe }: { reply: NonNullable<Message['replyTo']>; 
 );
 
 export default function ChatArea({
-                                     currentUser, conversation, socket, onConversationUpdate, onMarkRead,
+                                     currentUser, conversation, socket, onConversationUpdate, onMarkRead, onStartCall,
                                  }: ChatAreaProps) {
     const currentUserId = currentUser?.id;
 
@@ -355,6 +356,28 @@ export default function ChatArea({
                         title="Пошук">
                     <Search size={17} />
                 </button>
+                {conversation.type === 'DIRECT' && onStartCall && (() => {
+                    const other = conversation.members.find(m => m.userId !== currentUserId);
+                    if (!other) return null;
+                    return (
+                        <div className="flex items-center gap-1">
+                            <button
+                                onClick={() => onStartCall(conversation.id, other.userId, 'audio')}
+                                className="p-2 rounded-full text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 cursor-pointer transition-all"
+                                title="Аудіо дзвінок"
+                            >
+                                <Phone size={17} />
+                            </button>
+                            <button
+                                onClick={() => onStartCall(conversation.id, other.userId, 'video')}
+                                className="p-2 rounded-full text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 cursor-pointer transition-all"
+                                title="Відео дзвінок"
+                            >
+                                <Video size={17} />
+                            </button>
+                        </div>
+                    );
+                })()}
             </header>
 
             {/* ── Search panel ── */}
