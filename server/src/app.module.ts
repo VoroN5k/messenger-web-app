@@ -8,6 +8,7 @@ import { UploadModule }  from './upload/upload.module.js';
 import { PushModule }    from './push/push.module.js';
 import {FriendsModule} from "./friends/friends.module.js";
 import {ConversationsModule} from "./conversations/conversations.module.js";
+import {KeysModule} from "./keys/keys.module.js";
 
 @Module({
     imports: [
@@ -20,6 +21,7 @@ import {ConversationsModule} from "./conversations/conversations.module.js";
         PushModule,
         FriendsModule,
         ConversationsModule,
+        KeysModule,
     ],
 })
 export class AppModule {}

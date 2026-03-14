@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import api from '@/src/lib/axios';
 import { Message, Reaction } from '@/src/types/conversation.types';
+import {useE2E} from "@/src/hooks/eseE2E";
 
 export const useMessages = (
     conversationId: number | undefined,
     currentUserId:  number | string | undefined,
     socket:         any,
+    otherUserId?: number,
 ) => {
     const [messages,      setMessages]      = useState<Message[]>([]);
     const [typingUsers,   setTypingUsers]   = useState<{ userId: number; nickname: string }[]>([]);
@@ -16,6 +18,8 @@ export const useMessages = (
     const messagesRef     = useRef<Message[]>([]);
     const typingTimers    = useRef<Map<number, NodeJS.Timeout>>(new Map());
     const typingTimeout   = useRef<NodeJS.Timeout | null>(null);
+
+    const e2e = useE2E();
 
     useEffect(() => { messagesRef.current = messages; }, [messages]);
 
@@ -36,7 +40,17 @@ export const useMessages = (
                     `/conversations/${conversationId}/messages`,
                     { signal: ctrl.signal },
                 );
-                setMessages(res.data);
+
+                const decrypted = await Promise.all(
+                    res.data.map(async (msg: Message) => {
+                       const isOwn = String(msg.senderId) === String(currentUserId);
+                       if (!msg.content || isOwn || !otherUserId) return msg;
+                       const plain = await e2e.decrypt(msg.content, otherUserId);
+                       return { ...msg, content: plain };
+                    })
+                );
+
+                setMessages(decrypted);
                 setHasMore(res.data.length >= 30);
                 if (socket) socket.emit('markAsRead', { conversationId });
             } catch (e: any) {
@@ -57,7 +71,16 @@ export const useMessages = (
                 `/conversations/${conversationId}/messages?cursor=${cursor}`,
             );
             if (res.data.length < 30) setHasMore(false);
-            setMessages((prev) => [...res.data, ...prev]);
+
+            const decrypted = await Promise.all(
+                res.data.map(async (msg: Message) => {
+                    const isOwn = String(msg.senderId) === String(currentUserId);
+                    if (!msg.content || isOwn || !otherUserId) return msg;
+                    return { ...msg, content: await e2e.decrypt(msg.content, otherUserId) };
+                })
+            );
+
+            setMessages((prev) => [...decrypted, ...prev]);
         } catch (e) {
             console.error('loadMore:', e);
         } finally {
@@ -69,23 +92,30 @@ export const useMessages = (
     useEffect(() => {
         if (!socket) return;
 
-        const onMessage = (msg: Message) => {
+        const onMessage = async (msg: Message) => {
             if (msg.conversationId !== conversationId) return;
+
+            let decryptedMsg = msg;
+            const isOwn = String(msg.senderId) === String(currentUserId);
+            if (!isOwn && msg.content && otherUserId) {
+                const plain = await e2e.decrypt(msg.content, otherUserId);
+                decryptedMsg = { ...msg, content: plain };
+            }
 
             setMessages((prev) => {
                 const idx = prev.findIndex(
                     (m) =>
                         !m.id &&
-                        m.content === msg.content &&
+                        m.content === decryptedMsg.content &&
                         String(m.senderId) === String(msg.senderId) &&
                         (m.fileUrl ?? null) === (msg.fileUrl ?? null),
                 );
                 if (idx !== -1) {
                     const next = [...prev];
-                    next[idx]  = msg;
+                    next[idx]  = decryptedMsg;
                     return next;
                 }
-                return [...prev, msg];
+                return [...prev, decryptedMsg];
             });
 
             setTypingUsers((prev) =>
@@ -204,10 +234,14 @@ export const useMessages = (
     }, [socket, conversationId, currentUserId]);
 
     // ── Actions ───────────────────────────────────────────────────────────────
-    const sendMessage = useCallback((content: string, replyToId?: number) => {
+    const sendMessage = useCallback(async (content: string, replyToId?: number) => {
         if (!content.trim() || !conversationId || !socket || !currentUserId) return;
 
-        socket.emit('sendMessage', { conversationId, content, replyToId });
+        const payload = otherUserId
+        ? await e2e.encrypt(content, otherUserId)
+        : content;
+
+        socket.emit('sendMessage', { conversationId, content: payload, replyToId });
 
         setMessages((prev) => [
             ...prev,
@@ -225,7 +259,7 @@ export const useMessages = (
         ]);
 
         socket.emit('typing', { conversationId, isTyping: false });
-    }, [conversationId, currentUserId, socket]);
+    }, [conversationId, currentUserId, socket, otherUserId]);
 
     const sendFileMessage = useCallback((payload: {
         fileUrl:   string;
