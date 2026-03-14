@@ -55,6 +55,7 @@ model User {
   reactions         Reaction[]
   sentFriendRequests Friendship[] @relation("FriendshipSender")
   receivedFriendRequests Friendship[] @relation("FriendshipReceiver")
+  publicKey UserPublicKey?
 }
 
 model Session {
