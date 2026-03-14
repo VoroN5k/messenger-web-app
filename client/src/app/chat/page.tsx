@@ -15,11 +15,13 @@ import { Conversation }         from '@/src/types/conversation.types';
 import { useWebRTC }           from '@/src/hooks/useWebRTC';
 import { IncomingCallModal }   from '@/src/components/call/IncomingCallModal';
 import { ActiveCallOverlay }   from '@/src/components/call/ActiveCallOverlay';
-import { Phone, Video }        from 'lucide-react';
+import {useE2E} from "@/src/hooks/eseE2E";
 
 export default function ChatPage() {
     const { user, logout, setAuth } = useAuthStore();
-    const socket                    = useSocket();
+    const socket = useSocket();
+
+    useE2E();
 
     const [selectedConv,  setSelectedConv]  = useState<Conversation | null>(null);
     const [isLoaded,      setIsLoaded]      = useState(false);

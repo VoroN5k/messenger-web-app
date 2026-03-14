@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import api from '@/src/lib/axios';
 import { Message, Reaction } from '@/src/types/conversation.types';
-import {useE2E} from "@/src/hooks/eseE2E";
+import {useE2E} from "./eseE2E";
 
 export const useMessages = (
     conversationId: number | undefined,
