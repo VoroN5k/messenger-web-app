@@ -5,34 +5,32 @@ export type CallStatus = 'idle' | 'calling' | 'incoming' | 'connecting' | 'activ
 export type EndReason  = 'rejected' | 'ended' | 'no-answer' | 'error' | 'busy';
 
 export interface IncomingCallData {
-    callId:       string;
-    conversationId: number;
-    callerId:     number;
-    callerName:   string;
-    callerAvatar: string | null;
-    callType:     CallType;
+    callId:          string;
+    conversationId:  number;
+    callerId:        number;
+    callerName:      string;
+    callerAvatar:    string | null;
+    callType:        CallType;
 }
 
 export interface CallState {
-    status:       CallStatus;
-    callId?:      string;
+    status:          CallStatus;
+    callId?:         string;
     conversationId?: number;
-    targetUserId?: number;
-    callType?:    CallType;
-    incomingData?: IncomingCallData;
-    startedAt?:   number;
-    endReason?:   EndReason;
+    targetUserId?:   number;
+    callType?:       CallType;
+    incomingData?:   IncomingCallData;
+    startedAt?:      number;
+    endReason?:      EndReason;
 }
 
 const ICE_SERVERS: RTCIceServer[] = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun.relay.metered.ca:80' },
 ];
 
-// ── Ringtone via Web Audio API (no file needed) ───────────────────────────────
-function createRingtone(): { play: () => void; stop: () => void } {
+function createRingtone() {
     let ctx: AudioContext | null = null;
     let playing = false;
 
@@ -55,9 +53,7 @@ function createRingtone(): { play: () => void; stop: () => void } {
             if (playing) return;
             const AC = window.AudioContext || (window as any).webkitAudioContext;
             if (!AC) return;
-            ctx     = new AC();
-            playing = true;
-            ring();
+            ctx = new AC(); playing = true; ring();
         },
         stop: () => {
             playing = false;
@@ -74,15 +70,29 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
     const [isMuted,      setIsMuted]      = useState(false);
     const [isCameraOff,  setIsCameraOff]  = useState(false);
 
-    const pcRef           = useRef<RTCPeerConnection | null>(null);
-    const localStreamRef  = useRef<MediaStream | null>(null);
-    const callStateRef    = useRef<CallState>({ status: 'idle' });
-    const ringTimeoutRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const ringtone        = useRef(createRingtone());
+    const pcRef              = useRef<RTCPeerConnection | null>(null);
+    const localStreamRef     = useRef<MediaStream | null>(null);
+    const callStateRef       = useRef<CallState>({ status: 'idle' });
+    const ringTimeoutRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const ringtone           = useRef(createRingtone());
+
+    // ── KEY FIX: buffer ICE candidates until remoteDescription is set ─────────
+    const iceCandidateBuffer = useRef<RTCIceCandidateInit[]>([]);
+    const remoteDescSet      = useRef(false);
 
     useEffect(() => { callStateRef.current = callState; }, [callState]);
 
-    // ── Cleanup ──────────────────────────────────────────────────────────────
+    // ── Flush buffered ICE candidates ─────────────────────────────────────────
+    const flushIceCandidates = useCallback(async () => {
+        const pc = pcRef.current;
+        if (!pc) return;
+        const buffered = iceCandidateBuffer.current.splice(0);
+        for (const candidate of buffered) {
+            try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch {}
+        }
+    }, []);
+
+    // ── Cleanup ───────────────────────────────────────────────────────────────
     const cleanup = useCallback(() => {
         localStreamRef.current?.getTracks().forEach(t => t.stop());
         localStreamRef.current = null;
@@ -92,42 +102,39 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
         setIsCameraOff(false);
 
         if (pcRef.current) {
-            pcRef.current.ontrack             = null;
-            pcRef.current.onicecandidate      = null;
+            pcRef.current.ontrack                    = null;
+            pcRef.current.onicecandidate             = null;
             pcRef.current.oniceconnectionstatechange = null;
             pcRef.current.close();
             pcRef.current = null;
         }
 
-        ringtone.current.stop();
+        iceCandidateBuffer.current = [];
+        remoteDescSet.current      = false;
 
-        if (ringTimeoutRef.current) {
-            clearTimeout(ringTimeoutRef.current);
-            ringTimeoutRef.current = null;
-        }
+        ringtone.current.stop();
+        if (ringTimeoutRef.current) { clearTimeout(ringTimeoutRef.current); ringTimeoutRef.current = null; }
     }, []);
 
-    // ── Create RTCPeerConnection ──────────────────────────────────────────────
+    // ── Create PeerConnection ─────────────────────────────────────────────────
     const createPC = useCallback((callId: string): RTCPeerConnection => {
-        const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-
+        const pc       = new RTCPeerConnection({ iceServers: ICE_SERVERS });
         const remoteMS = new MediaStream();
-        setRemoteStream(remoteMS);
 
-        pc.ontrack = ({ streams }) => {
-            streams[0]?.getTracks().forEach(t => remoteMS.addTrack(t));
-            // Force re-render by creating new reference
+        pc.ontrack = ({ track }) => {
+            remoteMS.addTrack(track);
+            // Create new reference to trigger React re-render
             setRemoteStream(new MediaStream(remoteMS.getTracks()));
         };
 
         pc.onicecandidate = ({ candidate }) => {
-            if (candidate) {
-                socket?.emit('iceCandidate', { callId, candidate: candidate.toJSON() });
-            }
+            if (candidate) socket?.emit('iceCandidate', { callId, candidate: candidate.toJSON() });
         };
 
         pc.oniceconnectionstatechange = () => {
             const s = pc.iceConnectionState;
+            console.log('[WebRTC] ICE state:', s);
+
             if (s === 'connected' || s === 'completed') {
                 setCallState(prev =>
                     prev.status === 'connecting'
@@ -135,7 +142,11 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
                         : prev,
                 );
             }
-            if (s === 'disconnected' || s === 'failed' || s === 'closed') {
+            if (s === 'failed') {
+                // Try ICE restart
+                pc.restartIce?.();
+            }
+            if (s === 'disconnected' || s === 'closed') {
                 setCallState(prev => {
                     if (prev.status === 'active' || prev.status === 'connecting') {
                         cleanup();
@@ -147,14 +158,15 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
             }
         };
 
-        pcRef.current = pc;
+        pcRef.current         = pc;
+        remoteDescSet.current = false;
         return pc;
     }, [socket, cleanup]);
 
-    // ── Get user media ────────────────────────────────────────────────────────
+    // ── Get media ─────────────────────────────────────────────────────────────
     const getMedia = useCallback(async (callType: CallType): Promise<MediaStream> => {
         const stream = await navigator.mediaDevices.getUserMedia({
-            audio: true,
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
             video: callType === 'video'
                 ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }
                 : false,
@@ -167,8 +179,8 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
     // ── Start call ────────────────────────────────────────────────────────────
     const startCall = useCallback(async (
         conversationId: number,
-        targetUserId: number,
-        callType: CallType,
+        targetUserId:   number,
+        callType:       CallType,
     ) => {
         if (!socket || !currentUserId) return;
         if (callStateRef.current.status !== 'idle') return;
@@ -177,12 +189,9 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
 
         try {
             await getMedia(callType);
-
             setCallState({ status: 'calling', callId, conversationId, targetUserId, callType });
-
             socket.emit('callUser', { callId, conversationId, targetUserId, callType });
 
-            // Auto-cancel if no answer in 45s
             ringTimeoutRef.current = setTimeout(() => {
                 if (callStateRef.current.status === 'calling') {
                     socket.emit('callEnd', { callId, conversationId });
@@ -191,7 +200,8 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
                     setTimeout(() => setCallState({ status: 'idle' }), 2000);
                 }
             }, 45_000);
-        } catch {
+        } catch (err) {
+            console.error('[WebRTC] getMedia failed:', err);
             cleanup();
             setCallState({ status: 'ended', endReason: 'error' });
             setTimeout(() => setCallState({ status: 'idle' }), 2000);
@@ -211,9 +221,13 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
 
         try {
             await getMedia(mediaType);
-            setCallState({ status: 'connecting', callId, conversationId, callType: mediaType });
+            // FIX: update ref synchronously before emitting, so onSdpOffer won't miss it
+            const newState: CallState = { status: 'connecting', callId, conversationId, callType: mediaType };
+            callStateRef.current = newState;
+            setCallState(newState);
             socket.emit('callAccept', { callId, callType: mediaType });
-        } catch {
+        } catch (err) {
+            console.error('[WebRTC] acceptCall media failed:', err);
             rejectCall();
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -264,7 +278,13 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
                 socket.emit('callBusy', { callId: data.callId });
                 return;
             }
-            setCallState({ status: 'incoming', callId: data.callId, conversationId: data.conversationId, callType: data.callType, incomingData: data });
+            const newState: CallState = {
+                status: 'incoming', callId: data.callId,
+                conversationId: data.conversationId, callType: data.callType,
+                incomingData: data,
+            };
+            callStateRef.current = newState;
+            setCallState(newState);
             ringtone.current.play();
 
             ringTimeoutRef.current = setTimeout(() => {
@@ -277,11 +297,14 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
             }, 45_000);
         };
 
+        // ── CALLER: callee accepted → create offer ────────────────────────────
         const onCallAccepted = async (data: { callId: string; callType: CallType }) => {
             if (callStateRef.current.status !== 'calling') return;
             if (ringTimeoutRef.current) { clearTimeout(ringTimeoutRef.current); ringTimeoutRef.current = null; }
 
-            setCallState(prev => ({ ...prev, status: 'connecting' }));
+            const newState = { ...callStateRef.current, status: 'connecting' as CallStatus };
+            callStateRef.current = newState;
+            setCallState(newState);
 
             const pc = createPC(data.callId);
             localStreamRef.current?.getTracks().forEach(t => pc.addTrack(t, localStreamRef.current!));
@@ -291,24 +314,49 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
             socket.emit('sdpOffer', { callId: data.callId, offer: { type: offer.type, sdp: offer.sdp } });
         };
 
+        // ── CALLEE: receive offer → create answer ─────────────────────────────
         const onSdpOffer = async (data: { callId: string; offer: RTCSessionDescriptionInit }) => {
-            if (callStateRef.current.status !== 'connecting') return;
+            // FIX: don't check status here — use ref directly and accept if connecting OR just received
+            const state = callStateRef.current;
+            if (state.status !== 'connecting' && state.status !== 'incoming') {
+                console.warn('[WebRTC] onSdpOffer ignored, status:', state.status);
+                return;
+            }
 
             const pc = createPC(data.callId);
             localStreamRef.current?.getTracks().forEach(t => pc.addTrack(t, localStreamRef.current!));
 
             await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+            remoteDescSet.current = true;
+            await flushIceCandidates(); // flush buffered candidates
+
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
             socket.emit('sdpAnswer', { callId: data.callId, answer: { type: answer.type, sdp: answer.sdp } });
         };
 
+        // ── CALLER: receive answer ────────────────────────────────────────────
         const onSdpAnswer = async (data: { callId: string; answer: RTCSessionDescriptionInit }) => {
-            await pcRef.current?.setRemoteDescription(new RTCSessionDescription(data.answer));
+            const pc = pcRef.current;
+            if (!pc) return;
+            await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+            remoteDescSet.current = true;
+            await flushIceCandidates(); // flush buffered candidates
         };
 
+        // ── ICE candidate — buffer if remote desc not set yet ─────────────────
         const onIceCandidate = async (data: { callId: string; candidate: RTCIceCandidateInit }) => {
-            try { await pcRef.current?.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch {}
+            if (!data.candidate) return;
+
+            if (!remoteDescSet.current) {
+                // Buffer — remote description not set yet
+                iceCandidateBuffer.current.push(data.candidate);
+                return;
+            }
+
+            const pc = pcRef.current;
+            if (!pc) return;
+            try { await pc.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch {}
         };
 
         const onCallRejected = () => {
@@ -329,26 +377,26 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
             setTimeout(() => setCallState({ status: 'idle' }), 2500);
         };
 
-        socket.on('incomingCall',   onIncomingCall);
-        socket.on('callAccepted',   onCallAccepted);
-        socket.on('sdpOffer',       onSdpOffer);
-        socket.on('sdpAnswer',      onSdpAnswer);
-        socket.on('iceCandidate',   onIceCandidate);
-        socket.on('callRejected',   onCallRejected);
-        socket.on('callEnded',      onCallEnded);
-        socket.on('callBusy',       onCallBusy);
+        socket.on('incomingCall',  onIncomingCall);
+        socket.on('callAccepted',  onCallAccepted);
+        socket.on('sdpOffer',      onSdpOffer);
+        socket.on('sdpAnswer',     onSdpAnswer);
+        socket.on('iceCandidate',  onIceCandidate);
+        socket.on('callRejected',  onCallRejected);
+        socket.on('callEnded',     onCallEnded);
+        socket.on('callBusy',      onCallBusy);
 
         return () => {
-            socket.off('incomingCall',   onIncomingCall);
-            socket.off('callAccepted',   onCallAccepted);
-            socket.off('sdpOffer',       onSdpOffer);
-            socket.off('sdpAnswer',      onSdpAnswer);
-            socket.off('iceCandidate',   onIceCandidate);
-            socket.off('callRejected',   onCallRejected);
-            socket.off('callEnded',      onCallEnded);
-            socket.off('callBusy',       onCallBusy);
+            socket.off('incomingCall',  onIncomingCall);
+            socket.off('callAccepted',  onCallAccepted);
+            socket.off('sdpOffer',      onSdpOffer);
+            socket.off('sdpAnswer',     onSdpAnswer);
+            socket.off('iceCandidate',  onIceCandidate);
+            socket.off('callRejected',  onCallRejected);
+            socket.off('callEnded',     onCallEnded);
+            socket.off('callBusy',      onCallBusy);
         };
-    }, [socket, createPC, cleanup]);
+    }, [socket, createPC, cleanup, flushIceCandidates]);
 
     useEffect(() => () => cleanup(), [cleanup]);
 

@@ -36,6 +36,7 @@ export function ActiveCallOverlay({
                                   }: Props) {
     const remoteVideoRef = useRef<HTMLVideoElement>(null);
     const localVideoRef  = useRef<HTMLVideoElement>(null);
+    const remoteAudioRef = useRef<HTMLAudioElement>(null);
     const [expanded,  setExpanded]  = useState(true);
     const [duration,  setDuration]  = useState('00:00');
 
@@ -55,6 +56,12 @@ export function ActiveCallOverlay({
             localVideoRef.current.srcObject = localStream;
         }
     }, [localStream]);
+
+    useEffect(() => {
+        if (remoteAudioRef.current && remoteStream) {
+            remoteAudioRef.current.srcObject = remoteStream;
+        }
+    }, [remoteStream]);
 
     // ── Duration counter ──────────────────────────────────────────────────────
     useEffect(() => {
@@ -111,6 +118,7 @@ export function ActiveCallOverlay({
     // ── Expanded overlay ──────────────────────────────────────────────────────
     return (
         <div className="fixed inset-0 z-[90] flex flex-col bg-slate-950">
+
 
             {/* ── Remote video / audio visual ── */}
             <div className="flex-1 relative flex items-center justify-center overflow-hidden">
@@ -222,6 +230,7 @@ export function ActiveCallOverlay({
                 )}
             </div>
         </div>
+
     );
 }
 
