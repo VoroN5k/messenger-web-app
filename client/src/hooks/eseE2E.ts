@@ -85,7 +85,9 @@ export function useE2E() {
 
         const promise = (async () => {
             try {
-                const { data } = await api.get(`/keys/${targetUserId}`);
+                const { data } = await api.get(`/keys/${targetUserId}`, {
+                    headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache'}
+                });
                 const aesKey = await deriveSharedKey(privateKey!, data.publicKey);
                 sessionKeys.set(targetUserId, aesKey);
                 return aesKey;

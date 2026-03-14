@@ -1,4 +1,4 @@
-import {Body, Controller, Get, Param, ParseIntPipe, Post, UseGuards} from "@nestjs/common";
+import {Body, Controller, Get, Header, Param, ParseIntPipe, Post, UseGuards} from "@nestjs/common";
 import {JwtAuthGuard} from "../auth/guards/jwt-auth.guard.js";
 import {KeysService} from "./keys.service.js";
 import {CurrentUser} from "../auth/decorators/current-user.decorator.js";
@@ -15,6 +15,8 @@ export class KeysController {
     }
 
     @Get(':userId')
+    @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
+    @Header('Pragma', 'no-cache')
     getKey(@Param('userId', ParseIntPipe) targetId: number) {
         return this.keysService.getKey(targetId);
     }
