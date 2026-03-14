@@ -165,11 +165,15 @@ export default function ChatArea({
     const lastMsgIdRef   = useRef<string | number | null>(null);
     const msgRefsMap     = useRef<Record<number, HTMLDivElement | null>>({});
 
+    const otherUserId = conversation?.type === 'DIRECT'
+        ? conversation.members.find(m => m.userId !== currentUserId)?.userId
+        : undefined;
+
     const {
         messages, typingUsers, hasMore, isLoadingMore, jumpTarget,
         sendMessage, sendFileMessage, deleteMessage, editMessage, toggleReaction,
         notifyTyping, loadMoreMessages, jumpToMessage, clearJumpTarget,
-    } = useMessages(conversation?.id, currentUserId, socket);
+    } = useMessages(conversation?.id, currentUserId, socket, otherUserId);
 
     const { query, setQuery, results, isSearching, isOpen, setIsOpen, close: closeSearch } =
         useSearch(conversation?.id);
