@@ -7,7 +7,7 @@ import {
     UseGuards,
     Get,
     Query,
-    UnauthorizedException,
+    UnauthorizedException, Patch,
 } from '@nestjs/common';
 import { AuthService } from './auth.service.js';
 import { RegisterDto } from './dto/register.dto.js';
@@ -16,6 +16,7 @@ import type { Request, Response } from 'express';
 import { JwtAuthGuard } from './guards/jwt-auth.guard.js';
 import { CurrentUser } from './decorators/current-user.decorator.js';
 import { Throttle, SkipThrottle } from '@nestjs/throttler';
+import {ChangePasswordDto} from "./dto/changePassword.dto.js";
 
 @Controller('auth')
 export class AuthController {
@@ -94,6 +95,15 @@ export class AuthController {
     @Post('logout-all')
     async logoutAll(@CurrentUser('sub') userId: number) {
         return this.authService.logoutAll(userId);
+    }
+
+    @UseGuards(JwtAuthGuard)
+    @Patch('password')
+    async changePassword(
+        @CurrentUser('sub') userId: number,
+        @Body() dto: ChangePasswordDto,
+    ) {
+        return this.authService.changePassword(userId, dto.currentPassword, dto.newPassword);
     }
 
     private setRefreshCookie(res: Response, token: string) {
