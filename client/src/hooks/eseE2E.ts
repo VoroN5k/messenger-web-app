@@ -88,11 +88,12 @@ export function useE2E() {
                 const { data } = await api.get(`/keys/${targetUserId}`, {
                     headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache'}
                 });
+                console.log('[E2E] raw key data for', targetUserId, data);
                 const aesKey = await deriveSharedKey(privateKey!, data.publicKey);
                 sessionKeys.set(targetUserId, aesKey);
                 return aesKey;
-            } catch {
-                console.warn(`[E2E] No public key for user ${targetUserId}`);
+            } catch (err){
+                console.warn(`[E2E] getSessionKey failed for user ${targetUserId}:`, err);
                 return null;
             } finally {
                 pendingKeys.delete(targetUserId);

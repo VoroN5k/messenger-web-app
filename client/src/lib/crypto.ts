@@ -1,14 +1,14 @@
-const ALGO = 'X25519';
+const KEY_VERSION = 'v3';
 
 export async function generateKeyPair(): Promise<{
-    publicKey: string, // base64url - encoded, sent to server
-    privateKey: CryptoKey; // remains in memory, never sent to server
+    publicKey: string;
+    privateKey: CryptoKey;
 }> {
     const keyPair = await crypto.subtle.generateKey(
-        { name: 'ECDH', namedCurve: 'X25519' },
-        true, // extractable - true only for saving in IndexedDB
+        { name: 'X25519' },
+        true,
         ['deriveKey', 'deriveBits']
-    );
+    ) as unknown as CryptoKeyPair;
 
     const rawPublic = await crypto.subtle.exportKey('raw', keyPair.publicKey);
     return {
@@ -25,14 +25,13 @@ export async function deriveSharedKey(
     const theirPubKey = await crypto.subtle.importKey(
         'raw',
         rawPublic,
-        { name: 'ECDH', namedCurve: 'X25519' },
+        { name: 'X25519' },
         false,
         [],
     );
 
-    // ECDH → 32 bits → HKDF → AES-256-GCM key
     const sharedBits = await crypto.subtle.deriveBits(
-        { name: 'ECDH', public: theirPubKey },
+        { name: 'X25519', public: theirPubKey },
         myPrivateKey,
         256,
     );
@@ -45,7 +44,7 @@ export async function deriveSharedKey(
         {
             name: 'HKDF',
             hash: 'SHA-256',
-            salt: new Uint8Array(32), // fixed salt (not recommended for production, but fine for this demo)
+            salt: new Uint8Array(32),
             info: new TextEncoder().encode('messenger-e2e-v1'),
         },
         hkdfKey,
@@ -55,34 +54,21 @@ export async function deriveSharedKey(
     );
 }
 
-// Encrypt
-export async function encryptMessage(
-    aesKey: CryptoKey,
-    plaintext: string,
-): Promise<string> {
-    const iv = crypto.getRandomValues(new Uint8Array(12)); // 96-bit IV for AES-GCM
+export async function encryptMessage(aesKey: CryptoKey, plaintext: string): Promise<string> {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
     const encoded = new TextEncoder().encode(plaintext);
-    const ciphertext = await crypto.subtle.encrypt(
-        { name: 'AES-GCM', iv },
-        aesKey,
-        encoded,
-    );
+    const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, aesKey, encoded);
 
-    // Формат: base64(iv || ciphertext) - iv завжди 12 байт
     const combined = new Uint8Array(12 + ciphertext.byteLength);
     combined.set(iv, 0);
     combined.set(new Uint8Array(ciphertext), 12);
     return bufToBase64url(combined.buffer as ArrayBuffer);
 }
 
-// Decrypt
-export async function decryptMessage(
-    aesKey:     CryptoKey,
-    ciphertext: string,
-): Promise<string> {
+export async function decryptMessage(aesKey: CryptoKey, ciphertext: string): Promise<string> {
     const combined = new Uint8Array(base64urlToBuf(ciphertext));
-    const iv         = combined.slice(0, 12);
-    const data       = combined.slice(12);
+    const iv   = combined.slice(0, 12);
+    const data = combined.slice(12);
 
     const plaintext = await crypto.subtle.decrypt(
         { name: 'AES-GCM', iv },
@@ -93,9 +79,7 @@ export async function decryptMessage(
 }
 
 // ── Key persistence в IndexedDB ───────────────────────────────────────────────
-// Приватний ключ зберігаю як non-exportable CryptoKey в IndexedDB
-// Браузер шифрує IndexedDB своїм профільним ключем
-const DB_NAME = 'messenger-keys';
+const DB_NAME    = 'messenger-keys';
 const STORE_NAME = 'keypairs';
 
 function openDB(): Promise<IDBDatabase> {
@@ -105,31 +89,31 @@ function openDB(): Promise<IDBDatabase> {
             (e.target as IDBOpenDBRequest).result.createObjectStore(STORE_NAME);
         };
         req.onsuccess = (e) => res((e.target as IDBOpenDBRequest).result);
-        req.onerror = (e) => rej((e.target as IDBOpenDBRequest).error);
+        req.onerror   = (e) => rej((e.target as IDBOpenDBRequest).error);
     });
 }
 
 export async function savePrivateKey(userId: number, key: CryptoKey): Promise<void> {
     const db = await openDB();
     await new Promise<void>((res, rej) => {
-        const tx = db.transaction(STORE_NAME, 'readwrite');
-        const req = tx.objectStore(STORE_NAME).put(key, `privkey_${userId}`)
+        const tx  = db.transaction(STORE_NAME, 'readwrite');
+        const req = tx.objectStore(STORE_NAME).put(key, `privkey_${KEY_VERSION}_${userId}`);
         req.onsuccess = () => res();
-        req.onerror = (e) => rej(req.error);
+        req.onerror   = () => rej(req.error);
     });
 }
 
 export async function loadPrivateKey(userId: number): Promise<CryptoKey | null> {
     const db = await openDB();
     return new Promise((res, rej) => {
-        const tx = db.transaction(STORE_NAME, 'readonly');
-        const req = tx.objectStore(STORE_NAME).get(`privkey_${userId}`);
+        const tx  = db.transaction(STORE_NAME, 'readonly');
+        const req = tx.objectStore(STORE_NAME).get(`privkey_${KEY_VERSION}_${userId}`);
         req.onsuccess = () => res(req.result ?? null);
-        req.onerror = (e) => rej(req.error);
+        req.onerror   = () => rej(req.error);
     });
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 function bufToBase64url(buf: ArrayBuffer): string {
     return btoa(String.fromCharCode(...new Uint8Array(buf)))
         .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
