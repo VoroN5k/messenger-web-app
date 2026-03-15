@@ -194,8 +194,8 @@ export default function ChatArea({
         },
     );
 
-    const { query, setQuery, results, isSearching, isOpen, setIsOpen, close: closeSearch } =
-        useSearch(conversation?.id, messages);
+    const { query, setQuery, results, isSearching, isOpen, setIsOpen, close: closeSearch, loadedCount } =
+        useSearch(conversation?.id, otherUserId);
 
     useEffect(() => {
         if (!messages.length) return;
@@ -412,7 +412,16 @@ export default function ChatArea({
                             <input ref={searchInputRef} value={query} onChange={(e) => setQuery(e.target.value)}
                                    placeholder="Пошук по повідомленнях..."
                                    className="w-full pl-8 pr-4 py-2 text-sm bg-slate-50 dark:bg-slate-700 dark:text-slate-200 dark:placeholder-slate-400 rounded-xl outline-none focus:bg-white dark:focus:bg-slate-600 focus:ring-2 focus:ring-indigo-200 transition-all" />
-                            {isSearching && <Loader2 size={13} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-slate-400" />}
+                                {isSearching && (
+                                    <div className="flex items-center gap-1.5">
+                                        <Loader2 size={13} className="animate-spin text-slate-400" />
+                                        {loadedCount > 0 && (
+                                            <span className="text-[11px] text-slate-400">
+                                                {loadedCount} повідомлень...
+                                            </span>
+                                        )}
+                                    </div>
+                                )}
                         </div>
                         {results.length > 0 && (
                             <div className="flex items-center gap-1">
