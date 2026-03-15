@@ -42,4 +42,12 @@ export class UsersService {
             select: { avatarUrl: true},
         });
     }
+
+    async updateStatusEmoji(userId: number, emoji: string | null) {
+        return this.prisma.user.update({
+            where: { id: userId },
+            data: { statusEmoji: emoji },
+            select: { statusEmoji: true },
+        });
+    }
 }

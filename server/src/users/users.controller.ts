@@ -6,7 +6,7 @@ import {
     Post,
     UseInterceptors,
     UploadedFile,
-    BadRequestException
+    BadRequestException, Patch, Body
 } from '@nestjs/common';
 import { UsersService } from './users.service.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
@@ -44,5 +44,13 @@ export class UsersController {
         const { url } = await this.uploadService.uploadAvatar(file, userId);
         await this.usersService.updateAvatar(userId, url);
         return { avatarUrl: url };
+    }
+
+    @Patch('status')
+    async updateStatus(
+        @CurrentUser('sub') userId: number,
+        @Body('emoji') emoji: string | null,
+    ) {
+        return this.usersService.updateStatusEmoji(userId, emoji ?? null);
     }
 }
