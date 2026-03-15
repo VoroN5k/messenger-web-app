@@ -7,36 +7,29 @@ import { useAuthStore } from "@/src/store/useAuthStore";
 import api from "@/src/lib/axios";
 import { Loader2 } from "lucide-react";
 import { jwtDecode } from "jwt-decode";
-import {AuthResponse, JwtPayload, User} from "@/src/types/auth.types";
+import { AuthResponse, JwtPayload, User } from "@/src/types/auth.types";
+import Link from "next/link";
 
 export const LoginForm = () => {
     const [isLoading, setIsLoading] = useState(false);
     const { register, handleSubmit, formState: { errors } } = useForm();
     const setAuth = useAuthStore((state) => state.setAuth);
-    const router = useRouter();
 
     const onSubmit = async (data: any) => {
         setIsLoading(true);
         try {
-            // На бекенді LoginDto очікує email та password
             const response = await api.post<AuthResponse>("/auth/login", data);
             const token = response.data.accessToken;
-
             const decoded: any = jwtDecode<JwtPayload>(token);
-
-            const userFromToken: User ={
-                id: decoded.sub,
+            const userFromToken: User = {
+                id:       decoded.sub,
                 nickname: decoded.nickname,
-                email: decoded.email,
-                role: decoded.role,
-                avatarUrl: decoded.avatarUrl
-            }
-            console.log("Backend response data: ", response.data);
-
+                email:    decoded.email,
+                role:     decoded.role,
+                avatarUrl: decoded.avatarUrl,
+            };
             setAuth(userFromToken, token);
-
             window.location.href = "/chat";
-
         } catch (e: any) {
             const message = e.response?.data?.message || "Помилка входу";
             alert(message);
@@ -68,7 +61,16 @@ export const LoginForm = () => {
                 </div>
 
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Пароль</label>
+                    <div className="flex items-center justify-between mb-1">
+                        <label className="block text-sm font-medium text-gray-700">Пароль</label>
+                        {/* ── Forgot password link ── */}
+                        <Link
+                            href="/auth/forgot-password"
+                            className="text-xs text-violet-600 hover:text-violet-700 hover:underline font-medium"
+                        >
+                            Забули пароль?
+                        </Link>
+                    </div>
                     <input
                         {...register("password", { required: "Пароль обов'язковий" })}
                         type="password"
