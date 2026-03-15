@@ -53,9 +53,9 @@ export const useConversations = (socket: any) => {
     }, []);
 
     useEffect(() => {
-        if (!accessToken) return;
+        if (!accessToken || !e2e.isReady) return;
         fetchConversations();
-    }, [accessToken, fetchConversations]);
+    }, [accessToken, e2e.isReady]);
 
     useEffect(() => {
         if (!socket) return;

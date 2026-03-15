@@ -1,5 +1,5 @@
 import { useAuthStore } from "@/src/store/useAuthStore";
-import { useCallback, useEffect } from "react";
+import {useCallback, useEffect, useState} from "react";
 import {
     decryptMessage, deriveSharedKey, encryptMessage,
     generateKeyPair, loadPrivateKey, savePrivateKey,
@@ -12,13 +12,31 @@ const pendingKeys = new Map<number, Promise<CryptoKey | null>>();
 let   privateKey:  CryptoKey | null = null;
 let   initialized  = false;
 let   initPromise: Promise<void> | null = null;
+let onReadyCallbacks: Array<() => void> = [];
 
 const RETRY_AFTER_MS = 30_000; // If key fetch fails, retry after 30s
 
 export function useE2E() {
     const { user, accessToken } = useAuthStore();
 
+    const [isReady, setIsReady] = useState(initialized && !!privateKey);
+
     useEffect(() => {
+        // Якщо вже готово — одразу
+        if (initialized && privateKey) {
+            setIsReady(true);
+            return;
+        }
+        // Підписуємось на завершення ініціалізації
+        const cb = () => setIsReady(true);
+        onReadyCallbacks.push(cb);
+        return () => {
+            onReadyCallbacks = onReadyCallbacks.filter(x => x !== cb);
+        };
+    }, []); // mount once
+
+    useEffect(() => {
+
         if (!user?.id || !accessToken) return;
 
         // Already initialized for this user — skip
@@ -56,6 +74,8 @@ export function useE2E() {
                 // Clear stale cache so peer keys are re-fetched
                 sessionKeys.clear();
                 pendingKeys.clear();
+                onReadyCallbacks.forEach(cb => cb());
+                onReadyCallbacks = [];
             } finally {
                 initPromise = null;
             }
@@ -70,6 +90,8 @@ export function useE2E() {
             initPromise = null;
             sessionKeys.clear();
             pendingKeys.clear();
+            onReadyCallbacks = [];
+            setIsReady(false);
         }
     }, [user?.id]);
 
@@ -120,5 +142,5 @@ export function useE2E() {
         }
     }, [getSessionKey]);
 
-    return { encrypt, decrypt };
+    return { encrypt, decrypt, isReady };
 }
