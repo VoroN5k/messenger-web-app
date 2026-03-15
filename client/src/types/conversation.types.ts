@@ -8,6 +8,7 @@ export interface ConvUser {
     avatarUrl: string | null;
     isOnline:  boolean;
     lastSeen?: string;
+    statusEmoji?:  string | null;
 }
 
 export interface ConversationMember {
@@ -38,6 +39,12 @@ export interface Conversation {
     unreadCount: number;
     members:     ConversationMember[];
     updatedAt:   string;
+    pinnedMessageId?: number | null;
+    pinnedMessage?: {
+    id:        number;
+    content:   string;
+    senderId: { id: number; nickname: string };
+    } | null;
 }
 
 export interface Reaction {
@@ -70,6 +77,16 @@ export interface Message {
     fileName?:      string | null;
     fileType?:      string | null;
     fileSize?:      number | null;
+    metadata?: string | null;
+    forwardedFromId?:   number | null;
+    forwardedFromUserId?: number | null;
+    forwardedFrom?: {
+        id:      number;
+        content: string;
+        fileType?: string | null;
+        sender:  { id: number; nickname: string };
+    } | null;
+    readBy?: { userId: number; nickname: string }[];
 }
 
 export interface Friendship {
