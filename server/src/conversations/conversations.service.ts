@@ -10,6 +10,7 @@ const ALLOWED_EMOJIS = ['👍','❤️','😂','😮','😢','😡','🔥','👏
 const MSG_SELECT = {
     id: true, content: true, createdAt: true, editedAt: true, deletedAt: true,
     fileUrl: true, fileName: true, fileType: true, fileSize: true,
+    metadata: true, // ← FIX: was missing — waveform/encrypted flag lost on every round-trip
     senderId: true, conversationId: true, replyToId: true,
     forwardedFromId: true, forwardedFromUser: true,
     sender: { select: { id: true, nickname: true, avatarUrl: true } },
@@ -20,10 +21,10 @@ const MSG_SELECT = {
         },
     },
     forwardedFrom: {
-      select: {
-          id: true, content: true, fileType: true,
-          sender: { select: { id: true, nickname: true } },
-      }
+        select: {
+            id: true, content: true, fileType: true,
+            sender: { select: { id: true, nickname: true } },
+        }
     },
     reactions: {
         select:  { emoji: true, userId: true },
@@ -57,7 +58,6 @@ export class ConversationsService {
         return { ...rest, reactions: this.groupReactions(reactions) };
     }
 
-    // FIX: mapMessage з isRead — перевіряємо чи хтось інший прочитав після createdAt
     private mapMessageWithRead(
         msg: any,
         currentUserId: number,
@@ -94,7 +94,6 @@ export class ConversationsService {
         return m;
     }
 
-    // ── Отримуємо lastReadAt інших учасників для визначення isRead ────────────
     private async getOtherMembersLastRead(
         conversationId: number,
         currentUserId: number,
@@ -139,7 +138,6 @@ export class ConversationsService {
             memberships.map(async (m) => {
                 const conv = m.conversation;
 
-                // ← явно дістаємо pinnedMessageId окремим запитом
                 const convFull = await this.prisma.conversation.findUnique({
                     where:  { id: conv.id },
                     select: { pinnedMessageId: true },
@@ -169,7 +167,6 @@ export class ConversationsService {
 
                 const pinnedMessageId = convFull?.pinnedMessageId ?? null;
 
-                // Завантажуємо pinnedMessage якщо є
                 const pinnedMessage = pinnedMessageId
                     ? await this.prisma.message.findUnique({
                         where:  { id: pinnedMessageId },
@@ -198,8 +195,8 @@ export class ConversationsService {
                         user:     mem.user,
                     })),
                     updatedAt:        conv.updatedAt,
-                    pinnedMessageId,           // ← NEW
-                    pinnedMessage,             // ← NEW
+                    pinnedMessageId,
+                    pinnedMessage,
                 };
             }),
         );
@@ -344,7 +341,6 @@ export class ConversationsService {
             orderBy: { id: 'desc' },
         });
 
-        // FIX: отримуємо lastReadAt інших учасників для розрахунку isRead
         const otherMembersLastRead = await this.getOtherMembersLastRead(conversationId, userId);
 
         return msgs.reverse().map((msg) =>
@@ -391,6 +387,7 @@ export class ConversationsService {
     async saveMessage(userId: number, conversationId: number, dto: {
         content?: string; fileUrl?: string; fileName?: string;
         fileType?: string; fileSize?: number; replyToId?: number;
+        metadata?: string; // ← FIX: was missing — waveform/encrypted flag never persisted
     }) {
         const member = await this.assertMember(userId, conversationId);
         const conv   = await this.prisma.conversation.findUnique({ where: { id: conversationId } });
@@ -409,6 +406,7 @@ export class ConversationsService {
                 fileType:      dto.fileType,
                 fileSize:      dto.fileSize,
                 replyToId:     dto.replyToId,
+                metadata:      dto.metadata, // ← FIX: persist metadata (waveform, encrypted flag, etc.)
             },
             select: MSG_SELECT,
         });
@@ -418,7 +416,6 @@ export class ConversationsService {
             data:  { updatedAt: new Date() },
         });
 
-        // Новe повідомлення завжди isRead: false (ніхто ще не прочитав)
         return { ...this.mapMessage(msg), isRead: false };
     }
 

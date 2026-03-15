@@ -101,6 +101,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
             conversationId: number; content?: string;
             fileUrl?: string; fileName?: string; fileType?: string; fileSize?: number;
             replyToId?: number;
+            metadata?: string;
         },
     ) {
         const userId = client.data.user.id as number;

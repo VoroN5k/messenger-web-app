@@ -36,19 +36,28 @@ export function VoiceBubble({ fileUrl, metadata, isMe, onDecrypt }: Props) {
                 const res = await fetch(fileUrl);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-                // ── Decrypt if needed ─────────────────────────────────────────
-                let audioBuffer: ArrayBuffer;
+                // ── Build blob ────────────────────────────────────────────────
+                // For encrypted voice: decrypt raw bytes, wrap in Blob with the
+                // original MIME type stored in metadata (Supabase may return
+                // application/octet-stream which browsers refuse to decode).
+                // For plain voice: use res.blob() directly — this is the path
+                // that was already working before encryption was added.
+                let blob: Blob;
                 if (isEncrypted && onDecrypt) {
                     const raw = await res.arrayBuffer();
                     if (myId !== loadIdRef.current) return;
-                    audioBuffer = await onDecrypt(raw);
+                    const dec = await onDecrypt(raw);
+                    if (myId !== loadIdRef.current) return;
+                    blob = new Blob([dec], { type: originalMime });
                 } else {
-                    audioBuffer = await res.arrayBuffer();
+                    blob = await res.blob();
+                    // If Supabase returned a generic content-type, override it
+                    // with the value stored in metadata so the browser can decode.
+                    if (!blob.type || blob.type === 'application/octet-stream') {
+                        blob = new Blob([await blob.arrayBuffer()], { type: originalMime });
+                    }
                 }
                 if (myId !== loadIdRef.current) return;
-
-                const mimeType = isEncrypted ? originalMime : (res.headers.get('content-type') ?? originalMime);
-                const blob     = new Blob([audioBuffer], { type: mimeType });
                 const blobUrl  = URL.createObjectURL(blob);
                 blobUrlRef.current = blobUrl;
 
