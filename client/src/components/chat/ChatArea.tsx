@@ -295,21 +295,27 @@ export default function ChatArea({
         } finally { setUploadProgress(null); abortRef.current = null; }
     }, [conversation, sendFileMessage, replyTo]);
 
-    const sendVoiceMessage = useCallback(async (blob: Blob, waveform: number[], duration: number) => {
+    const sendVoiceMessage = useCallback(async (
+        blob: Blob,
+        waveform: number[],
+        duration: number,
+        mimeType: string,
+    ) => {
         if (!conversation) return;
         setShowVoice(false);
         setUploadError(null); setUploadProgress(0);
         const ctrl = new AbortController();
         abortRef.current = ctrl;
         try {
-            const file = new File([blob], 'voice.webm', { type: 'audio/webm' });
+            const ext  = mimeType.includes('ogg') ? 'ogg' : 'webm';
+            const file = new File([blob], `voice.${ext}`, { type: mimeType });
             const r    = await uploadFile(file, setUploadProgress, ctrl.signal);
             sendFileMessage({
                 fileUrl:  r.url,
                 fileName: 'Голосове повідомлення',
-                fileType: 'audio/webm',
+                fileType: mimeType,   // зберігаємо реальний MIME
                 fileSize: blob.size,
-                metadata: JSON.stringify({ waveform, duration }),
+                metadata: JSON.stringify({ waveform, duration, mimeType }),
             });
         } catch (err: any) {
             if (err.message !== 'Upload cancelled') setUploadError(err.message ?? 'Помилка');
@@ -555,7 +561,8 @@ export default function ChatArea({
                     const isMe       = String(msg.senderId) === String(currentUserId);
                     const isDeleted  = !!msg.deletedAt;
                     const isEdited   = !!msg.editedAt && !isDeleted;
-                    const isVoice    = msg.fileType === 'audio/webm' && !!msg.fileUrl;
+                    const isVoice = !!msg.fileUrl && !!msg.fileType?.startsWith('audio/') &&
+                        !!(msg.metadata || msg.fileName === 'Голосове повідомлення');
                     const hasFile    = !!msg.fileUrl && !isDeleted && !isVoice;
                     const isImage    = hasFile && isImageType(msg.fileType);
                     const msgKey     = msg.id ? `msg-${msg.id}` : `tmp-${idx}`;

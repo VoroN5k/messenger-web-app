@@ -4,15 +4,31 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Mic, Square, Send, X, Loader2 } from 'lucide-react';
 
 interface Props {
-    onSend: (blob: Blob, waveform: number[], duration: number) => Promise<void>;
+    onSend: (blob: Blob, waveform: number[], duration: number, mimeType: string) => Promise<void>;
     onCancel: () => void;
 }
+
+// Визначаємо найкращий підтримуваний формат один раз
+function getBestMimeType(): string {
+    const candidates = [
+        'audio/ogg;codecs=opus',   // Firefox native, Chrome підтримує
+        'audio/webm;codecs=opus',  // Chrome native
+        'audio/webm',
+        'audio/ogg',
+    ];
+    return candidates.find(t => {
+        try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
+    }) ?? '';
+}
+
+const BEST_MIME = getBestMimeType();
 
 export function VoiceRecorder({ onSend, onCancel }: Props) {
     const [phase,    setPhase]    = useState<'idle' | 'recording' | 'preview' | 'sending'>('idle');
     const [duration, setDuration] = useState(0);
     const [waveform, setWaveform] = useState<number[]>([]);
     const [audioUrl, setAudioUrl] = useState<string | null>(null);
+    const [mimeType, setMimeType] = useState('');
 
     const mediaRecRef  = useRef<MediaRecorder | null>(null);
     const analyserRef  = useRef<AnalyserNode | null>(null);
@@ -22,6 +38,7 @@ export function VoiceRecorder({ onSend, onCancel }: Props) {
     const timerIntRef  = useRef<ReturnType<typeof setInterval> | null>(null);
     const durationRef  = useRef(0);
     const blobRef      = useRef<Blob | null>(null);
+    const actualMime   = useRef('');
 
     const stopTimers = () => {
         if (sampleIntRef.current) clearInterval(sampleIntRef.current);
@@ -30,26 +47,33 @@ export function VoiceRecorder({ onSend, onCancel }: Props) {
 
     const startRecording = useCallback(async () => {
         try {
-            const stream  = await navigator.mediaDevices.getUserMedia({ audio: true });
-            const ctx     = new AudioContext();
-            const source  = ctx.createMediaStreamSource(stream);
+            const stream   = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const AC       = window.AudioContext ?? (window as any).webkitAudioContext;
+            const ctx      = new AC() as AudioContext;
+            const source   = ctx.createMediaStreamSource(stream);
             const analyser = ctx.createAnalyser();
             analyser.fftSize = 256;
             source.connect(analyser);
             analyserRef.current = analyser;
 
-            const mr = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+            const options = BEST_MIME ? { mimeType: BEST_MIME } : {};
+            const mr = new MediaRecorder(stream, options);
             mediaRecRef.current = mr;
             chunksRef.current   = [];
             waveformRef.current = [];
             durationRef.current = 0;
 
+            // Зберігаємо фактичний MIME тип після створення
+            actualMime.current = mr.mimeType || BEST_MIME || 'audio/webm';
+
             mr.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
             mr.onstop = () => {
-                const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+                const mime = actualMime.current;
+                const blob = new Blob(chunksRef.current, { type: mime });
                 blobRef.current = blob;
                 const url = URL.createObjectURL(blob);
                 setAudioUrl(url);
+                setMimeType(mime);
                 setWaveform([...waveformRef.current]);
                 setPhase('preview');
                 stream.getTracks().forEach(t => t.stop());
@@ -87,7 +111,7 @@ export function VoiceRecorder({ onSend, onCancel }: Props) {
     const handleSend = useCallback(async () => {
         if (!blobRef.current) return;
         setPhase('sending');
-        await onSend(blobRef.current, waveformRef.current, durationRef.current);
+        await onSend(blobRef.current, waveformRef.current, durationRef.current, actualMime.current);
         if (audioUrl) URL.revokeObjectURL(audioUrl);
     }, [onSend, audioUrl]);
 
@@ -105,31 +129,25 @@ export function VoiceRecorder({ onSend, onCancel }: Props) {
 
     const fmt = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 
-    // Waveform bars visualization
     const WaveformBars = ({ samples, isLive }: { samples: number[]; isLive: boolean }) => {
         const barCount = 48;
         const bars: number[] = [];
         if (samples.length === 0) {
             for (let i = 0; i < barCount; i++) bars.push(0.05);
         } else if (samples.length <= barCount) {
-            const scaled = samples.map(v => Math.max(0.05, v));
-            bars.push(...scaled);
+            bars.push(...samples.map(v => Math.max(0.05, v)));
             while (bars.length < barCount) bars.push(0.05);
         } else {
             const step = samples.length / barCount;
-            for (let i = 0; i < barCount; i++) {
-                bars.push(Math.max(0.05, samples[Math.floor(i * step)]));
-            }
+            for (let i = 0; i < barCount; i++) bars.push(Math.max(0.05, samples[Math.floor(i * step)]));
         }
         return (
             <div className="flex items-center gap-[2px] h-8">
                 {bars.map((v, i) => (
-                    <div
-                        key={i}
-                        className={`w-[3px] rounded-full transition-all duration-75
+                    <div key={i}
+                         className={`w-[3px] rounded-full transition-all duration-75
                             ${isLive && i >= bars.length - 4 ? 'bg-red-400' : 'bg-violet-400'}`}
-                        style={{ height: `${Math.max(3, v * 32)}px` }}
-                    />
+                         style={{ height: `${Math.max(3, v * 32)}px` }} />
                 ))}
             </div>
         );
@@ -140,7 +158,6 @@ export function VoiceRecorder({ onSend, onCancel }: Props) {
             <button onClick={handleCancel} className="p-2 rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 cursor-pointer transition-all shrink-0">
                 <X size={17} />
             </button>
-
             <div className="flex-1 flex items-center gap-3">
                 {phase === 'recording' && (
                     <div className="flex items-center gap-2 shrink-0">
@@ -150,10 +167,9 @@ export function VoiceRecorder({ onSend, onCancel }: Props) {
                 )}
                 <WaveformBars samples={waveform} isLive={phase === 'recording'} />
                 {phase === 'preview' && audioUrl && (
-                    <audio src={audioUrl} controls className="h-8 text-xs flex-shrink-0" style={{ width: 0, minWidth: 0, flexShrink: 1 }} />
+                    <audio src={audioUrl} controls className="h-8 flex-shrink-1" style={{ minWidth: 0 }} />
                 )}
             </div>
-
             {phase === 'recording' ? (
                 <button onClick={stopRecording}
                         className="p-2 rounded-full bg-red-500 hover:bg-red-400 text-white cursor-pointer transition-all shrink-0">
