@@ -116,6 +116,9 @@ model Message {
   fileName       String?
   fileType       String?
   fileSize       Int?
+  metadata       String?  @db.Text // ( voice waveform data, poll options, etc. )
+  forwardedFromId Int?     // for message forwarding
+  forwardedFromUserId Int? // for message forwarding
   senderId       Int
   conversationId Int
   replyToId      Int?
@@ -124,6 +127,9 @@ model Message {
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   replyTo      Message?     @relation("MessageReplies", fields: [replyToId], references: [id])
   replies      Message[]    @relation("MessageReplies")
+  forwardedFrom Message?    @relation("MessageForwards", fields: [forwardedFromId], references: [id])
+  forwards      Message[]    @relation("MessageForwards")
+  forwardedFromUser User?       @relation("MessageForwardUser", fields: [forwardedFromUserId], references: [id])
   reactions    Reaction[]
 
   @@index([conversationId])
