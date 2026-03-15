@@ -44,13 +44,13 @@ export const useConversations = (socket: any) => {
             const res = await api.get<Conversation[]>('/conversations');
 
             const decrypted = await Promise.all(res.data.map(decryptLastMessage));
-            setConversations(res.data);
+            setConversations(decrypted);
         } catch (e) {
             console.error('fetchConversations:', e);
         } finally {
             setIsLoading(false);
         }
-    }, [decryptLastMessage]);
+    }, []);
 
     useEffect(() => {
         if (!accessToken) return;
