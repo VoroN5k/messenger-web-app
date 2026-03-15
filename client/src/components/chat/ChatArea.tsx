@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useMessages }   from '@/src/hooks/useMessages';
 import { useSearch }     from '@/src/hooks/useSearch';
+import { useE2E }        from '@/src/hooks/eseE2E';
 import { uploadFile, isImageType, formatFileSize } from '@/src/lib/uploadFile';
 import { Avatar }        from './Avatar';
 import { EmojiPicker }   from './EmojiPicker';
@@ -102,18 +103,74 @@ const ReactionsRow = ({ reactions, currentUserId, onToggle }: {
     );
 };
 
-const FileBubble = ({ msg, isMe }: { msg: Message; isMe: boolean }) => {
-    const [err, setErr] = useState(false);
-    if (isImageType(msg.fileType) && !err) {
+// ── FileBubble — supports E2E-encrypted files ─────────────────────────────────
+// For encrypted files (metadata.encrypted === true), the component fetches
+// the ciphertext from storage, decrypts it in the browser, and renders from
+// a local blob URL — the server never sees the plaintext.
+const FileBubble = ({
+                        msg, isMe, onDecrypt,
+                    }: {
+    msg: Message;
+    isMe: boolean;
+    onDecrypt?: (data: ArrayBuffer) => Promise<ArrayBuffer>;
+}) => {
+    const [err,        setErr]        = useState(false);
+    const [blobUrl,    setBlobUrl]    = useState<string | null>(null);
+    const [decrypting, setDecrypting] = useState(false);
+
+    const parsed      = msg.metadata ? (() => { try { return JSON.parse(msg.metadata!); } catch { return null; } })() : null;
+    const isEncrypted = !!parsed?.encrypted && !!onDecrypt;
+    // Always display using the original MIME type stored in the message
+    const displayMime = msg.fileType ?? undefined;
+
+    useEffect(() => {
+        if (!isEncrypted || !onDecrypt) return;
+        let objectUrl: string | null = null;
+        setDecrypting(true);
+
+        fetch(msg.fileUrl!)
+            .then(r => r.arrayBuffer())
+            .then(buf => onDecrypt(buf))
+            .then(dec => {
+                objectUrl = URL.createObjectURL(new Blob([dec], { type: displayMime }));
+                setBlobUrl(objectUrl);
+            })
+            .catch(() => setErr(true))
+            .finally(() => setDecrypting(false));
+
+        return () => { if (objectUrl) URL.revokeObjectURL(objectUrl); };
+    }, [msg.fileUrl, isEncrypted]);
+
+    if (decrypting) {
         return (
-            <a href={msg.fileUrl!} target="_blank" rel="noopener noreferrer">
-                <img src={msg.fileUrl!} alt={msg.fileName ?? 'image'} onError={() => setErr(true)}
+            <div className={`flex items-center gap-2 px-3 py-2 text-xs rounded-xl
+                ${isMe ? 'text-indigo-200' : 'text-slate-400'}`}>
+                <Loader2 size={13} className="animate-spin shrink-0" />
+                <span>Розшифровка...</span>
+            </div>
+        );
+    }
+
+    // For encrypted files use the decrypted blob URL; fall back to original URL
+    // before decryption completes (shows encrypted bytes) or if decryption failed.
+    const srcUrl = isEncrypted ? (blobUrl ?? msg.fileUrl!) : msg.fileUrl!;
+
+    if (isImageType(displayMime) && !err) {
+        return (
+            <a href={srcUrl}
+               target={isEncrypted && blobUrl ? '_self' : '_blank'}
+               rel="noopener noreferrer"
+               download={isEncrypted && blobUrl ? (msg.fileName ?? true) : undefined}>
+                <img src={srcUrl} alt={msg.fileName ?? 'image'} onError={() => setErr(true)}
                      className="max-w-[260px] max-h-[200px] rounded-xl object-cover cursor-pointer hover:opacity-90 block" />
             </a>
         );
     }
     return (
-        <a href={msg.fileUrl!} target="_blank" rel="noopener noreferrer" download={msg.fileName ?? true}
+        <a href={srcUrl}
+           target={isEncrypted && blobUrl ? '_self' : '_blank'}
+           rel="noopener noreferrer"
+           download={msg.fileName ?? true}
            className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-colors max-w-[260px]
             ${isMe ? 'bg-white/15 hover:bg-white/25' : 'bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600'}`}>
             {err
@@ -188,6 +245,15 @@ export default function ChatArea({
 
     const otherUserId = conversation?.type === 'DIRECT'
         ? conversation.members.find(m => m.userId !== currentUserId)?.userId
+        : undefined;
+
+    // ── E2E for binary (file/voice) encryption ────────────────────────────────
+    const e2e = useE2E();
+
+    // Shared decrypt function for the current conversation's peer.
+    // Passed down to FileBubble and VoiceBubble so they can decrypt on load.
+    const decryptFn = otherUserId
+        ? (data: ArrayBuffer) => e2e.decryptBinary(data, otherUserId)
         : undefined;
 
     const {
@@ -281,20 +347,42 @@ export default function ChatArea({
         }
     };
 
+    // ── File upload — encrypts bytes for DIRECT chats before upload ───────────
     const handleFileUpload = useCallback(async (file: File) => {
         if (!file || !conversation) return;
         setUploadError(null); setUploadProgress(0);
         const ctrl = new AbortController();
         abortRef.current = ctrl;
         try {
-            const r = await uploadFile(file, setUploadProgress, ctrl.signal);
-            sendFileMessage({ fileUrl: r.url, fileName: r.fileName, fileType: r.fileType, fileSize: r.fileSize, replyToId: replyTo?.id });
+            let fileToUpload = file;
+            let encMeta: string | undefined;
+
+            // Encrypt file bytes for DIRECT (E2E) conversations
+            if (otherUserId) {
+                const buf    = await file.arrayBuffer();
+                const encBuf = await e2e.encryptBinary(buf, otherUserId);
+                // Keep original MIME type so the server accepts the upload;
+                // encrypted flag is communicated via metadata.
+                fileToUpload = new File([encBuf], file.name, { type: file.type });
+                encMeta      = JSON.stringify({ encrypted: true });
+            }
+
+            const r = await uploadFile(fileToUpload, setUploadProgress, ctrl.signal);
+            sendFileMessage({
+                fileUrl:   r.url,
+                fileName:  file.name,   // original name
+                fileType:  file.type,   // original MIME
+                fileSize:  file.size,   // original (plaintext) size
+                replyToId: replyTo?.id,
+                metadata:  encMeta,
+            });
             setReplyTo(null);
         } catch (err: any) {
             if (err.message !== 'Upload cancelled') setUploadError(err.message ?? 'Помилка');
         } finally { setUploadProgress(null); abortRef.current = null; }
-    }, [conversation, sendFileMessage, replyTo]);
+    }, [conversation, sendFileMessage, replyTo, otherUserId, e2e]);
 
+    // ── Voice message — encrypts WAV bytes for DIRECT chats before upload ─────
     const sendVoiceMessage = useCallback(async (
         blob: Blob,
         waveform: number[],
@@ -307,20 +395,33 @@ export default function ChatArea({
         const ctrl = new AbortController();
         abortRef.current = ctrl;
         try {
-            const ext  = mimeType.includes('wav') ? 'wav' : mimeType.includes('ogg') ? 'ogg' : 'webm';
-            const file = new File([blob], `voice.${ext}`, { type: mimeType });
-            const r    = await uploadFile(file, setUploadProgress, ctrl.signal);
+            const baseMeta = { waveform, duration, mimeType };
+
+            let fileToUpload: File;
+            let metaObj: object;
+
+            if (otherUserId) {
+                const buf    = await blob.arrayBuffer();
+                const encBuf = await e2e.encryptBinary(buf, otherUserId);
+                fileToUpload = new File([encBuf], 'voice.wav', { type: mimeType });
+                metaObj      = { ...baseMeta, encrypted: true };
+            } else {
+                fileToUpload = new File([blob], 'voice.wav', { type: mimeType });
+                metaObj      = baseMeta;
+            }
+
+            const r = await uploadFile(fileToUpload, setUploadProgress, ctrl.signal);
             sendFileMessage({
                 fileUrl:  r.url,
                 fileName: 'Голосове повідомлення',
-                fileType: mimeType,   // зберігаємо реальний MIME
+                fileType: mimeType,
                 fileSize: blob.size,
-                metadata: JSON.stringify({ waveform, duration, mimeType }),
+                metadata: JSON.stringify(metaObj),
             });
         } catch (err: any) {
             if (err.message !== 'Upload cancelled') setUploadError(err.message ?? 'Помилка');
         } finally { setUploadProgress(null); abortRef.current = null; }
-    }, [conversation, sendFileMessage]);
+    }, [conversation, sendFileMessage, otherUserId, e2e]);
 
     const pinMessage = useCallback((msgId: number) => {
         if (!conversation) return;
@@ -337,7 +438,7 @@ export default function ChatArea({
         socket.emit('forwardMessage', {
             messageId: msgId,
             targetConversationId: targetConvId,
-        })
+        });
     }, [socket]);
 
     const onDragEnter = (e: React.DragEvent) => {
@@ -561,7 +662,7 @@ export default function ChatArea({
                     const isMe       = String(msg.senderId) === String(currentUserId);
                     const isDeleted  = !!msg.deletedAt;
                     const isEdited   = !!msg.editedAt && !isDeleted;
-                    const isVoice = !!msg.fileUrl && !!msg.fileType?.startsWith('audio/') &&
+                    const isVoice    = !!msg.fileUrl && !!msg.fileType?.startsWith('audio/') &&
                         !!(msg.metadata || msg.fileName === 'Голосове повідомлення');
                     const hasFile    = !!msg.fileUrl && !isDeleted && !isVoice;
                     const isImage    = hasFile && isImageType(msg.fileType);
@@ -578,7 +679,6 @@ export default function ChatArea({
                         new Date(msg.createdAt).toDateString() !== new Date(messages[idx - 1].createdAt).toDateString();
                     const showSender = !isMe && (isGroup || isChannel);
 
-                    // Link preview — тільки для текстових повідомлень
                     const msgUrls = (!isDeleted && msg.content && !isVoice && !msg.fileUrl)
                         ? extractUrls(msg.content).slice(0, 1)
                         : [];
@@ -609,19 +709,14 @@ export default function ChatArea({
                                 <div className={`flex items-end gap-2 ${isMe ? 'flex-row' : 'flex-row-reverse'}`}>
                                     {!isDeleted && msg.id && !isEditing && (
                                         <div className={`flex items-center gap-1 transition-opacity duration-150 ${showAct ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-                                            {/* Reply */}
                                             <button onClick={() => setReplyTo(msg)}
                                                     className="p-1.5 rounded-full text-slate-400 hover:text-violet-500 hover:bg-violet-50 dark:hover:bg-violet-900/30 cursor-pointer transition-all">
                                                 <Reply size={13} />
                                             </button>
-
-                                            {/* Forward */}
                                             <button onClick={() => setForwardMsg(msg)}
                                                     className="p-1.5 rounded-full text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 cursor-pointer transition-all">
                                                 <Forward size={13} />
                                             </button>
-
-                                            {/* Pin (тільки для адмінів у групах/каналах) */}
                                             {canPin && (isGroup || isChannel) && (
                                                 <button onClick={() => pinMessage(msg.id!)}
                                                         className="p-1.5 rounded-full text-slate-400 hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/30 cursor-pointer transition-all"
@@ -629,8 +724,6 @@ export default function ChatArea({
                                                     <Pin size={13} />
                                                 </button>
                                             )}
-
-                                            {/* Emoji picker */}
                                             <div className="relative">
                                                 <button onClick={() => setPickerKey((p) => p === msgKey ? null : msgKey)}
                                                         className={`p-1.5 rounded-full transition-all cursor-pointer
@@ -643,8 +736,6 @@ export default function ChatArea({
                                                                  onClose={() => setPickerKey(null)} />
                                                 )}
                                             </div>
-
-                                            {/* Edit / Delete (тільки свої) */}
                                             {isMe && (
                                                 <>
                                                     {isConfirm ? (
@@ -705,27 +796,30 @@ export default function ChatArea({
                                             </div>
                                         ) : (
                                             <>
-                                                {/* Forward label */}
                                                 {msg.forwardedFrom && (
                                                     <ForwardBubble forward={msg.forwardedFrom} isMe={isMe} />
                                                 )}
-
-                                                {/* Reply bubble */}
                                                 {msg.replyTo && <ReplyBubble reply={msg.replyTo} isMe={isMe} />}
 
-                                                {/* Voice message */}
+                                                {/* Voice message — pass decryptFn for E2E voice */}
                                                 {isVoice && (
                                                     <VoiceBubble
                                                         fileUrl={msg.fileUrl!}
                                                         metadata={msg.metadata}
                                                         isMe={isMe}
+                                                        onDecrypt={decryptFn}
                                                     />
                                                 )}
 
-                                                {/* File */}
-                                                {hasFile && <FileBubble msg={msg} isMe={isMe} />}
+                                                {/* File / image — pass decryptFn for E2E files */}
+                                                {hasFile && (
+                                                    <FileBubble
+                                                        msg={msg}
+                                                        isMe={isMe}
+                                                        onDecrypt={decryptFn}
+                                                    />
+                                                )}
 
-                                                {/* Text content */}
                                                 {msg.content && !isVoice && (
                                                     <span className={`leading-relaxed ${hasFile ? (isImage ? 'px-2 pt-1' : 'mt-1.5') : ''}`}>
                                                         {isOpen && query.trim().length >= 2
@@ -733,8 +827,6 @@ export default function ChatArea({
                                                             : msg.content}
                                                     </span>
                                                 )}
-
-                                                {/* Link preview */}
                                                 {msgUrls.map(url => (
                                                     <LinkPreview key={url} url={url} isMe={isMe} />
                                                 ))}
@@ -750,7 +842,6 @@ export default function ChatArea({
                                                     {formatTime(msg.createdAt)}
                                                 </span>
                                                 {isMe && !isDeleted && <MessageStatus msg={msg} />}
-                                                {/* Read receipts у групах */}
                                                 {isMe && !isDeleted && (isGroup || isChannel) && msg.readBy && msg.readBy.length > 0 && (
                                                     <span
                                                         className="text-[10px] text-indigo-200 cursor-default ml-0.5"
@@ -816,7 +907,6 @@ export default function ChatArea({
                 </div>
             )}
 
-            {/* ── Voice recorder (замінює input) ── */}
             {showVoice ? (
                 <VoiceRecorder
                     onSend={sendVoiceMessage}
@@ -826,21 +916,15 @@ export default function ChatArea({
                 <form onSubmit={handleSubmit} className="p-4 bg-white dark:bg-slate-800 border-t border-gray-100 dark:border-slate-700 flex gap-3 items-end">
                     <input ref={fileInputRef} type="file" className="hidden"
                            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f); e.target.value = ''; }} />
-
-                    {/* Attach file */}
                     <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploadProgress !== null}
                             className="p-3 h-[48px] w-[48px] rounded-full text-slate-400 hover:text-violet-500 hover:bg-violet-50 dark:hover:bg-violet-900/30 flex items-center justify-center transition-all disabled:opacity-40 cursor-pointer shrink-0">
                         {uploadProgress !== null ? <Loader2 size={17} className="animate-spin" /> : <Paperclip size={17} />}
                     </button>
-
-                    {/* Text input */}
                     <input value={inputValue}
                            onChange={(e) => { setInputValue(e.target.value); notifyTyping(); }}
                            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(e as any); } }}
                            className="flex-1 bg-slate-50 dark:bg-slate-700 dark:text-slate-200 dark:placeholder-slate-400 border-transparent rounded-2xl px-5 py-3 text-gray-700 outline-none focus:bg-white dark:focus:bg-slate-600 focus:ring-4 focus:ring-violet-50 dark:focus:ring-violet-900/30 transition-all text-sm"
                            placeholder="Напишіть повідомлення..." />
-
-                    {/* Voice or Send */}
                     {inputValue.trim() ? (
                         <button type="submit"
                                 className="bg-violet-500 hover:bg-violet-600 text-white p-3 h-[48px] w-[48px] rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95 shrink-0 cursor-pointer">
@@ -859,7 +943,6 @@ export default function ChatArea({
                 </div>
             )}
 
-            {/* ── Forward modal ── */}
             {forwardMsg && (
                 <ForwardModal
                     conversations={conversations}

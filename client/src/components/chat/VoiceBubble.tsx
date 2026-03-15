@@ -1,15 +1,17 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Play, Pause, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 
 interface Props {
-    fileUrl:  string;
-    metadata: string | null | undefined;
-    isMe:     boolean;
+    fileUrl:   string;
+    metadata:  string | null | undefined;
+    isMe:      boolean;
+    /** Passed for DIRECT chats — decrypts the raw encrypted bytes fetched from storage */
+    onDecrypt?: (data: ArrayBuffer) => Promise<ArrayBuffer>;
 }
 
-export function VoiceBubble({ fileUrl, metadata, isMe }: Props) {
+export function VoiceBubble({ fileUrl, metadata, isMe, onDecrypt }: Props) {
     const [playing,  setPlaying]  = useState(false);
     const [progress, setProgress] = useState(0);
     const [status,   setStatus]   = useState<'loading' | 'ready' | 'error'>('loading');
@@ -21,6 +23,9 @@ export function VoiceBubble({ fileUrl, metadata, isMe }: Props) {
     const parsed         = metadata ? (() => { try { return JSON.parse(metadata); } catch { return null; } })() : null;
     const waveform: number[] = parsed?.waveform ?? [];
     const storedDuration: number = parsed?.duration ?? 0;
+    // originalMimeType is stored in metadata when the voice message is encrypted
+    const originalMime: string = parsed?.mimeType ?? 'audio/wav';
+    const isEncrypted: boolean = !!parsed?.encrypted && !!onDecrypt;
 
     useEffect(() => {
         const myId = ++loadIdRef.current;
@@ -30,12 +35,21 @@ export function VoiceBubble({ fileUrl, metadata, isMe }: Props) {
             try {
                 const res = await fetch(fileUrl);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const blob = await res.blob();
+
+                // ── Decrypt if needed ─────────────────────────────────────────
+                let audioBuffer: ArrayBuffer;
+                if (isEncrypted && onDecrypt) {
+                    const raw = await res.arrayBuffer();
+                    if (myId !== loadIdRef.current) return;
+                    audioBuffer = await onDecrypt(raw);
+                } else {
+                    audioBuffer = await res.arrayBuffer();
+                }
                 if (myId !== loadIdRef.current) return;
 
-                // WAV files work natively. For old webm/ogg — try anyway.
-                // The mime from blob.type is correct since server sets it on upload.
-                const blobUrl = URL.createObjectURL(blob);
+                const mimeType = isEncrypted ? originalMime : (res.headers.get('content-type') ?? originalMime);
+                const blob     = new Blob([audioBuffer], { type: mimeType });
+                const blobUrl  = URL.createObjectURL(blob);
                 blobUrlRef.current = blobUrl;
 
                 const audio = new Audio();
@@ -49,7 +63,6 @@ export function VoiceBubble({ fileUrl, metadata, isMe }: Props) {
                         resolve(result);
                     };
                     audio.oncanplay = () => {
-                        // Трюк для отримання тривалості WAV
                         if (!isFinite(audio.duration) || audio.duration === 0) {
                             audio.currentTime = 1e101;
                             audio.ontimeupdate = () => {
@@ -107,15 +120,15 @@ export function VoiceBubble({ fileUrl, metadata, isMe }: Props) {
             loadIdRef.current = myId + 1;
             if (audioRef.current) {
                 audioRef.current.ontimeupdate = null;
-                audioRef.current.onended = null;
-                audioRef.current.onerror = null;
+                audioRef.current.onended      = null;
+                audioRef.current.onerror      = null;
                 audioRef.current.pause();
                 audioRef.current.src = '';
                 audioRef.current = null;
             }
             if (blobUrlRef.current) { URL.revokeObjectURL(blobUrlRef.current); blobUrlRef.current = null; }
         };
-    }, [fileUrl, storedDuration]);
+    }, [fileUrl, storedDuration, isEncrypted]);
 
     const toggle = useCallback(async () => {
         const a = audioRef.current;
