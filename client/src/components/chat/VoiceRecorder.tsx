@@ -49,7 +49,7 @@ export function VoiceRecorder({ onSend, onCancel }: Props) {
     const [audioUrl, setAudioUrl] = useState<string | null>(null);
 
     const analyserRef   = useRef<AnalyserNode | null>(null);
-    const processorRef  = useRef<ScriptProcessorNode | null>(null);
+    const processorRef  = useRef<AudioWorkletNode | null>(null);
     const ctxRef        = useRef<AudioContext | null>(null);
     const streamRef     = useRef<MediaStream | null>(null);
     const pcmChunksRef  = useRef<Float32Array[]>([]);
@@ -58,8 +58,9 @@ export function VoiceRecorder({ onSend, onCancel }: Props) {
     const blobRef       = useRef<Blob | null>(null);
     const audioUrlRef   = useRef<string | null>(null);
     const durationRef   = useRef(0);
-    const timerRef      = useRef<ReturnType<typeof setInterval> | null>(null);
-    const sampleRef     = useRef<ReturnType<typeof setInterval> | null>(null);
+    const timerRef  = useRef<number | null>(null);
+    const sampleRef = useRef<number | null>(null);
+    const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
 
     const stopTimers = () => {
         if (timerRef.current)  clearInterval(timerRef.current);
@@ -67,53 +68,85 @@ export function VoiceRecorder({ onSend, onCancel }: Props) {
     };
 
     const doStop = useCallback(() => {
+        startedRef.current = false;
         stopTimers();
-
         if (processorRef.current) {
-            processorRef.current.onaudioprocess = null;
+            processorRef.current.port.onmessage = null;
             processorRef.current.disconnect();
             processorRef.current = null;
         }
-
+        sourceNodeRef.current?.disconnect();
+        sourceNodeRef.current = null;
+        analyserRef.current = null;
         streamRef.current?.getTracks().forEach(t => t.stop());
         streamRef.current = null;
-
         ctxRef.current?.close().catch(() => {});
         ctxRef.current = null;
     }, []);
 
+    // VoiceRecorder.tsx — замінити тільки startRecording функцію
+
+    // Додати ref поруч з іншими:
+    const startedRef = useRef(false);
+
     const startRecording = useCallback(async () => {
+        // StrictMode guard — не запускати двічі
+        if (startedRef.current) return;
+        startedRef.current = true;
+
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             streamRef.current = stream;
 
             const AC  = window.AudioContext ?? (window as any).webkitAudioContext;
             const ctx = new AC() as AudioContext;
-            ctxRef.current     = ctx;
+            ctxRef.current        = ctx;
             sampleRateRef.current = ctx.sampleRate;
 
+            const workletCode = `
+            class PCMCapture extends AudioWorkletProcessor {
+                process(inputs) {
+                    const ch = inputs[0]?.[0];
+                    if (ch?.length) this.port.postMessage(ch.slice());
+                    return true;
+                }
+            }
+            registerProcessor('pcm-capture', PCMCapture);
+        `;
+            const blob    = new Blob([workletCode], { type: 'application/javascript' });
+            const blobUrl = URL.createObjectURL(blob);
+            await ctx.audioWorklet.addModule(blobUrl);
+            URL.revokeObjectURL(blobUrl);
+
             const source   = ctx.createMediaStreamSource(stream);
+            sourceNodeRef.current = source;
+
+            // Analyser — тільки для waveform візуалізації, не впливає на запис
             const analyser = ctx.createAnalyser();
             analyser.fftSize = 256;
             source.connect(analyser);
             analyserRef.current = analyser;
 
-            // Capture raw PCM — universally supported, no codec issues
-            const proc = ctx.createScriptProcessor(4096, 1, 1);
-            source.connect(proc);
-            proc.connect(ctx.destination); // required in some browsers
+            // numberOfOutputs: 0 — worklet без виходу, не потребує connect до destination
+            // Повністю усуває feedback і тріск
+            const worklet = new AudioWorkletNode(ctx, 'pcm-capture', {
+                numberOfInputs:  1,
+                numberOfOutputs: 0,
+            });
+            source.connect(worklet);
+            processorRef.current = worklet;
+
             pcmChunksRef.current = [];
             waveformRef.current  = [];
             durationRef.current  = 0;
 
-            proc.onaudioprocess = (e) => {
-                pcmChunksRef.current.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+            worklet.port.onmessage = (e: MessageEvent<Float32Array>) => {
+                pcmChunksRef.current.push(new Float32Array(e.data));
             };
-            processorRef.current = proc;
 
             setPhase('recording');
 
-            sampleRef.current = setInterval(() => {
+            sampleRef.current = window.setInterval(() => {
                 if (!analyserRef.current) return;
                 const data = new Uint8Array(analyserRef.current.frequencyBinCount);
                 analyserRef.current.getByteFrequencyData(data);
@@ -122,12 +155,15 @@ export function VoiceRecorder({ onSend, onCancel }: Props) {
                 setWaveform([...waveformRef.current]);
             }, 100);
 
-            timerRef.current = setInterval(() => {
+            durationRef.current = 0;
+            setDuration(0);
+            timerRef.current = window.setInterval(() => {
                 durationRef.current += 1;
                 setDuration(durationRef.current);
             }, 1000);
 
         } catch {
+            startedRef.current = false;
             alert('Немає доступу до мікрофону');
             onCancel();
         }

@@ -307,7 +307,7 @@ export default function ChatArea({
         const ctrl = new AbortController();
         abortRef.current = ctrl;
         try {
-            const ext  = mimeType.includes('ogg') ? 'ogg' : 'webm';
+            const ext  = mimeType.includes('wav') ? 'wav' : mimeType.includes('ogg') ? 'ogg' : 'webm';
             const file = new File([blob], `voice.${ext}`, { type: mimeType });
             const r    = await uploadFile(file, setUploadProgress, ctrl.signal);
             sendFileMessage({
