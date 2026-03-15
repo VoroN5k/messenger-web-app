@@ -29,10 +29,9 @@ export const useConversations = (socket: any) => {
 
         try {
             const plain = await e2e.decrypt(c, otherMember.userId);
-            return {
-                ...conv,
-                lastMessage: { ...conv.lastMessage, content: plain },
-            };
+            // Якщо decrypt повернув той самий ciphertext (E2E ще не готовий) — не оновлюємо
+            if (plain === c) return conv;
+            return { ...conv, lastMessage: { ...conv.lastMessage, content: plain } };
         } catch {
             return conv;
         }
@@ -42,7 +41,6 @@ export const useConversations = (socket: any) => {
         setIsLoading(true);
         try {
             const res = await api.get<Conversation[]>('/conversations');
-
             const decrypted = await Promise.all(res.data.map(decryptLastMessage));
             setConversations(decrypted);
         } catch (e) {
@@ -50,12 +48,19 @@ export const useConversations = (socket: any) => {
         } finally {
             setIsLoading(false);
         }
-    }, []);
+    }, [decryptLastMessage]);
 
+    // ── 1. Завантажуємо одразу коли є токен (не чекаємо E2E) ─────────────────
     useEffect(() => {
-        if (!accessToken || !e2e.isReady) return;
+        if (!accessToken) return;
         fetchConversations();
-    }, [accessToken, e2e.isReady]);
+    }, [accessToken]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // ── 2. Коли E2E готовий — ре-декриптуємо lastMessages ────────────────────
+    useEffect(() => {
+        if (!e2e.isReady || !accessToken) return;
+        fetchConversations();
+    }, [e2e.isReady]);
 
     useEffect(() => {
         if (!socket) return;
