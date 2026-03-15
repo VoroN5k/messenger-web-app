@@ -152,16 +152,36 @@ export const useConversations = (socket: any) => {
 
         const onAdded = () => fetchConversations();
 
+        const onPinned = (data: { conversationId: number; pinnedMessageId: number; pinnedMessage: any }) => {
+            setConversations(prev => prev.map(c =>
+                c.id !== data.conversationId ? c : {
+                    ...c,
+                    pinnedMessageId: data.pinnedMessageId,
+                    pinnedMessage:   data.pinnedMessage,
+                }
+            ));
+        };
+
+        const onUnpinned = (data: { conversationId: number }) => {
+            setConversations(prev => prev.map(c =>
+                c.id !== data.conversationId ? c : { ...c, pinnedMessageId: null, pinnedMessage: null }
+            ));
+        };
+
         socket.on('onMessage',           onMessage);
         socket.on('userStatusChanged',   onUserStatus);
         socket.on('conversationRead',    onRead);
         socket.on('addedToConversation', onAdded);
+        socket.on('messagePinned', onPinned);
+        socket.on('messageUnpinned', onUnpinned);
 
         return () => {
             socket.off('onMessage',           onMessage);
             socket.off('userStatusChanged',   onUserStatus);
             socket.off('conversationRead',    onRead);
             socket.off('addedToConversation', onAdded);
+            socket.off('messagePinned', onPinned);
+            socket.off('messageUnpinned', onUnpinned);
         };
     }, [socket, fetchConversations]);
 

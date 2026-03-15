@@ -36,22 +36,19 @@ export function Avatar({ user, size = 'md', onClick, className = '' }: AvatarPro
     const showImg  = !!user.avatarUrl && !imgError;
 
     return (
-        <div
-            onClick={onClick}
-            className={`${container} rounded-full overflow-hidden flex items-center justify-center shrink-0 select-none
-                ${showImg ? '' : `${avatarColor(user.nickname)} text-white font-semibold`}
-                ${onClick ? 'cursor-pointer' : ''}
-                ${className}`}
-        >
-            {showImg ? (
-                <img
-                    src={user.avatarUrl!}
-                    alt={user.nickname}
-                    onError={() => setImgError(true)}
-                    className="w-full h-full object-cover"
-                />
-            ) : (
-                <span className={`${text} leading-none`}>{initials}</span>
+        <div className="relative inline-flex shrink-0" onClick={onClick} style={{ cursor: onClick ? 'pointer' : 'default' }}>
+            <div className={`${container} rounded-full overflow-hidden flex items-center justify-center select-none
+            ${showImg ? '' : `${avatarColor(user.nickname)} text-white font-semibold`}
+            ${className}`}>
+                {showImg
+                    ? <img src={user.avatarUrl!} alt={user.nickname} onError={() => setImgError(true)} className="w-full h-full object-cover" />
+                    : <span className={`${text} leading-none`}>{initials}</span>}
+            </div>
+            {/* Emoji status badge */}
+            {(user as any).statusEmoji && (
+                <span className="absolute -bottom-0.5 -right-0.5 text-[11px] leading-none select-none z-10">
+                {(user as any).statusEmoji}
+            </span>
             )}
         </div>
     );
