@@ -43,8 +43,7 @@ export const useMessages = (
 
                 const decrypted = await Promise.all(
                     res.data.map(async (msg: Message) => {
-                       const isOwn = String(msg.senderId) === String(currentUserId);
-                       if (!msg.content || isOwn || !otherUserId) return msg;
+                       if (!msg.content || !otherUserId) return msg;
                        const plain = await e2e.decrypt(msg.content, otherUserId);
                        return { ...msg, content: plain };
                     })
@@ -74,8 +73,7 @@ export const useMessages = (
 
             const decrypted = await Promise.all(
                 res.data.map(async (msg: Message) => {
-                    const isOwn = String(msg.senderId) === String(currentUserId);
-                    if (!msg.content || isOwn || !otherUserId) return msg;
+                    if (!msg.content || !otherUserId) return msg;
                     return { ...msg, content: await e2e.decrypt(msg.content, otherUserId) };
                 })
             );
@@ -96,11 +94,6 @@ export const useMessages = (
             if (msg.conversationId !== conversationId) return;
 
             let decryptedMsg = msg;
-            const isOwn = String(msg.senderId) === String(currentUserId);
-            if (!isOwn && msg.content && otherUserId) {
-                const plain = await e2e.decrypt(msg.content, otherUserId);
-                decryptedMsg = { ...msg, content: plain };
-            }
             if (msg.content && otherUserId) {
                 const plain = await e2e.decrypt(msg.content, otherUserId);
                 decryptedMsg = { ...msg, content: plain };
