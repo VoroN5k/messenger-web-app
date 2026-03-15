@@ -101,6 +101,10 @@ export const useMessages = (
                 const plain = await e2e.decrypt(msg.content, otherUserId);
                 decryptedMsg = { ...msg, content: plain };
             }
+            if (msg.content && otherUserId) {
+                const plain = await e2e.decrypt(msg.content, otherUserId);
+                decryptedMsg = { ...msg, content: plain };
+            }
 
             setMessages((prev) => {
                 const idx = prev.findIndex(
