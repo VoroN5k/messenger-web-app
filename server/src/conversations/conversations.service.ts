@@ -383,6 +383,31 @@ export class ConversationsService {
         );
     }
 
+    async getMediaFiles(userId: number, conversationId: number) {
+        await this.assertMember(userId, conversationId);
+
+        return this.prisma.message.findMany({
+            where: {
+                conversationId,
+                deletedAt: null,
+                fileUrl: { not: null },
+            },
+            select: {
+                id: true,
+                fileUrl: true,
+                fileName: true,
+                fileType: true,
+                fileSize: true,
+                metadata: true,
+                createdAt: true,
+                senderId: true,
+                sender: { select: { id: true, nickname: true } },
+            },
+            orderBy: { id: 'desc'},
+            take: 200,
+        })
+    }
+
     // ── Save message (from gateway) ───────────────────────────────────────────
     async saveMessage(userId: number, conversationId: number, dto: {
         content?: string; fileUrl?: string; fileName?: string;

@@ -8,7 +8,7 @@ import {
     SmilePlus, Paperclip, FileText, Download,
     ImageOff, Search, ChevronUp, ChevronDown,
     Reply, Users, Hash, Phone, Video,
-    Mic, Pin, PinOff, Forward,
+    Mic, Pin, PinOff, Forward, LayoutGrid,
 } from 'lucide-react';
 import { useMessages }   from '@/src/hooks/useMessages';
 import { useSearch }     from '@/src/hooks/useSearch';
@@ -26,6 +26,7 @@ import {
 import { User }          from '@/src/types/auth.types';
 import { Socket }        from 'socket.io-client';
 import {ImageModal} from "@/src/components/chat/ImageModal";
+import {MediaPanel} from "@/src/components/chat/MediaPanel";
 
 interface ChatAreaProps {
     currentUser:           User | null;
@@ -50,6 +51,20 @@ const formatDateSep = (d: string | Date) => {
     if (date.toDateString() === yest.toDateString()) return 'Вчора';
     return date.toLocaleDateString('uk-UA', { day: 'numeric', month: 'long' });
 };
+
+function formatLastSeen(lastSeen?: string | Date | null): string {
+    if (!lastSeen) return 'Офлайн';
+    const d    = new Date(lastSeen as string);
+    const now  = new Date();
+    const diff = now.getTime() - d.getTime();
+    if (diff < 60_000)          return 'щойно в мережі';
+    if (diff < 3_600_000)       return `${Math.floor(diff / 60_000)} хв тому`;
+    const time = d.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
+    const yest = new Date(now); yest.setDate(now.getDate() - 1);
+    if (d.toDateString() === now.toDateString())  return `сьогодні о ${time}`;
+    if (d.toDateString() === yest.toDateString()) return `вчора о ${time}`;
+    return `${d.toLocaleDateString('uk-UA', { day: 'numeric', month: 'long' })} о ${time}`;
+}
 
 const escReg = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -249,8 +264,9 @@ export default function ChatArea({
     const [uploadError,    setUploadError]    = useState<string | null>(null);
     const [showVoice,      setShowVoice]      = useState(false);
     const [forwardMsg,     setForwardMsg]     = useState<Message | null>(null);
-    const abortRef = useRef<AbortController | null>(null);
+    const [showMedia,   setShowMedia]   = useState(false);
 
+    const abortRef = useRef<AbortController | null>(null);
     const fileInputRef   = useRef<HTMLInputElement>(null);
     const editInputRef   = useRef<HTMLInputElement>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
@@ -262,6 +278,13 @@ export default function ChatArea({
     const otherUserId = conversation?.type === 'DIRECT'
         ? conversation.members.find(m => m.userId !== currentUserId)?.userId
         : undefined;
+
+    const otherMember  = conversation?.type === 'DIRECT'
+        ? conversation.members.find(m => m.userId !== currentUserId)
+        : null;
+    const lastSeenText = otherMember && !conversation?.isOnline
+        ? formatLastSeen(otherMember.user?.lastSeen)
+        : null;
 
     // ── E2E for binary (file/voice) encryption ────────────────────────────────
     const e2e = useE2E();
@@ -552,7 +575,7 @@ export default function ChatArea({
                         </h2>
                         <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
                             {conversation.type === 'DIRECT'
-                                ? (conversation.isOnline ? 'В мережі' : 'Офлайн')
+                                ? (conversation.isOnline ? 'В мережі' : lastSeenText ?? 'Офлайн')
                                 : `${conversation.members.length} учасників`}
                         </p>
                     </div>
@@ -563,6 +586,16 @@ export default function ChatArea({
                                 ${isOpen ? 'text-indigo-600 bg-indigo-50 dark:bg-indigo-900/40' : 'text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30'}`}
                             title="Пошук">
                         <Search size={17} />
+                    </button>
+                    <button
+                        onClick={() => setShowMedia(o => !o)}
+                        className={`p-2 rounded-full transition-all cursor-pointer
+                            ${showMedia
+                                ? 'text-violet-600 bg-violet-50 dark:bg-violet-900/40'
+                                : 'text-slate-400 hover:text-violet-500 hover:bg-violet-50 dark:hover:bg-violet-900/30'}`}
+                        title="Вкладення"
+                    >
+                        <LayoutGrid size={17} />
                     </button>
                     {conversation.type === 'DIRECT' && onStartCall && (() => {
                         const other = conversation.members.find(m => m.userId !== currentUserId);
@@ -966,6 +999,14 @@ export default function ChatArea({
                         if (forwardMsg.id) forwardMessage(forwardMsg.id, targetId);
                     }}
                     onClose={() => setForwardMsg(null)}
+                />
+            )}
+            {showMedia && conversation && (
+                <MediaPanel
+                    conversationId={conversation.id}
+                    currentUserId={currentUserId!}
+                    onClose={() => setShowMedia(false)}
+                    decryptFn={decryptFn}
                 />
             )}
         </main>

@@ -60,6 +60,16 @@ export class ConversationsController {
         return this.conversationsService.getMessages(userId, id, cursor ? parseInt(cursor, 10) : undefined);
     }
 
+    @Get(':id/media')
+    getMedia(
+        @CurrentUser('sub') userId: number,
+        @Param('id', ParseIntPipe) id: number,
+    ) {
+        return this.conversationsService.getMediaFiles(userId, id);
+    }
+
+
+
     @Get(':id/messages/search')
     searchMessages(
         @CurrentUser('sub') userId: number,
