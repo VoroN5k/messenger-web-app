@@ -127,6 +127,44 @@ export const useConversations = (socket: any) => {
             );
         }
 
+        const onEdited = (data: {
+            messageId: number;
+            content: string;
+            editedAt: string;
+            conversationId: number;
+        }) => {
+            setConversations((prev) =>
+                prev.map((c) => {
+                    if (c.id !== data.conversationId) return c;
+                    if (c.lastMessage?.id !== data.messageId) return c;
+
+                    if (c.type === 'DIRECT') {
+                        const otherMember = c.members.find(m => m.userId !== currentUserId);
+                        if (otherMember) {
+                            e2e.decrypt(data.content, otherMember.userId)
+                                .then(plain => {
+                                    setConversations(prev2 =>
+                                    prev2.map(c2 =>
+                                    c2.id !== data.conversationId ? c2 :
+                                    c2.lastMessage?.id !== data.messageId ? c2 : {
+                                        ...c2,
+                                        lastMessage: { ...c2.lastMessage!, content: plain },
+                                    }
+                                )
+                            );
+                        })
+                            .catch(() => {})
+                    }
+                        return c;
+                }
+                    return {
+                    ...c,
+                    lastMessage: { ...c.lastMessage!, content: data.content },
+                    };
+                })
+            );
+        };
+
         const onUserStatus = (data: { userId: number; isOnline: boolean }) => {
             setConversations((prev) =>
                 prev.map((c) => {
@@ -169,6 +207,7 @@ export const useConversations = (socket: any) => {
         };
 
         socket.on('onMessage',           onMessage);
+        socket.on('messageEdited',       onEdited);
         socket.on('userStatusChanged',   onUserStatus);
         socket.on('conversationRead',    onRead);
         socket.on('addedToConversation', onAdded);
@@ -177,6 +216,7 @@ export const useConversations = (socket: any) => {
 
         return () => {
             socket.off('onMessage',           onMessage);
+            socket.off('messageEdited',       onEdited);
             socket.off('userStatusChanged',   onUserStatus);
             socket.off('conversationRead',    onRead);
             socket.off('addedToConversation', onAdded);
