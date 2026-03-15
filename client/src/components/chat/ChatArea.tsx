@@ -195,7 +195,7 @@ export default function ChatArea({
     );
 
     const { query, setQuery, results, isSearching, isOpen, setIsOpen, close: closeSearch } =
-        useSearch(conversation?.id);
+        useSearch(conversation?.id, messages);
 
     useEffect(() => {
         if (!messages.length) return;

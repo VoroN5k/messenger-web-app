@@ -1,12 +1,18 @@
 import { useState, useEffect, useCallback } from 'react';
 import api from '@/src/lib/axios';
 import { Message } from '@/src/types/conversation.types';
+import {useE2E} from "@/src/hooks/eseE2E";
 
-export const useSearch = (conversationId: number | undefined) => {
+export const useSearch = (
+    conversationId: number | undefined,
+    messages: Message[] = [],
+) => {
     const [query,       setQuery]       = useState('');
     const [results,     setResults]     = useState<Message[]>([]);
     const [isSearching, setIsSearching] = useState(false);
     const [isOpen,      setIsOpen]      = useState(false);
+
+    const e2e = useE2E();
 
     useEffect(() => {
         if (!query.trim() || query.trim().length < 2 || !conversationId) {
@@ -16,23 +22,13 @@ export const useSearch = (conversationId: number | undefined) => {
         }
 
         setIsSearching(true);
-
-        const timer = setTimeout(async () => {
-            try {
-                const res = await api.get(
-                    `/conversations/${conversationId}/messages/search`,
-                    { params: { q: query.trim() } },
-                );
-                setResults(res.data);
-            } catch {
-                setResults([]);
-            } finally {
-                setIsSearching(false);
-            }
-        }, 350);
-
-        return () => clearTimeout(timer);
-    }, [query, conversationId]);
+        const q = query.trim().toLowerCase();
+        const found = messages.filter(
+            (m) => !m.deletedAt && m.content.toLowerCase().includes(q)
+        );
+        setResults(found);
+        setIsSearching(false);
+    }, [query, messages]);
 
     const close = useCallback(() => {
         setIsOpen(false);
