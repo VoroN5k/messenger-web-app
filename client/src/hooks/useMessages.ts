@@ -143,17 +143,27 @@ export const useMessages = (
             );
         };
 
-        const onEdited = (data: {
+        const onEdited = async ( data: {
             messageId:      number;
             content:        string;
             editedAt:       string;
             conversationId: number;
         }) => {
             if (data.conversationId !== conversationId) return;
+
+            let content = data.content;
+            if ( content && otherUserId ) {
+                try {
+                    content = await e2e.decrypt(data.content, otherUserId)
+                } catch {
+                    //fallback
+                }
+            }
+
             setMessages((prev) =>
                 prev.map((m) =>
                     m.id === data.messageId
-                        ? { ...m, content: data.content, editedAt: data.editedAt }
+                        ? { ...m, content, editedAt: data.editedAt }
                         : m,
                 ),
             );
@@ -300,9 +310,21 @@ export const useMessages = (
         socket?.emit('deleteMessage', { messageId });
     }, [socket]);
 
-    const editMessage = useCallback((messageId: number, content: string) => {
-        socket?.emit('editMessage', { messageId, content });
-    }, [socket]);
+    const editMessage = useCallback(async (messageId: number, content: string) => {
+        if (!socket) return;
+        const payload = otherUserId
+            ? await e2e.encrypt(content, otherUserId)
+            :content;
+        socket.emit('editMessage', { messageId, content: payload });
+
+        setMessages((prev) =>
+            prev.map((m) =>
+                m.id === messageId
+                    ? { ...m, content, editedAt: new Date().toISOString() }
+                    : m,
+            ),
+        );
+    }, [socket, otherUserId, e2e]);
 
     const toggleReaction = useCallback((messageId: number, emoji: string) => {
         socket?.emit('toggleReaction', { messageId, emoji });
