@@ -39,6 +39,7 @@ model User {
   password  String
   role      Role      @default(USER)
   avatarUrl String?
+  statusEmoji String? // e.g. "😀"
   isEmailVerified Boolean @default(false)
   emailVerifyToken String?
   passwordResetToken String?
@@ -56,6 +57,7 @@ model User {
   sentFriendRequests Friendship[] @relation("FriendshipSender")
   receivedFriendRequests Friendship[] @relation("FriendshipReceiver")
   publicKey UserPublicKey?
+  forwardedMessages Message[] @relation("MessageForwardUser")
 }
 
 model Session {
@@ -78,6 +80,7 @@ model Conversation {
   description String?
   avatarUrl   String?
   createdById Int?
+  pinnedMessageId Int?
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
