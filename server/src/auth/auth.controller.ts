@@ -17,6 +17,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard.js';
 import { CurrentUser } from './decorators/current-user.decorator.js';
 import { Throttle, SkipThrottle } from '@nestjs/throttler';
 import {ChangePasswordDto} from "./dto/changePassword.dto.js";
+import {ForgotPasswordDto, ResetPasswordDto} from "./dto/passwordReset.dto.js";
 
 @Controller('auth')
 export class AuthController {
@@ -104,6 +105,21 @@ export class AuthController {
         @Body() dto: ChangePasswordDto,
     ) {
         return this.authService.changePassword(userId, dto.currentPassword, dto.newPassword);
+    }
+
+    @Throttle({ default: { ttl: 60000, limit: 3 } })
+    @Post('forgot-password')
+    async forgotPassword(@Body() dto: ForgotPasswordDto) {
+        await this.authService.forgotPassword(dto.email);
+
+        return { message: 'If an account with that email exists, a reset link has been sent' };
+    }
+
+    @Throttle({ default: { ttl: 60000, limit: 5 } })
+    @Post('reset-password')
+    async resetPassword(@Body() dto: ResetPasswordDto) {
+        await this.authService.resetPassword(dto.token, dto.newPassword);
+        return { message: 'Пароль успішно змінено. Тепер ви можете увійти.' };
     }
 
     private setRefreshCookie(res: Response, token: string) {

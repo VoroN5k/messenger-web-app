@@ -20,6 +20,7 @@ export class AuthService {
     private readonly logger = new Logger(AuthService.name);
     private readonly MAX_SESSIONS = 5;
     private readonly REFRESH_TOKEN_EXPIRY = 7 * 24 * 60 * 60 * 1000; // 7 днів
+    private readonly RESET_TOKEN_EXPIRY_MS = 60 * 60 * 1000; // 1 година
 
     constructor(
         private readonly prisma: PrismaService,
@@ -103,6 +104,56 @@ export class AuthService {
 
             return this.rotateSession(session.id, payload.sub, meta, tx);
         });
+    }
+
+    async forgotPassword(email: string): Promise<void> {
+        const user = await this.prisma.user.findUnique({ where: { email } });
+
+        if(!user || !user.isEmailVerified) return;
+
+        const rawToken = generateToken();
+        const expires = new Date(Date.now() + this.RESET_TOKEN_EXPIRY_MS);
+
+        await this.prisma.user.update({
+            where: { id: user.id },
+            data: {
+                passwordResetToken: hashToken(rawToken),
+                passwordResetExpires: expires,
+            },
+        });
+
+        await this.emailService.sendPasswordResetEmail(email, rawToken);
+        this.logger.log(`Password reset email sent to ${email}`);
+    }
+
+    async resetPassword(token: string, newPassword: string): Promise<void> {
+        const hashed = hashToken(token);
+
+        const user = await this.prisma.user.findFirst({
+            where: {
+                passwordResetToken: hashed,
+                passwordResetExpires: { gt: new Date() },
+            },
+        });
+
+        if (!user) throw new BadRequestException('Invalid or expired token');
+
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+        await this.prisma.$transaction([
+            this.prisma.user.update({
+                where: { id: user.id },
+                data: {
+                    password: hashedPassword,
+                    passwordResetToken: null,
+                    passwordResetExpires: null,
+                },
+            }),
+
+            this.prisma.session.deleteMany({ where: { userId: user.id } }),
+        ]);
+
+        this.logger.log(`Password reset successful for user: ${user.id}`);
     }
 
     // ISSUE TOKENS
