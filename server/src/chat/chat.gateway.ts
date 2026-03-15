@@ -459,4 +459,23 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
             client.emit('unpinFailed', { error: e.message });
         }
     }
+
+    @UseGuards(WsJwtGuard)
+    @SubscribeMessage('forwardMessage')
+    async handleForwardMessage(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() data: { messageId: number; targetConversationId: number },
+    ) {
+        try {
+            const msg = await this.convService.forwardMessage(
+                client.data.user.id,
+                data.messageId,
+                data.targetConversationId,
+            );
+
+            this.server.to(`conv_${data.targetConversationId}`).emit('onMessage', msg);
+        } catch (e: any) {
+            client.emit('forwardFailed', { error: e.message });
+        }
+    }
 }

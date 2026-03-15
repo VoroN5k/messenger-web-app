@@ -326,17 +326,13 @@ export default function ChatArea({
         socket?.emit('unpinMessage', { conversationId: conversation.id });
     }, [socket, conversation]);
 
-    const forwardMessage = useCallback(async (msgId: number, targetConvId: number) => {
-        try {
-            const { default: api } = await import('@/src/lib/axios');
-            await api.post('/conversations/forward', {
-                messageId:            msgId,
-                targetConversationId: targetConvId,
-            });
-        } catch (e) {
-            console.error('forwardMessage:', e);
-        }
-    }, []);
+    const forwardMessage = useCallback((msgId: number, targetConvId: number) => {
+        if (!socket) return;
+        socket.emit('forwardMessage', {
+            messageId: msgId,
+            targetConversationId: targetConvId,
+        })
+    }, [socket]);
 
     const onDragEnter = (e: React.DragEvent) => {
         e.preventDefault(); setDragCounter((c) => c + 1);

@@ -19,6 +19,8 @@ const ALLOWED_MIME_TYPES = new Set([
     'application/zip',
     'video/mp4', 'video/webm',
     'audio/mpeg', 'audio/ogg', 'audio/wav',
+    'audio/webm',
+    'audio/webm;codecs=opus',
 ]);
 
 @Injectable()
@@ -36,8 +38,9 @@ export class UploadService {
     }
 
     async uploadFile(file: Express.Multer.File, userId: number) {
+        const isAllowed = ALLOWED_MIME_TYPES.has(file.mimetype) || file.mimetype.startsWith('audio/');
         if (file.size > MAX_FILE_SIZE) throw new BadRequestException('File is too large (max 10 MB)');
-        if (!ALLOWED_MIME_TYPES.has(file.mimetype)) throw new BadRequestException(`File type "${file.mimetype}" is not allowed`);
+        if (!isAllowed) throw new BadRequestException(`File type "${file.mimetype}" is not allowed`);
 
         const ext = path.extname(file.originalname).toLowerCase();
         const storagePath = `${userId}/${randomUUID()}${ext}`
