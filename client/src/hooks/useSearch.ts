@@ -15,13 +15,20 @@ export const useSearch = (
     const [isOpen,      setIsOpen]      = useState(false);
     const [loadedCount, setLoadedCount] = useState(0);
 
-    const e2e      = useE2E();
-    const abortRef = useRef<AbortController | null>(null);
-    const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const e2e       = useE2E();
+    // ref щоб decrypt не потрапляв у deps ефекту
+    const decryptRef = useRef(e2e.decrypt);
+    useEffect(() => { decryptRef.current = e2e.decrypt; }, [e2e.decrypt]);
 
+    const abortRef   = useRef<AbortController | null>(null);
+    const timerRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const prevConvRef = useRef<number | undefined>(undefined);
+
+    // ── DIRECT: завантажити всю розшифровану історію ──────────────────────────
     const fetchAllDecrypted = useCallback(async (
-        convId: number,
-        signal: AbortSignal,
+        convId:      number,
+        peerUserId:  number,
+        signal:      AbortSignal,
     ): Promise<Message[]> => {
         const cached = sessionCache.get(convId);
         if (cached) return cached;
@@ -36,15 +43,17 @@ export const useSearch = (
                 : `/conversations/${convId}/messages`;
 
             const { data }: { data: Message[] } = await api.get(url, { signal });
+            if (signal.aborted) break;
 
             if (!data.length)     break;
             if (data.length < 30) hasMore = false;
 
+            // Розшифровуємо через ref — не спричиняє зміни deps
             const decrypted = await Promise.all(
                 data.map(async (msg) => {
-                    if (!msg.content || !otherUserId) return msg;
+                    if (!msg.content) return msg;
                     try {
-                        const plain = await e2e.decrypt(msg.content, otherUserId);
+                        const plain = await decryptRef.current(msg.content, peerUserId);
                         return { ...msg, content: plain };
                     } catch {
                         return msg;
@@ -52,14 +61,17 @@ export const useSearch = (
                 }),
             );
 
+            // Сервер повертає desc і сам робить reverse — data вже asc
+            // Для пагінації cursor = ID першого (найстарішого) повідомлення батчу
             all.unshift(...decrypted);
             cursor = data[0].id;
+
             setLoadedCount(all.length);
         }
 
         if (!signal.aborted) sessionCache.set(convId, all);
         return all;
-    }, [otherUserId, e2e]);
+    }, []); // ← порожній масив: не залежить від e2e
 
     const searchOnServer = useCallback(async (
         convId: number,
@@ -75,12 +87,10 @@ export const useSearch = (
 
     // ── Головний ефект пошуку ─────────────────────────────────────────────────
     useEffect(() => {
-        // Скасовуємо попередні запити незалежно від умов
         abortRef.current?.abort();
         if (timerRef.current) clearTimeout(timerRef.current);
 
         if (!isOpen || !conversationId || query.trim().length < 2) {
-            // Скидаємо стан лише якщо є що скидати (уникаємо зайвих ре-рендерів)
             setResults((prev) => prev.length ? [] : prev);
             setIsSearching(false);
             setLoadedCount(0);
@@ -99,7 +109,7 @@ export const useSearch = (
                 let found: Message[];
 
                 if (otherUserId) {
-                    const all = await fetchAllDecrypted(conversationId, ctrl.signal);
+                    const all = await fetchAllDecrypted(conversationId, otherUserId, ctrl.signal);
                     if (ctrl.signal.aborted) return;
 
                     const q = query.trim().toLowerCase();
@@ -125,19 +135,15 @@ export const useSearch = (
         }, 400);
 
         return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+        // fetchAllDecrypted і searchOnServer стабільні (порожні deps)
     }, [query, conversationId, isOpen, otherUserId, fetchAllDecrypted, searchOnServer]);
 
-    // ── При зміні conversationId — інвалідуємо кеш та скидаємо стан ──────────
-    // Використовуємо ref щоб уникнути циклічних залежностей
-    const prevConvRef = useRef<number | undefined>(undefined);
+    // ── Зміна conversationId — інвалідуємо кеш ───────────────────────────────
     useEffect(() => {
         if (prevConvRef.current !== undefined && prevConvRef.current !== conversationId) {
-            // Скасовуємо активні запити
             abortRef.current?.abort();
             if (timerRef.current) clearTimeout(timerRef.current);
-            // Інвалідуємо кеш старої конверсації
             if (prevConvRef.current) sessionCache.delete(prevConvRef.current);
-            // Скидаємо стан напряму (без close щоб уникнути циклів)
             setIsOpen(false);
             setQuery('');
             setResults([]);
@@ -147,11 +153,9 @@ export const useSearch = (
         prevConvRef.current = conversationId;
     }, [conversationId]);
 
-    // ── close — стабільна функція без залежностей що змінюються ──────────────
     const close = useCallback(() => {
         abortRef.current?.abort();
         if (timerRef.current) clearTimeout(timerRef.current);
-        // Інвалідуємо кеш поточної конверсації через ref
         const convId = prevConvRef.current;
         if (convId) sessionCache.delete(convId);
         setIsOpen(false);
@@ -159,7 +163,7 @@ export const useSearch = (
         setResults([]);
         setLoadedCount(0);
         setIsSearching(false);
-    }, []); // ← порожній масив, функція стабільна
+    }, []);
 
     return { query, setQuery, results, isSearching, isOpen, setIsOpen, close, loadedCount };
 };
