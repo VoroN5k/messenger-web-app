@@ -181,6 +181,7 @@ export default function ChatPage() {
                 <ChatArea
                     currentUser={user}
                     conversation={selectedConv}
+                    conversations={conversations}
                     socket={socket}
                     onConversationUpdate={updateConversation}
                     onMarkRead={handleMarkRead}

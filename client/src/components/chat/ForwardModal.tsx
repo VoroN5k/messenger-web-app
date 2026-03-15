@@ -14,7 +14,7 @@ interface Props {
 export function ForwardModal({ conversations, onForward, onClose }: Props) {
     const [q, setQ] = useState('');
 
-    const filtered = conversations.filter(c =>
+    const filtered = (conversations ?? []).filter(c =>
         c.name?.toLowerCase().includes(q.toLowerCase())
     );
 
