@@ -25,6 +25,7 @@ import {
 } from '@/src/types/conversation.types';
 import { User }          from '@/src/types/auth.types';
 import { Socket }        from 'socket.io-client';
+import {ImageModal} from "@/src/components/chat/ImageModal";
 
 interface ChatAreaProps {
     currentUser:           User | null;
@@ -103,10 +104,14 @@ const ReactionsRow = ({ reactions, currentUserId, onToggle }: {
     );
 };
 
-// ── FileBubble — supports E2E-encrypted files ─────────────────────────────────
-// For encrypted files (metadata.encrypted === true), the component fetches
-// the ciphertext from storage, decrypts it in the browser, and renders from
-// a local blob URL — the server never sees the plaintext.
+// ── PATCH для ChatArea.tsx ────────────────────────────────────────────────────
+// 1. Додати імпорт ImageModal вверху файлу поряд з іншими імпортами:
+//
+//    import { ImageModal } from './ImageModal';
+//
+//
+// 2. В компоненті FileBubble замінити весь код на наступний:
+
 const FileBubble = ({
                         msg, isMe, onDecrypt,
                     }: {
@@ -117,10 +122,10 @@ const FileBubble = ({
     const [err,        setErr]        = useState(false);
     const [blobUrl,    setBlobUrl]    = useState<string | null>(null);
     const [decrypting, setDecrypting] = useState(false);
+    const [lightbox,   setLightbox]   = useState(false);   // ← NEW
 
     const parsed      = msg.metadata ? (() => { try { return JSON.parse(msg.metadata!); } catch { return null; } })() : null;
     const isEncrypted = !!parsed?.encrypted && !!onDecrypt;
-    // Always display using the original MIME type stored in the message
     const displayMime = msg.fileType ?? undefined;
 
     useEffect(() => {
@@ -151,21 +156,32 @@ const FileBubble = ({
         );
     }
 
-    // For encrypted files use the decrypted blob URL; fall back to original URL
-    // before decryption completes (shows encrypted bytes) or if decryption failed.
     const srcUrl = isEncrypted ? (blobUrl ?? msg.fileUrl!) : msg.fileUrl!;
 
+    // ── Image — open in lightbox ──────────────────────────────────────────────
     if (isImageType(displayMime) && !err) {
         return (
-            <a href={srcUrl}
-               target={isEncrypted && blobUrl ? '_self' : '_blank'}
-               rel="noopener noreferrer"
-               download={isEncrypted && blobUrl ? (msg.fileName ?? true) : undefined}>
-                <img src={srcUrl} alt={msg.fileName ?? 'image'} onError={() => setErr(true)}
-                     className="max-w-[260px] max-h-[200px] rounded-xl object-cover cursor-pointer hover:opacity-90 block" />
-            </a>
+            <>
+                <img
+                    src={srcUrl}
+                    alt={msg.fileName ?? 'image'}
+                    onError={() => setErr(true)}
+                    onClick={() => setLightbox(true)}
+                    className="max-w-[260px] max-h-[200px] rounded-xl object-cover cursor-pointer hover:opacity-90 block transition-opacity"
+                />
+                {lightbox && (
+                    <ImageModal
+                        src={srcUrl}
+                        alt={msg.fileName ?? 'image'}
+                        fileName={msg.fileName ?? undefined}
+                        onClose={() => setLightbox(false)}
+                    />
+                )}
+            </>
         );
     }
+
+    // ── Other files — download link ───────────────────────────────────────────
     return (
         <a href={srcUrl}
            target={isEncrypted && blobUrl ? '_self' : '_blank'}
