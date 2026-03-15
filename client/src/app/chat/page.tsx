@@ -6,7 +6,7 @@ import { useSocket }            from '@/src/hooks/useSocket';
 import { useConversations }     from '@/src/hooks/useConversations';
 import { useFriends }           from '@/src/hooks/useFriends';
 import { usePushNotifications } from '@/src/hooks/usePushNotifications';
-import api                      from '@/src/lib/axios';
+import api, { refreshAccessToken } from '@/src/lib/axios'; // ← import the shared fn
 import { jwtDecode }            from 'jwt-decode';
 import { Bell, X }              from 'lucide-react';
 import Sidebar                  from '@/src/components/chat/SideBar';
@@ -15,7 +15,7 @@ import { Conversation }         from '@/src/types/conversation.types';
 import { useWebRTC }           from '@/src/hooks/useWebRTC';
 import { IncomingCallModal }   from '@/src/components/call/IncomingCallModal';
 import { ActiveCallOverlay }   from '@/src/components/call/ActiveCallOverlay';
-import {useE2E} from "@/src/hooks/eseE2E";
+import { useE2E }              from "@/src/hooks/eseE2E";
 
 export default function ChatPage() {
     const { user, logout, setAuth } = useAuthStore();
@@ -32,16 +32,15 @@ export default function ChatPage() {
     }, [user]);
 
     // ── Proactive refresh on load ─────────────────────────────────────────────
+    // Use the shared refreshAccessToken() so this doesn't race with the
+    // 401 interceptor or the silent refresh timer.
+    // Only runs when there is no access token in memory (e.g. after a page
+    // reload — the access token is not persisted, only the refresh cookie is).
     useEffect(() => {
         if (!useAuthStore.getState().accessToken) {
-            api.post('/auth/refresh')
-                .then((res) => {
-                    useAuthStore.getState().setAuth(
-                        useAuthStore.getState().user,
-                        res.data.accessToken,
-                    );
-                })
-                .catch(() => { window.location.href = '/auth/login'; });
+            refreshAccessToken().then((token) => {
+                if (!token) window.location.href = '/auth/login';
+            });
         }
     }, []);
 
@@ -84,6 +83,8 @@ export default function ChatPage() {
     }, [isSupported]);
 
     // ── Silent refresh ────────────────────────────────────────────────────────
+    // Schedules a proactive refresh ~1 min before the access token expires.
+    // Uses the shared refreshAccessToken() to avoid racing with the interceptor.
     useEffect(() => {
         let tid: ReturnType<typeof setTimeout>;
 
@@ -93,15 +94,7 @@ export default function ChatPage() {
             try {
                 const { exp } = jwtDecode<{ exp: number }>(token);
                 const delay   = Math.max(exp * 1000 - Date.now() - 60_000, 5_000);
-                tid = setTimeout(async () => {
-                    try {
-                        const res = await api.post('/auth/refresh');
-                        useAuthStore.getState().setAuth(
-                            useAuthStore.getState().user,
-                            res.data.accessToken,
-                        );
-                    } catch {}
-                }, delay);
+                tid = setTimeout(() => refreshAccessToken(), delay);
             } catch {}
         };
 
@@ -125,7 +118,6 @@ export default function ChatPage() {
         markConversationRead(conv.id);
     };
 
-    // FIX 3: Коли ChatArea отримує нове повідомлення в активному чаті — скидаємо unread
     const handleMarkRead = (conversationId: number) => {
         markConversationRead(conversationId);
     };
@@ -188,7 +180,7 @@ export default function ChatPage() {
                     onStartCall={startCall}
                 />
             </div>
-            {/* ── Incoming call ── */}
+
             {callState.status === 'incoming' && callState.incomingData && (
                 <IncomingCallModal
                     data={callState.incomingData}
@@ -197,7 +189,6 @@ export default function ChatPage() {
                 />
             )}
 
-            {/* ── Active / calling / connecting call ── */}
             {(callState.status === 'calling' ||
                 callState.status === 'connecting' ||
                 callState.status === 'active' ||
