@@ -8,12 +8,17 @@ import {
     SmilePlus, Paperclip, FileText, Download,
     ImageOff, Search, ChevronUp, ChevronDown,
     Reply, Users, Hash, Phone, Video,
+    Mic, Pin, PinOff, Forward,
 } from 'lucide-react';
 import { useMessages }   from '@/src/hooks/useMessages';
 import { useSearch }     from '@/src/hooks/useSearch';
 import { uploadFile, isImageType, formatFileSize } from '@/src/lib/uploadFile';
 import { Avatar }        from './Avatar';
 import { EmojiPicker }   from './EmojiPicker';
+import { VoiceRecorder } from './VoiceRecorder';
+import { VoiceBubble }   from './VoiceBubble';
+import { ForwardModal }  from './ForwardModal';
+import { LinkPreview, extractUrls } from './LinkPreview';
 import {
     Conversation, Message, Reaction,
 } from '@/src/types/conversation.types';
@@ -23,6 +28,7 @@ import { Socket }        from 'socket.io-client';
 interface ChatAreaProps {
     currentUser:           User | null;
     conversation:          Conversation | null;
+    conversations:         Conversation[];
     socket:                Socket | null;
     onConversationUpdate?: (updated: any) => void;
     onMarkRead?:           (conversationId: number) => void;
@@ -138,8 +144,21 @@ const ReplyBubble = ({ reply, isMe }: { reply: NonNullable<Message['replyTo']>; 
     </div>
 );
 
+const ForwardBubble = ({ forward, isMe }: { forward: NonNullable<Message['forwardedFrom']>; isMe: boolean }) => (
+    <div className={`text-xs rounded-lg px-2.5 py-1.5 mb-1.5 border-l-2 cursor-default
+        ${isMe
+        ? 'bg-white/10 border-white/30 text-indigo-200'
+        : 'bg-slate-100 dark:bg-slate-700/60 border-indigo-300 dark:border-indigo-600 text-slate-500 dark:text-slate-400'}`}>
+        <p className="font-semibold mb-0.5 flex items-center gap-1">
+            <Forward size={10} className="shrink-0" />
+            Переслано від {forward.sender.nickname}
+        </p>
+    </div>
+);
+
 export default function ChatArea({
-                                     currentUser, conversation, socket, onConversationUpdate, onMarkRead, onStartCall,
+                                     currentUser, conversation, conversations, socket,
+                                     onConversationUpdate, onMarkRead, onStartCall,
                                  }: ChatAreaProps) {
     const currentUserId = currentUser?.id;
 
@@ -155,6 +174,8 @@ export default function ChatArea({
     const [dragCounter,    setDragCounter]    = useState(0);
     const [uploadProgress, setUploadProgress] = useState<number | null>(null);
     const [uploadError,    setUploadError]    = useState<string | null>(null);
+    const [showVoice,      setShowVoice]      = useState(false);
+    const [forwardMsg,     setForwardMsg]     = useState<Message | null>(null);
     const abortRef = useRef<AbortController | null>(null);
 
     const fileInputRef   = useRef<HTMLInputElement>(null);
@@ -274,6 +295,49 @@ export default function ChatArea({
         } finally { setUploadProgress(null); abortRef.current = null; }
     }, [conversation, sendFileMessage, replyTo]);
 
+    const sendVoiceMessage = useCallback(async (blob: Blob, waveform: number[], duration: number) => {
+        if (!conversation) return;
+        setShowVoice(false);
+        setUploadError(null); setUploadProgress(0);
+        const ctrl = new AbortController();
+        abortRef.current = ctrl;
+        try {
+            const file = new File([blob], 'voice.webm', { type: 'audio/webm' });
+            const r    = await uploadFile(file, setUploadProgress, ctrl.signal);
+            sendFileMessage({
+                fileUrl:  r.url,
+                fileName: 'Голосове повідомлення',
+                fileType: 'audio/webm',
+                fileSize: blob.size,
+                metadata: JSON.stringify({ waveform, duration }),
+            });
+        } catch (err: any) {
+            if (err.message !== 'Upload cancelled') setUploadError(err.message ?? 'Помилка');
+        } finally { setUploadProgress(null); abortRef.current = null; }
+    }, [conversation, sendFileMessage]);
+
+    const pinMessage = useCallback((msgId: number) => {
+        if (!conversation) return;
+        socket?.emit('pinMessage', { conversationId: conversation.id, messageId: msgId });
+    }, [socket, conversation]);
+
+    const unpinMessage = useCallback(() => {
+        if (!conversation) return;
+        socket?.emit('unpinMessage', { conversationId: conversation.id });
+    }, [socket, conversation]);
+
+    const forwardMessage = useCallback(async (msgId: number, targetConvId: number) => {
+        try {
+            const { default: api } = await import('@/src/lib/axios');
+            await api.post('/conversations/forward', {
+                messageId:            msgId,
+                targetConversationId: targetConvId,
+            });
+        } catch (e) {
+            console.error('forwardMessage:', e);
+        }
+    }, []);
+
     const onDragEnter = (e: React.DragEvent) => {
         e.preventDefault(); setDragCounter((c) => c + 1);
         if (e.dataTransfer.types.includes('Files')) setIsDragging(true);
@@ -320,6 +384,7 @@ export default function ChatArea({
     const canPost   = conversation?.type !== 'CHANNEL' || myMember?.role !== 'MEMBER';
     const isChannel = conversation?.type === 'CHANNEL';
     const isGroup   = conversation?.type === 'GROUP';
+    const canPin    = myMember?.role === 'OWNER' || myMember?.role === 'ADMIN';
 
     if (!conversation) {
         return (
@@ -373,35 +438,60 @@ export default function ChatArea({
                         </p>
                     </div>
                 </div>
-                <button onClick={() => setIsOpen((o) => !o)}
-                        className={`p-2 rounded-full transition-all cursor-pointer
-                            ${isOpen ? 'text-indigo-600 bg-indigo-50 dark:bg-indigo-900/40' : 'text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30'}`}
-                        title="Пошук">
-                    <Search size={17} />
-                </button>
-                {conversation.type === 'DIRECT' && onStartCall && (() => {
-                    const other = conversation.members.find(m => m.userId !== currentUserId);
-                    if (!other) return null;
-                    return (
-                        <div className="flex items-center gap-1">
-                            <button
-                                onClick={() => onStartCall(conversation.id, other.userId, 'audio')}
-                                className="p-2 rounded-full text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 cursor-pointer transition-all"
-                                title="Аудіо дзвінок"
-                            >
-                                <Phone size={17} />
-                            </button>
-                            <button
-                                onClick={() => onStartCall(conversation.id, other.userId, 'video')}
-                                className="p-2 rounded-full text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 cursor-pointer transition-all"
-                                title="Відео дзвінок"
-                            >
-                                <Video size={17} />
-                            </button>
-                        </div>
-                    );
-                })()}
+                <div className="flex items-center gap-1">
+                    <button onClick={() => setIsOpen((o) => !o)}
+                            className={`p-2 rounded-full transition-all cursor-pointer
+                                ${isOpen ? 'text-indigo-600 bg-indigo-50 dark:bg-indigo-900/40' : 'text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30'}`}
+                            title="Пошук">
+                        <Search size={17} />
+                    </button>
+                    {conversation.type === 'DIRECT' && onStartCall && (() => {
+                        const other = conversation.members.find(m => m.userId !== currentUserId);
+                        if (!other) return null;
+                        return (
+                            <>
+                                <button
+                                    onClick={() => onStartCall(conversation.id, other.userId, 'audio')}
+                                    className="p-2 rounded-full text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 cursor-pointer transition-all"
+                                    title="Аудіо дзвінок">
+                                    <Phone size={17} />
+                                </button>
+                                <button
+                                    onClick={() => onStartCall(conversation.id, other.userId, 'video')}
+                                    className="p-2 rounded-full text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 cursor-pointer transition-all"
+                                    title="Відео дзвінок">
+                                    <Video size={17} />
+                                </button>
+                            </>
+                        );
+                    })()}
+                </div>
             </header>
+
+            {/* ── Pinned message banner ── */}
+            {conversation.pinnedMessage && (
+                <div className="bg-amber-50 dark:bg-amber-900/20 border-b border-amber-100 dark:border-amber-900/40 px-4 py-2 flex items-center gap-2 z-10">
+                    <Pin size={13} className="text-amber-500 shrink-0" />
+                    <button
+                        onClick={() => conversation.pinnedMessage?.id && jumpToMessage(conversation.pinnedMessage.id)}
+                        className="flex-1 min-w-0 text-left">
+                        <p className="text-xs font-semibold text-amber-600 dark:text-amber-400 leading-tight">
+                            {conversation.pinnedMessage.sender.nickname}
+                        </p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                            {conversation.pinnedMessage.content || '📎 Файл'}
+                        </p>
+                    </button>
+                    {canPin && (
+                        <button
+                            onClick={unpinMessage}
+                            className="p-1 text-slate-400 hover:text-red-500 cursor-pointer transition-colors"
+                            title="Відкріпити">
+                            <PinOff size={13} />
+                        </button>
+                    )}
+                </div>
+            )}
 
             {/* ── Search panel ── */}
             {isOpen && (
@@ -412,16 +502,14 @@ export default function ChatArea({
                             <input ref={searchInputRef} value={query} onChange={(e) => setQuery(e.target.value)}
                                    placeholder="Пошук по повідомленнях..."
                                    className="w-full pl-8 pr-4 py-2 text-sm bg-slate-50 dark:bg-slate-700 dark:text-slate-200 dark:placeholder-slate-400 rounded-xl outline-none focus:bg-white dark:focus:bg-slate-600 focus:ring-2 focus:ring-indigo-200 transition-all" />
-                                {isSearching && (
-                                    <div className="flex items-center gap-1.5">
-                                        <Loader2 size={13} className="animate-spin text-slate-400" />
-                                        {loadedCount > 0 && (
-                                            <span className="text-[11px] text-slate-400">
-                                                {loadedCount} повідомлень...
-                                            </span>
-                                        )}
-                                    </div>
-                                )}
+                            {isSearching && (
+                                <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                                    <Loader2 size={13} className="animate-spin text-slate-400" />
+                                    {loadedCount > 0 && (
+                                        <span className="text-[11px] text-slate-400">{loadedCount}...</span>
+                                    )}
+                                </div>
+                            )}
                         </div>
                         {results.length > 0 && (
                             <div className="flex items-center gap-1">
@@ -471,7 +559,8 @@ export default function ChatArea({
                     const isMe       = String(msg.senderId) === String(currentUserId);
                     const isDeleted  = !!msg.deletedAt;
                     const isEdited   = !!msg.editedAt && !isDeleted;
-                    const hasFile    = !!msg.fileUrl && !isDeleted;
+                    const isVoice    = msg.fileType === 'audio/webm' && !!msg.fileUrl;
+                    const hasFile    = !!msg.fileUrl && !isDeleted && !isVoice;
                     const isImage    = hasFile && isImageType(msg.fileType);
                     const msgKey     = msg.id ? `msg-${msg.id}` : `tmp-${idx}`;
                     const isHovered  = hoveredKey === msgKey;
@@ -485,6 +574,11 @@ export default function ChatArea({
                     const showSep    = idx === 0 ||
                         new Date(msg.createdAt).toDateString() !== new Date(messages[idx - 1].createdAt).toDateString();
                     const showSender = !isMe && (isGroup || isChannel);
+
+                    // Link preview — тільки для текстових повідомлень
+                    const msgUrls = (!isDeleted && msg.content && !isVoice && !msg.fileUrl)
+                        ? extractUrls(msg.content).slice(0, 1)
+                        : [];
 
                     return (
                         <React.Fragment key={msgKey}>
@@ -512,10 +606,28 @@ export default function ChatArea({
                                 <div className={`flex items-end gap-2 ${isMe ? 'flex-row' : 'flex-row-reverse'}`}>
                                     {!isDeleted && msg.id && !isEditing && (
                                         <div className={`flex items-center gap-1 transition-opacity duration-150 ${showAct ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+                                            {/* Reply */}
                                             <button onClick={() => setReplyTo(msg)}
                                                     className="p-1.5 rounded-full text-slate-400 hover:text-violet-500 hover:bg-violet-50 dark:hover:bg-violet-900/30 cursor-pointer transition-all">
                                                 <Reply size={13} />
                                             </button>
+
+                                            {/* Forward */}
+                                            <button onClick={() => setForwardMsg(msg)}
+                                                    className="p-1.5 rounded-full text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 cursor-pointer transition-all">
+                                                <Forward size={13} />
+                                            </button>
+
+                                            {/* Pin (тільки для адмінів у групах/каналах) */}
+                                            {canPin && (isGroup || isChannel) && (
+                                                <button onClick={() => pinMessage(msg.id!)}
+                                                        className="p-1.5 rounded-full text-slate-400 hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/30 cursor-pointer transition-all"
+                                                        title="Закріпити">
+                                                    <Pin size={13} />
+                                                </button>
+                                            )}
+
+                                            {/* Emoji picker */}
                                             <div className="relative">
                                                 <button onClick={() => setPickerKey((p) => p === msgKey ? null : msgKey)}
                                                         className={`p-1.5 rounded-full transition-all cursor-pointer
@@ -528,6 +640,8 @@ export default function ChatArea({
                                                                  onClose={() => setPickerKey(null)} />
                                                 )}
                                             </div>
+
+                                            {/* Edit / Delete (тільки свої) */}
                                             {isMe && (
                                                 <>
                                                     {isConfirm ? (
@@ -559,7 +673,7 @@ export default function ChatArea({
                                     )}
 
                                     <div className={`
-                                        ${isImage ? 'p-1.5' : 'px-4 py-2.5'}
+                                        ${isImage ? 'p-1.5' : isVoice ? 'px-3 py-2.5' : 'px-4 py-2.5'}
                                         max-w-md break-words flex flex-col shadow-sm transition-all duration-300
                                         ${isMe
                                         ? 'bg-indigo-500 text-white rounded-2xl rounded-br-sm'
@@ -588,15 +702,39 @@ export default function ChatArea({
                                             </div>
                                         ) : (
                                             <>
-                                                {msg.replyTo && !isDeleted && <ReplyBubble reply={msg.replyTo} isMe={isMe} />}
+                                                {/* Forward label */}
+                                                {msg.forwardedFrom && (
+                                                    <ForwardBubble forward={msg.forwardedFrom} isMe={isMe} />
+                                                )}
+
+                                                {/* Reply bubble */}
+                                                {msg.replyTo && <ReplyBubble reply={msg.replyTo} isMe={isMe} />}
+
+                                                {/* Voice message */}
+                                                {isVoice && (
+                                                    <VoiceBubble
+                                                        fileUrl={msg.fileUrl!}
+                                                        metadata={msg.metadata}
+                                                        isMe={isMe}
+                                                    />
+                                                )}
+
+                                                {/* File */}
                                                 {hasFile && <FileBubble msg={msg} isMe={isMe} />}
-                                                {msg.content && (
+
+                                                {/* Text content */}
+                                                {msg.content && !isVoice && (
                                                     <span className={`leading-relaxed ${hasFile ? (isImage ? 'px-2 pt-1' : 'mt-1.5') : ''}`}>
                                                         {isOpen && query.trim().length >= 2
                                                             ? <HighlightText text={msg.content} query={query} />
                                                             : msg.content}
                                                     </span>
                                                 )}
+
+                                                {/* Link preview */}
+                                                {msgUrls.map(url => (
+                                                    <LinkPreview key={url} url={url} isMe={isMe} />
+                                                ))}
                                             </>
                                         )}
 
@@ -609,6 +747,14 @@ export default function ChatArea({
                                                     {formatTime(msg.createdAt)}
                                                 </span>
                                                 {isMe && !isDeleted && <MessageStatus msg={msg} />}
+                                                {/* Read receipts у групах */}
+                                                {isMe && !isDeleted && (isGroup || isChannel) && msg.readBy && msg.readBy.length > 0 && (
+                                                    <span
+                                                        className="text-[10px] text-indigo-200 cursor-default ml-0.5"
+                                                        title={msg.readBy.map(r => r.nickname).join(', ')}>
+                                                        👁 {msg.readBy.length}
+                                                    </span>
+                                                )}
                                             </div>
                                         )}
                                     </div>
@@ -667,29 +813,58 @@ export default function ChatArea({
                 </div>
             )}
 
-            {/* ── Input ── */}
-            {canPost ? (
+            {/* ── Voice recorder (замінює input) ── */}
+            {showVoice ? (
+                <VoiceRecorder
+                    onSend={sendVoiceMessage}
+                    onCancel={() => setShowVoice(false)}
+                />
+            ) : canPost ? (
                 <form onSubmit={handleSubmit} className="p-4 bg-white dark:bg-slate-800 border-t border-gray-100 dark:border-slate-700 flex gap-3 items-end">
                     <input ref={fileInputRef} type="file" className="hidden"
                            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f); e.target.value = ''; }} />
+
+                    {/* Attach file */}
                     <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploadProgress !== null}
                             className="p-3 h-[48px] w-[48px] rounded-full text-slate-400 hover:text-violet-500 hover:bg-violet-50 dark:hover:bg-violet-900/30 flex items-center justify-center transition-all disabled:opacity-40 cursor-pointer shrink-0">
                         {uploadProgress !== null ? <Loader2 size={17} className="animate-spin" /> : <Paperclip size={17} />}
                     </button>
+
+                    {/* Text input */}
                     <input value={inputValue}
                            onChange={(e) => { setInputValue(e.target.value); notifyTyping(); }}
                            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(e as any); } }}
                            className="flex-1 bg-slate-50 dark:bg-slate-700 dark:text-slate-200 dark:placeholder-slate-400 border-transparent rounded-2xl px-5 py-3 text-gray-700 outline-none focus:bg-white dark:focus:bg-slate-600 focus:ring-4 focus:ring-violet-50 dark:focus:ring-violet-900/30 transition-all text-sm"
                            placeholder="Напишіть повідомлення..." />
-                    <button type="submit" disabled={!inputValue.trim() || uploadProgress !== null}
-                            className="bg-violet-500 hover:bg-violet-600 text-white p-3 h-[48px] w-[48px] rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95 disabled:opacity-50 shrink-0 cursor-pointer">
-                        <Send size={17} className="ml-0.5" />
-                    </button>
+
+                    {/* Voice or Send */}
+                    {inputValue.trim() ? (
+                        <button type="submit"
+                                className="bg-violet-500 hover:bg-violet-600 text-white p-3 h-[48px] w-[48px] rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95 shrink-0 cursor-pointer">
+                            <Send size={17} className="ml-0.5" />
+                        </button>
+                    ) : (
+                        <button type="button" onClick={() => setShowVoice(true)} disabled={uploadProgress !== null}
+                                className="p-3 h-[48px] w-[48px] rounded-full text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/30 flex items-center justify-center transition-all disabled:opacity-40 cursor-pointer shrink-0">
+                            <Mic size={17} />
+                        </button>
+                    )}
                 </form>
             ) : (
                 <div className="p-4 bg-white dark:bg-slate-800 border-t border-gray-100 dark:border-slate-700 text-center text-sm text-slate-400 italic">
                     Тільки адміни можуть писати в цьому каналі
                 </div>
+            )}
+
+            {/* ── Forward modal ── */}
+            {forwardMsg && (
+                <ForwardModal
+                    conversations={conversations}
+                    onForward={(targetId) => {
+                        if (forwardMsg.id) forwardMessage(forwardMsg.id, targetId);
+                    }}
+                    onClose={() => setForwardMsg(null)}
+                />
             )}
         </main>
     );

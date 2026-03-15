@@ -43,7 +43,7 @@ export interface Conversation {
     pinnedMessage?: {
     id:        number;
     content:   string;
-    senderId: { id: number; nickname: string };
+    sender: { id: number; nickname: string };
     } | null;
 }
 

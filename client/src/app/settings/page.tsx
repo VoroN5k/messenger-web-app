@@ -84,6 +84,10 @@ export default function SettingsPage() {
                     <ComingSoonItem label="Звуки" last />
                 </Section>
 
+                <Section title="Статус" icon={<span className="text-sm">😊</span>}>
+                    <EmojiStatusForm />
+                </Section>
+
                 <p className="text-center text-xs text-slate-300 dark:text-slate-600 pb-4">
                     © 2026 My Messenger App · v1.0.0
                 </p>
@@ -385,6 +389,46 @@ function DarkPreview() {
                 <div className="self-end h-2 bg-violet-500 rounded-full w-1/2" />
                 <div className="self-start h-2 bg-slate-700 rounded-full w-2/3" />
             </div>
+        </div>
+    );
+}
+
+function EmojiStatusForm() {
+    const { user, accessToken } = useAuthStore();
+    const setAuth = useAuthStore(s => s.setAuth);
+    const [selected, setSelected] = useState<string>((user as any)?.statusEmoji ?? '');
+    const [saving, setSaving] = useState(false);
+
+    const EMOJIS = ['', '😊','🔥','💤','🎮','✈️','🤒','📚','🎵','🍕','🔕','💼','🏋️','🎉','❤️','⚡'];
+
+    const save = async (emoji: string) => {
+        setSaving(true);
+        try {
+            await api.patch('/users/status', { emoji: emoji || null });
+            if (user && accessToken) setAuth({ ...user, statusEmoji: emoji || null } as any, accessToken);
+            setSelected(emoji);
+        } finally { setSaving(false); }
+    };
+
+    return (
+        <div className="p-5">
+            <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-3">
+                Emoji-статус
+                {selected && <span className="ml-2 text-lg">{selected}</span>}
+            </p>
+            <div className="grid grid-cols-8 gap-1.5">
+                {EMOJIS.map(e => (
+                    <button key={e || 'none'} onClick={() => save(e)}
+                            disabled={saving}
+                            className={`w-9 h-9 flex items-center justify-center rounded-xl text-lg transition-all cursor-pointer
+                                ${selected === e
+                                ? 'bg-violet-100 dark:bg-violet-900/40 ring-2 ring-violet-400'
+                                : 'hover:bg-slate-100 dark:hover:bg-slate-700'}`}>
+                        {e || <span className="text-xs text-slate-400">✕</span>}
+                    </button>
+                ))}
+            </div>
+            <p className="text-xs text-slate-400 mt-2">Відображається поряд з вашим аватаром</p>
         </div>
     );
 }

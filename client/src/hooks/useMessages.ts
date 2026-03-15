@@ -272,6 +272,7 @@ export const useMessages = (
         fileType:  string;
         fileSize:  number;
         content?:  string;
+        metadata?: string;
         replyToId?: number;
     }) => {
         if (!conversationId || !socket || !currentUserId) return;
@@ -335,6 +336,14 @@ export const useMessages = (
 
     const clearJumpTarget = useCallback(() => setJumpTarget(null), []);
 
+    const forwardMessage = useCallback(async (messageId: number, targetConvId: number) => {
+        try {
+            await api.post('/conversations/forward', { messageId, targetConversationId: targetConvId });
+        } catch (e) {
+            console.error('forwardMessage:', e);
+        }
+    }, []);
+
     return {
         messages,
         typingUsers,
@@ -350,5 +359,6 @@ export const useMessages = (
         loadMoreMessages,
         jumpToMessage,
         clearJumpTarget,
+        forwardMessage,
     };
 };
