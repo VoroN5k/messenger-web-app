@@ -8,6 +8,7 @@ export const useMessages = (
     currentUserId:  number | string | undefined,
     socket:         any,
     otherUserId?: number,
+    onDecryptedMessage?: (msg: Message) => void,
 ) => {
     const [messages,      setMessages]      = useState<Message[]>([]);
     const [typingUsers,   setTypingUsers]   = useState<{ userId: number; nickname: string }[]>([]);
@@ -52,6 +53,11 @@ export const useMessages = (
                 setMessages(decrypted);
                 setHasMore(res.data.length >= 30);
                 if (socket) socket.emit('markAsRead', { conversationId });
+
+                if ( decrypted.length > 0 ) {
+                    const last = decrypted[decrypted.length - 1];
+                    onDecryptedMessage?.(last);
+                }
             } catch (e: any) {
                 if (e.name !== 'CanceledError') console.error('useMessages fetch:', e);
             }
@@ -98,6 +104,8 @@ export const useMessages = (
                 const plain = await e2e.decrypt(msg.content, otherUserId);
                 decryptedMsg = { ...msg, content: plain };
             }
+
+            onDecryptedMessage?.(decryptedMsg);
 
             setMessages((prev) => {
                 const idx = prev.findIndex(

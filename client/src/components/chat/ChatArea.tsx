@@ -173,7 +173,26 @@ export default function ChatArea({
         messages, typingUsers, hasMore, isLoadingMore, jumpTarget,
         sendMessage, sendFileMessage, deleteMessage, editMessage, toggleReaction,
         notifyTyping, loadMoreMessages, jumpToMessage, clearJumpTarget,
-    } = useMessages(conversation?.id, currentUserId, socket, otherUserId);
+    } = useMessages(
+        conversation?.id,
+        currentUserId,
+        socket,
+        otherUserId,
+        (msg) => {
+            if (!msg.id) return;
+            onConversationUpdate?.({
+                id: msg.conversationId,
+                lastMessage: {
+                    id:        msg.id,
+                    content:   msg.content,
+                    senderId:  Number(msg.senderId),
+                    createdAt: msg.createdAt as string,
+                    fileType:  msg.fileType  ?? null,
+                    fileUrl:   msg.fileUrl   ?? null,
+                },
+            });
+        },
+    );
 
     const { query, setQuery, results, isSearching, isOpen, setIsOpen, close: closeSearch } =
         useSearch(conversation?.id);

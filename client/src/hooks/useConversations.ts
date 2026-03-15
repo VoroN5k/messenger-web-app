@@ -2,25 +2,55 @@ import { useState, useEffect, useCallback } from 'react';
 import api from '@/src/lib/axios';
 import { useAuthStore } from '@/src/store/useAuthStore';
 import { Conversation, Message } from '@/src/types/conversation.types';
+import {useE2E} from "@/src/hooks/eseE2E";
 
 export const useConversations = (socket: any) => {
     const [conversations, setConversations] = useState<Conversation[]>([]);
     const [isLoading,     setIsLoading]     = useState(false);
     const accessToken = useAuthStore((s) => s.accessToken);
-
     const currentUserId = useAuthStore((s) => s.user?.id);
+
+    const e2e = useE2E();
+
+    // HELPER: decode lasMessage for one conversation (used on initial fetch)
+    const decryptLastMessage = useCallback(async (conv: Conversation): Promise<Conversation> => {
+        if (
+            conv.type !== 'DIRECT' ||
+            !conv.lastMessage?.content ||
+            !conv.lastMessage.content.trim()
+        ) return conv;
+
+        const otherMember = conv.members.find(m => m.userId !== currentUserId);
+        if (!otherMember) return conv;
+
+        const c = conv.lastMessage.content;
+        const isCiphertext = c.length > 20 && /^[A-Za-z0-9_\-]+$/.test(c);
+        if (!isCiphertext) return conv;
+
+        try {
+            const plain = await e2e.decrypt(c, otherMember.userId);
+            return {
+                ...conv,
+                lastMessage: { ...conv.lastMessage, content: plain },
+            };
+        } catch {
+            return conv;
+        }
+    }, [currentUserId, e2e]);
 
     const fetchConversations = useCallback(async () => {
         setIsLoading(true);
         try {
             const res = await api.get<Conversation[]>('/conversations');
+
+            const decrypted = await Promise.all(res.data.map(decryptLastMessage));
             setConversations(res.data);
         } catch (e) {
             console.error('fetchConversations:', e);
         } finally {
             setIsLoading(false);
         }
-    }, []);
+    }, [decryptLastMessage]);
 
     useEffect(() => {
         if (!accessToken) return;
@@ -33,31 +63,64 @@ export const useConversations = (socket: any) => {
         const onMessage = (msg: Message) => {
             const isOwnMessage = String(msg.senderId) === String(currentUserId);
 
+            let displayContent = msg.content;
+            const isCiphertext = msg.content?.length > 20 && /^[A-Za-z0-9_\-]+$/.test(msg.content ?? '');
+
+            if (isCiphertext) {
+
+                setConversations((prev) => {
+                    const conv = prev.find(c => c.id === msg.conversationId);
+                    const otherMember = conv?.members.find(m => m.userId !== currentUserId);
+                    if (otherMember) {
+                        e2e.decrypt(msg.content, otherMember.userId).then(plain => {
+                            setConversations(prevConvs =>
+                                prevConvs
+                                    .map(c => c.id !== msg.conversationId ? c : {
+                                        ...c,
+                                        lastMessage: {
+                                            id:        msg.id!,
+                                            content:   plain,
+                                            senderId:  Number(msg.senderId),
+                                            createdAt: msg.createdAt as string,
+                                            fileType:  msg.fileType ?? null,
+                                            fileUrl:   msg.fileUrl  ?? null,
+                                        },
+                                        unreadCount: isOwnMessage ? c.unreadCount : c.unreadCount + 1,
+                                        updatedAt:   msg.createdAt as string,
+                                    })
+                                    .sort((a, b) =>
+                                        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+                                    ),
+                            );
+                        });
+                    }
+                    return prev;
+                });
+                return;
+            }
+
             setConversations((prev) =>
                 prev
                     .map((c) =>
-                        c.id !== msg.conversationId
-                            ? c
-                            : {
-                                ...c,
-                                lastMessage: {
-                                    id:        msg.id!,
-                                    content:   msg.content,
-                                    senderId:  Number(msg.senderId),
-                                    createdAt: msg.createdAt as string,
-                                    fileType:  msg.fileType  ?? null,
-                                    fileUrl:   msg.fileUrl   ?? null,
-                                },
-                                unreadCount: isOwnMessage ? c.unreadCount : c.unreadCount + 1,
-                                updatedAt:   msg.createdAt as string,
+                        c.id !== msg.conversationId ? c : {
+                            ...c,
+                            lastMessage: {
+                                id:        msg.id!,
+                                content:   displayContent,
+                                senderId:  Number(msg.senderId),
+                                createdAt: msg.createdAt as string,
+                                fileType:  msg.fileType ?? null,
+                                fileUrl:   msg.fileUrl  ?? null,
                             },
+                            unreadCount: isOwnMessage ? c.unreadCount : c.unreadCount + 1,
+                            updatedAt:   msg.createdAt as string,
+                        },
                     )
-                    .sort(
-                        (a, b) =>
-                            new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+                    .sort((a, b) =>
+                        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
                     ),
             );
-        };
+        }
 
         const onUserStatus = (data: { userId: number; isOnline: boolean }) => {
             setConversations((prev) =>
