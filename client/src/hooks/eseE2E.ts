@@ -1,7 +1,8 @@
 import { useAuthStore } from "@/src/store/useAuthStore";
 import {useCallback, useEffect, useState} from "react";
 import {
-    decryptMessage, deriveSharedKey, encryptMessage,
+    decryptFile,
+    decryptMessage, deriveSharedKey, encryptFile, encryptMessage,
     generateKeyPair, loadPrivateKey, savePrivateKey,
 } from "@/src/lib/crypto";
 import api from "@/src/lib/axios";
@@ -14,15 +15,12 @@ let   initialized  = false;
 let   initPromise: Promise<void> | null = null;
 let onReadyCallbacks: Array<() => void> = [];
 
-const RETRY_AFTER_MS = 30_000; // If key fetch fails, retry after 30s
-
 export function useE2E() {
     const { user, accessToken } = useAuthStore();
 
     const [isReady, setIsReady] = useState(initialized && !!privateKey);
 
     useEffect(() => {
-        // Якщо вже готово — одразу
         if (initialized && privateKey) {
             setIsReady(true);
             return;
@@ -142,5 +140,27 @@ export function useE2E() {
         }
     }, [getSessionKey]);
 
-    return { encrypt, decrypt, isReady };
+    const encryptBinary = useCallback(async (
+        data: ArrayBuffer,
+        targetUserId: number,
+    ): Promise<ArrayBuffer> => {
+        const key = await getSessionKey(targetUserId);
+        if (!key) return data;
+        return encryptFile(key, data);
+    }, [getSessionKey]);
+
+    const decryptBinary = useCallback(async (
+        data: ArrayBuffer,
+        peerUserId: number,
+    ): Promise<ArrayBuffer> => {
+        const key = await getSessionKey(peerUserId);
+        if (!key) return data;
+        try {
+            return await decryptFile(key, data);
+        } catch {
+            return data;
+        }
+    }, [getSessionKey]);
+
+    return { encrypt, decrypt, encryptBinary, decryptBinary, isReady };
 }

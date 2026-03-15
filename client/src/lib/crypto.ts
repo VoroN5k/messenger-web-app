@@ -78,6 +78,27 @@ export async function decryptMessage(aesKey: CryptoKey, ciphertext: string): Pro
     return new TextDecoder().decode(plaintext);
 }
 
+// ── Binary file encryption ────────────────────────────────────────────────────
+export async function encryptFile(aesKey: CryptoKey, data: ArrayBuffer): Promise<ArrayBuffer> {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv}, aesKey, data);
+    const out = new Uint8Array(12 + encrypted.byteLength);
+    out.set(iv, 0);
+    out.set(new Uint8Array(encrypted), 12);
+    return out.buffer as ArrayBuffer;
+}
+
+export async function decryptFile(aesKey: CryptoKey, data: ArrayBuffer): Promise<ArrayBuffer> {
+    const bytes = new Uint8Array(data);
+    const iv = bytes.slice(0, 12);
+    const ciphertext = bytes.slice(12);
+    return crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv },
+        aesKey,
+        ciphertext.buffer as ArrayBuffer,
+    ) as Promise<ArrayBuffer>;
+}
+
 // ── Key persistence в IndexedDB ───────────────────────────────────────────────
 const DB_NAME    = 'messenger-keys';
 const STORE_NAME = 'keypairs';
