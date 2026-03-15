@@ -48,7 +48,19 @@ export function VoiceBubble({ fileUrl, metadata, isMe }: Props) {
                         audio.oncanplay = audio.onloadeddata = audio.onerror = null;
                         resolve(result);
                     };
-                    audio.oncanplay    = () => finish(true);
+                    audio.oncanplay = () => {
+                        // Трюк для отримання тривалості WAV
+                        if (!isFinite(audio.duration) || audio.duration === 0) {
+                            audio.currentTime = 1e101;
+                            audio.ontimeupdate = () => {
+                                audio.ontimeupdate = null;
+                                audio.currentTime = 0;
+                                finish(true);
+                            };
+                        } else {
+                            finish(true);
+                        }
+                    };
                     audio.onloadeddata = () => finish(true);
                     audio.onerror      = () => finish(false);
                     const tid = setTimeout(() => finish(false), 8000);

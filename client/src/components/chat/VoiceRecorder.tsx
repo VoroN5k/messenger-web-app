@@ -61,6 +61,7 @@ export function VoiceRecorder({ onSend, onCancel }: Props) {
     const timerRef  = useRef<number | null>(null);
     const sampleRef = useRef<number | null>(null);
     const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
+    const cancelRef = useRef(false);
 
     const stopTimers = () => {
         if (timerRef.current)  clearInterval(timerRef.current);
@@ -90,16 +91,18 @@ export function VoiceRecorder({ onSend, onCancel }: Props) {
     const startedRef = useRef(false);
 
     const startRecording = useCallback(async () => {
-        // StrictMode guard — не запускати двічі
         if (startedRef.current) return;
         startedRef.current = true;
+        cancelRef.current = false;
 
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            if (cancelRef.current) { stream.getTracks().forEach(t => t.stop()); return; }
             streamRef.current = stream;
 
             const AC  = window.AudioContext ?? (window as any).webkitAudioContext;
             const ctx = new AC() as AudioContext;
+            if (cancelRef.current) { ctx.close(); stream.getTracks().forEach(t => t.stop()); return; }
             ctxRef.current        = ctx;
             sampleRateRef.current = ctx.sampleRate;
 
@@ -117,18 +120,16 @@ export function VoiceRecorder({ onSend, onCancel }: Props) {
             const blobUrl = URL.createObjectURL(blob);
             await ctx.audioWorklet.addModule(blobUrl);
             URL.revokeObjectURL(blobUrl);
+            if (cancelRef.current) { ctx.close(); stream.getTracks().forEach(t => t.stop()); return; }
 
-            const source   = ctx.createMediaStreamSource(stream);
+            const source = ctx.createMediaStreamSource(stream);
             sourceNodeRef.current = source;
 
-            // Analyser — тільки для waveform візуалізації, не впливає на запис
             const analyser = ctx.createAnalyser();
             analyser.fftSize = 256;
             source.connect(analyser);
             analyserRef.current = analyser;
 
-            // numberOfOutputs: 0 — worklet без виходу, не потребує connect до destination
-            // Повністю усуває feedback і тріск
             const worklet = new AudioWorkletNode(ctx, 'pcm-capture', {
                 numberOfInputs:  1,
                 numberOfOutputs: 0,
@@ -141,13 +142,14 @@ export function VoiceRecorder({ onSend, onCancel }: Props) {
             durationRef.current  = 0;
 
             worklet.port.onmessage = (e: MessageEvent<Float32Array>) => {
+                if (cancelRef.current) return;
                 pcmChunksRef.current.push(new Float32Array(e.data));
             };
 
             setPhase('recording');
 
             sampleRef.current = window.setInterval(() => {
-                if (!analyserRef.current) return;
+                if (!analyserRef.current || cancelRef.current) return;
                 const data = new Uint8Array(analyserRef.current.frequencyBinCount);
                 analyserRef.current.getByteFrequencyData(data);
                 const avg = Array.from(data).reduce((a, b) => a + b, 0) / data.length / 255;
@@ -158,29 +160,39 @@ export function VoiceRecorder({ onSend, onCancel }: Props) {
             durationRef.current = 0;
             setDuration(0);
             timerRef.current = window.setInterval(() => {
+                if (cancelRef.current) return;
                 durationRef.current += 1;
                 setDuration(durationRef.current);
             }, 1000);
 
         } catch {
             startedRef.current = false;
-            alert('Немає доступу до мікрофону');
-            onCancel();
+            if (!cancelRef.current) {
+                alert('Немає доступу до мікрофону');
+                onCancel();
+            }
         }
     }, [onCancel]);
 
     const stopRecording = useCallback(() => {
+        const chunks = pcmChunksRef.current;
         doStop();
 
-        // Encode all PCM chunks → WAV
-        const wav = encodeWAV(pcmChunksRef.current, sampleRateRef.current);
+        if (chunks.length === 0) {
+            // Нічого не записано — повернутись назад
+            setPhase('idle');
+            onCancel();
+            return;
+        }
+
+        const wav = encodeWAV(chunks, sampleRateRef.current);
         blobRef.current = wav;
         const url = URL.createObjectURL(wav);
         audioUrlRef.current = url;
         setAudioUrl(url);
         setWaveform([...waveformRef.current]);
         setPhase('preview');
-    }, [doStop]);
+    }, [doStop, onCancel]);
 
     const handleSend = useCallback(async () => {
         if (!blobRef.current) return;
@@ -198,10 +210,22 @@ export function VoiceRecorder({ onSend, onCancel }: Props) {
     useEffect(() => {
         startRecording();
         return () => {
+            cancelRef.current = true;   // ← зупиняє старий async
+            startedRef.current = false;
             stopTimers();
-            processorRef.current?.disconnect();
+            if (processorRef.current) {
+                processorRef.current.port.onmessage = null;
+                processorRef.current.disconnect();
+                processorRef.current = null;
+            }
+            sourceNodeRef.current?.disconnect();
+            sourceNodeRef.current = null;
+            analyserRef.current = null;
             streamRef.current?.getTracks().forEach(t => t.stop());
+            streamRef.current = null;
             ctxRef.current?.close().catch(() => {});
+            ctxRef.current = null;
+            pcmChunksRef.current = [];
         };
     }, [startRecording]);
 
