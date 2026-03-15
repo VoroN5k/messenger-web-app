@@ -21,6 +21,7 @@ const ALLOWED_MIME_TYPES = new Set([
     'audio/mpeg', 'audio/ogg', 'audio/wav',
     'audio/webm',
     'audio/webm;codecs=opus',
+    'audio/wav'
 ]);
 
 @Injectable()
