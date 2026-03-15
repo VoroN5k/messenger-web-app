@@ -41,3 +41,16 @@ export class AddMemberDto {
     @IsInt() @IsPositive()
     userId: number;
 }
+
+export class PinMessageDto {
+    @IsInt() @IsPositive()
+    messageId: number;
+}
+
+export class ForwardMessageDto {
+    @IsInt() @IsPositive()
+    messageId: number;
+
+    @IsInt() @IsPositive()
+    targetConversationId: number;
+}

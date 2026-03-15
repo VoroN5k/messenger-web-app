@@ -11,12 +11,19 @@ const MSG_SELECT = {
     id: true, content: true, createdAt: true, editedAt: true, deletedAt: true,
     fileUrl: true, fileName: true, fileType: true, fileSize: true,
     senderId: true, conversationId: true, replyToId: true,
+    forwardedFromId: true, forwardedFromUser: true,
     sender: { select: { id: true, nickname: true, avatarUrl: true } },
     replyTo: {
         select: {
             id: true, content: true, deletedAt: true,
             sender: { select: { id: true, nickname: true } },
         },
+    },
+    forwardedFrom: {
+      select: {
+          id: true, content: true, fileType: true,
+          sender: { select: { id: true, nickname: true } },
+      }
     },
     reactions: {
         select:  { emoji: true, userId: true },
@@ -53,32 +60,24 @@ export class ConversationsService {
     // FIX: mapMessage з isRead — перевіряємо чи хтось інший прочитав після createdAt
     private mapMessageWithRead(
         msg: any,
-        senderId: number,
-        otherMembersLastRead: Map<number, Date>,
+        currentUserId: number,
+        otherMembersLastRead: Map<number, { lastReadAt: Date; nickname: string }>,
     ) {
         const { reactions, ...rest } = msg;
+        const msgTime = new Date(rest.createdAt).getTime();
 
-        // isRead = true якщо хоч один інший учасник має lastReadAt >= createdAt повідомлення
-        // і це повідомлення від нашого senderId
         let isRead = false;
-        if (rest.senderId === senderId) {
-            const msgTime = new Date(rest.createdAt).getTime();
-            for (const lastRead of otherMembersLastRead.values()) {
-                if (lastRead.getTime() >= msgTime) {
-                    isRead = true;
-                    break;
-                }
-            }
-        } else {
-            // Чужі повідомлення — завжди вважаємо прочитаними (ми їх завантажили = побачили)
-            isRead = true;
-        }
+        const readBy: { userId: number; nickname: string }[] = [];
 
-        return {
-            ...rest,
-            isRead,
-            reactions: this.groupReactions(reactions),
-        };
+        for (const [userId, { lastReadAt, nickname }] of otherMembersLastRead.entries()) {
+            if (lastReadAt.getTime() >= msgTime) {
+                readBy.push({ userId, nickname });
+                if (String(rest.senderId) === String(currentUserId)) isRead = true;
+            }
+        }
+        if (String(rest.senderId) !== String(currentUserId)) isRead = true;
+
+        return { ...rest, isRead, readBy, reactions: this.groupReactions(reactions) };
     }
 
     private async assertMember(userId: number, conversationId: number) {
@@ -99,14 +98,14 @@ export class ConversationsService {
     private async getOtherMembersLastRead(
         conversationId: number,
         currentUserId: number,
-    ): Promise<Map<number, Date>> {
+    ): Promise<Map<number, { lastReadAt: Date, nickname: string }>> {
         const members = await this.prisma.conversationMember.findMany({
             where: { conversationId, userId: { not: currentUserId } },
-            select: { userId: true, lastReadAt: true },
+            select: { userId: true, lastReadAt: true, user: { select: { nickname: true } } },
         });
-        const map = new Map<number, Date>();
+        const map = new Map<number, { lastReadAt: Date; nickname: string }>();
         for (const m of members) {
-            map.set(m.userId, m.lastReadAt);
+            map.set(m.userId, { lastReadAt: m.lastReadAt, nickname: m.user.nickname });
         }
         return map;
     }
@@ -140,6 +139,12 @@ export class ConversationsService {
             memberships.map(async (m) => {
                 const conv = m.conversation;
 
+                // ← явно дістаємо pinnedMessageId окремим запитом
+                const convFull = await this.prisma.conversation.findUnique({
+                    where:  { id: conv.id },
+                    select: { pinnedMessageId: true },
+                });
+
                 const unreadCount = await this.prisma.message.count({
                     where: {
                         conversationId: conv.id,
@@ -162,26 +167,91 @@ export class ConversationsService {
                     }
                 }
 
+                const pinnedMessageId = convFull?.pinnedMessageId ?? null;
+
+                // Завантажуємо pinnedMessage якщо є
+                const pinnedMessage = pinnedMessageId
+                    ? await this.prisma.message.findUnique({
+                        where:  { id: pinnedMessageId },
+                        select: {
+                            id:      true,
+                            content: true,
+                            sender:  { select: { id: true, nickname: true } },
+                        },
+                    })
+                    : null;
+
                 return {
-                    id:          conv.id,
-                    type:        conv.type,
-                    name:        displayName,
-                    avatarUrl:   displayAvatar,
-                    description: conv.description,
+                    id:              conv.id,
+                    type:            conv.type,
+                    name:            displayName,
+                    avatarUrl:       displayAvatar,
+                    description:     conv.description,
                     isOnline,
-                    myRole:      m.role,
-                    lastMessage: conv.messages[0] ?? null,
+                    myRole:          m.role,
+                    lastMessage:     conv.messages[0] ?? null,
                     unreadCount,
-                    members:     conv.members.map((mem) => ({
+                    members:         conv.members.map((mem) => ({
                         userId:   mem.userId,
                         role:     mem.role,
                         joinedAt: mem.joinedAt,
                         user:     mem.user,
                     })),
-                    updatedAt: conv.updatedAt,
+                    updatedAt:        conv.updatedAt,
+                    pinnedMessageId,           // ← NEW
+                    pinnedMessage,             // ← NEW
                 };
             }),
         );
+    }
+
+    async pinMessage(userId: number, conversationId: number, messageId: number) {
+        await this.assertAdmin(userId, conversationId);
+        const msg = await this.prisma.message.findUnique({ where: { id: messageId } });
+        if (!msg || msg.conversationId !== conversationId) throw new NotFoundException('Message not found');
+
+        await this.prisma.conversation.update({
+            where: { id: conversationId },
+            data:  { pinnedMessageId: messageId },
+        });
+        return { pinnedMessageId: messageId, message: this.mapMessage(msg) };
+    }
+
+    async unpinMessage(userId: number, conversationId: number) {
+        await this.assertAdmin(userId, conversationId);
+        await this.prisma.conversation.update({
+            where: { id: conversationId },
+            data:  { pinnedMessageId: null },
+        });
+        return { pinnedMessageId: null };
+    }
+
+    async forwardMessage(userId: number, messageId: number, targetConversationId: number) {
+        await this.assertMember(userId, targetConversationId);
+        const original = await this.prisma.message.findUnique({ where: { id: messageId } });
+        if (!original) throw new NotFoundException('Message not found');
+
+        const msg = await this.prisma.message.create({
+            data: {
+                content:            original.content,
+                senderId:           userId,
+                conversationId:     targetConversationId,
+                fileUrl:            original.fileUrl,
+                fileName:           original.fileName,
+                fileType:           original.fileType,
+                fileSize:           original.fileSize,
+                forwardedFromId:    original.id,
+                forwardedFromUserId: original.senderId,
+            },
+            select: MSG_SELECT,
+        });
+
+        await this.prisma.conversation.update({
+            where: { id: targetConversationId },
+            data:  { updatedAt: new Date() },
+        });
+
+        return { ...this.mapMessage(msg), isRead: false };
     }
 
     // ── Get or create DIRECT ──────────────────────────────────────────────────

@@ -425,4 +425,38 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
             candidate: data.candidate,
         });
     }
+
+    @UseGuards(WsJwtGuard)
+    @SubscribeMessage('pinMessage')
+    async handlePin(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() data: { conversationId: number; messageId: number },
+    ) {
+        try {
+            const result = await this.convService.pinMessage(client.data.user.id, data.conversationId, data.messageId);
+            this.server.to(`conv_${data.conversationId}`).emit('messagePinned', {
+                conversationId: data.conversationId,
+                pinnedMessageId: result.pinnedMessageId,
+                pinnedMessage: result.message,
+            });
+        } catch (e: any) {
+            client.emit('pinFailed', { error: e.message });
+        }
+    }
+
+    @UseGuards(WsJwtGuard)
+    @SubscribeMessage('unpinMessage')
+    async handleUnpin(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() data: { conversationId: number },
+    ) {
+        try {
+            await this.convService.unpinMessage(client.data.user.id, data.conversationId)
+            this.server.to(`conv_${data.conversationId}`).emit('messageUnpinned', {
+                conversationId: data.conversationId,
+            });
+        } catch (e: any) {
+            client.emit('unpinFailed', { error: e.message });
+        }
+    }
 }

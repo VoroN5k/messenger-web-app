@@ -7,7 +7,7 @@ import { JwtAuthGuard }         from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser }          from '../auth/decorators/current-user.decorator.js';
 import {
     CreateDirectDto, CreateGroupDto, CreateChannelDto,
-    UpdateConversationDto, AddMemberDto,
+    UpdateConversationDto, AddMemberDto, PinMessageDto, ForwardMessageDto,
 } from './dto/conversation.dto.js';
 
 @Controller('conversations')
@@ -95,5 +95,30 @@ export class ConversationsController {
         @Body('role') role: 'ADMIN' | 'MEMBER',
     ) {
         return this.conversationsService.setMemberRole(userId, id, memberId, role);
+    }
+
+    @Post(':id/pin')
+    pinMessage(
+        @CurrentUser('sub') userId: number,
+        @Param('id', ParseIntPipe) id: number,
+        @Body() dto: PinMessageDto,
+    ) {
+        return this.conversationsService.pinMessage(userId, id, dto.messageId);
+    }
+
+    @Delete(':id/pin')
+    unpinMessage(
+        @CurrentUser('sub') userId: number,
+        @Param('id', ParseIntPipe) id: number,
+    ) {
+        return this.conversationsService.unpinMessage(userId, id);
+    }
+
+    @Post('forward')
+    forwardMessage(
+        @CurrentUser('sub') userId: number,
+        @Body() dto: ForwardMessageDto,
+    ) {
+        return this.conversationsService.forwardMessage(userId, dto.messageId, dto.targetConversationId);
     }
 }
