@@ -253,10 +253,12 @@ export class ConversationsService {
 
     // ── Get or create DIRECT ──────────────────────────────────────────────────
     async getOrCreateDirect(userId: number, targetId: number) {
-        if (userId === targetId) throw new BadRequestException('Cannot DM yourself');
+        const isSelf = userId === targetId;
 
-        const target = await this.prisma.user.findUnique({ where: { id: targetId } });
-        if (!target) throw new NotFoundException('User not found');
+        if(!isSelf) {
+            const target = await this.prisma.user.findUnique({ where: { id: targetId } });
+            if(!target) throw new NotFoundException('User not found');
+        }
 
         const existing = await this.prisma.conversation.findFirst({
             where: {
@@ -276,10 +278,12 @@ export class ConversationsService {
                 type:        'DIRECT',
                 createdById: userId,
                 members: {
-                    create: [
-                        { userId,    role: 'MEMBER' },
-                        { userId: targetId, role: 'MEMBER' },
-                    ],
+                    create: isSelf
+                        ? [{ userId, role: 'MEMBER'}]
+                        : [
+                            { userId, role: 'MEMBER' },
+                            { userId: targetId, role: 'MEMBER' },
+                          ],
                 },
             },
             include: { members: { include: { user: { select: MEMBER_USER_SELECT } } } },

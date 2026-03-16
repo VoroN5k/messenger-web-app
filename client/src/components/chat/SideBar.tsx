@@ -1,11 +1,17 @@
 'use client';
 
+// client/src/components/chat/SideBar.tsx
+// ЗМІНИ:
+//   1. Додано кнопку "Збережені" під пошуком у вкладці Чати
+//   2. Клік на неї відкриває self-DM (userId === userId)
+//   3. Saved чат відображається спеціальним значком у списку розмов
+
 import { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import {
     LogOut, Bell, BellOff, MessageSquare,
     Users, Search, X, UserPlus, Check,
-    Hash, Plus, Settings,
+    Hash, Plus, Settings, Bookmark,
 } from 'lucide-react';
 import { useAuthStore }         from '@/src/store/useAuthStore';
 import api                      from '@/src/lib/axios';
@@ -51,6 +57,15 @@ function formatTime(d: string): string {
     const isToday = date.toDateString() === now.toDateString();
     if (isToday) return date.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
     return date.toLocaleDateString('uk-UA', { day: 'numeric', month: 'short' });
+}
+
+// Перевіряємо чи це чат із самим собою (Saved)
+function isSavedMessages(conv: Conversation, currentUserId: number | undefined): boolean {
+    if (!currentUserId) return false;
+    if (conv.type !== 'DIRECT') return false;
+    return conv.members.length === 1 && conv.members[0].userId === currentUserId
+        || (conv.members.length === 2 &&
+            conv.members.every(m => m.userId === currentUserId));
 }
 
 export default function Sidebar({
@@ -107,6 +122,23 @@ export default function Sidebar({
         onSelectConversation(conv);
         socket?.emit('joinConversation', { conversationId: conv.id });
         setSearchQuery(''); setSearchResults([]); setTab('chats');
+    };
+
+    // ── Open Saved Messages ───────────────────────────────────────────────────
+    const openSaved = async () => {
+        if (!currentUser) return;
+        // Спочатку шукаємо в вже завантажених розмовах
+        const existing = conversations.find(c => isSavedMessages(c, currentUser.id));
+        if (existing) {
+            onSelectConversation(existing);
+            return;
+        }
+        // Якщо немає — створюємо
+        const res  = await api.post('/conversations/direct', { targetUserId: currentUser.id });
+        const conv = res.data as Conversation;
+        onAddConversation(conv);
+        onSelectConversation(conv);
+        socket?.emit('joinConversation', { conversationId: conv.id });
     };
 
     // ── Send friend request ───────────────────────────────────────────────────
@@ -169,7 +201,6 @@ export default function Sidebar({
                             {pushPermission === 'granted' ? <Bell size={15} /> : <BellOff size={15} />}
                         </button>
                     )}
-                    {/* ── Settings button ── */}
                     <button
                         onClick={() => router.push('/settings')}
                         className="p-2 rounded-full text-gray-400 dark:text-slate-500 hover:text-violet-600 dark:hover:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/30 transition-all cursor-pointer"
@@ -235,7 +266,17 @@ export default function Sidebar({
                 {/* ══ CHATS tab ══ */}
                 {tab === 'chats' && (
                     <>
+                        {/* ── Saved + New Group/Channel ── */}
                         <div className="flex gap-1.5 px-3 py-2">
+                            {/* Збережені повідомлення */}
+                            <button
+                                onClick={openSaved}
+                                className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-600 text-xs text-slate-500 dark:text-slate-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 hover:border-amber-200 dark:hover:border-amber-700 hover:text-amber-600 dark:hover:text-amber-400 transition-all cursor-pointer shrink-0"
+                                title="Збережені повідомлення"
+                            >
+                                <Bookmark size={12} />
+                                Збережені
+                            </button>
                             <button onClick={() => setShowNewGroup(true)}
                                     className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-600 text-xs text-slate-500 dark:text-slate-400 hover:bg-violet-50 dark:hover:bg-violet-900/20 hover:border-violet-200 dark:hover:border-violet-700 hover:text-violet-600 dark:hover:text-violet-400 transition-all cursor-pointer">
                                 <Plus size={12} />Група
@@ -257,6 +298,7 @@ export default function Sidebar({
                         ) : (
                             filteredConvs.map((conv) => {
                                 const isSelected = conv.id === selectedConvId;
+                                const isSaved    = isSavedMessages(conv, currentUser?.id);
                                 const typeIcon   =
                                     conv.type === 'GROUP'   ? <Users size={10} className="text-violet-400" /> :
                                         conv.type === 'CHANNEL' ? <Hash  size={10} className="text-indigo-400" /> : null;
@@ -269,32 +311,36 @@ export default function Sidebar({
                                              : 'hover:bg-slate-50 dark:hover:bg-slate-700/50 border-l-transparent'}`}
                                     >
                                         <div className="relative shrink-0">
-                                            {conv.avatarUrl
-                                                ? <Avatar user={{ nickname: conv.name ?? '?', avatarUrl: conv.avatarUrl }} size="lg" />
-                                                : conv.type === 'DIRECT'
-                                                    ? <Avatar user={{ nickname: conv.name ?? '?', avatarUrl: null }} size="lg" />
-                                                    : (
-                                                        <div className={`w-12 h-12 rounded-full flex items-center justify-center
-                                                            ${conv.type === 'GROUP' ? 'bg-violet-100 dark:bg-violet-900/40' : 'bg-indigo-100 dark:bg-indigo-900/40'}`}>
-                                                            {conv.type === 'GROUP'
-                                                                ? <Users size={20} className="text-violet-500" />
-                                                                : <Hash  size={20} className="text-indigo-500" />}
-                                                        </div>
-                                                    )
-                                            }
-                                            {conv.type === 'DIRECT' && (
-                                                <span className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white dark:border-slate-800
-                                                    ${conv.isOnline ? 'bg-emerald-400' : 'bg-slate-300 dark:bg-slate-600'}`} />
+                                            {/* Збережені — спеціальна іконка */}
+                                            {isSaved ? (
+                                                <div className="w-12 h-12 rounded-full flex items-center justify-center bg-amber-100 dark:bg-amber-900/40">
+                                                    <Bookmark size={22} className="text-amber-500" />
+                                                </div>
+                                            ) : conv.avatarUrl || conv.type === 'DIRECT' ? (
+                                                <>
+                                                    <Avatar user={{ nickname: conv.name ?? '?', avatarUrl: conv.avatarUrl }} size="lg" />
+                                                    {conv.type === 'DIRECT' && (
+                                                        <span className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white dark:border-slate-800
+                                                            ${conv.isOnline ? 'bg-emerald-400' : 'bg-slate-300 dark:bg-slate-600'}`} />
+                                                    )}
+                                                </>
+                                            ) : (
+                                                <div className={`w-12 h-12 rounded-full flex items-center justify-center
+                                                    ${conv.type === 'GROUP' ? 'bg-violet-100 dark:bg-violet-900/40' : 'bg-indigo-100 dark:bg-indigo-900/40'}`}>
+                                                    {conv.type === 'GROUP'
+                                                        ? <Users size={20} className="text-violet-500" />
+                                                        : <Hash  size={20} className="text-indigo-500" />}
+                                                </div>
                                             )}
                                         </div>
 
                                         <div className="min-w-0 flex-1">
                                             <div className="flex items-center justify-between gap-1">
                                                 <div className="flex items-center gap-1 min-w-0">
-                                                    {typeIcon}
+                                                    {!isSaved && typeIcon}
                                                     <p className={`font-medium text-sm truncate
                                                         ${isSelected ? 'text-violet-900 dark:text-violet-300' : 'text-gray-800 dark:text-slate-200'}`}>
-                                                        {conv.name ?? 'Чат'}
+                                                        {isSaved ? 'Збережені' : (conv.name ?? 'Чат')}
                                                     </p>
                                                 </div>
                                                 <span className="text-[10px] text-slate-400 dark:text-slate-500 shrink-0">
@@ -464,10 +510,10 @@ export default function Sidebar({
 function CreateGroupModal({ friends, onClose, onCreated }: {
     friends: FriendItem[]; onClose: () => void; onCreated: (c: Conversation) => void;
 }) {
-    const [name,     setName]     = useState('');
+    const [name, setName] = useState('');
     const [selected, setSelected] = useState<number[]>([]);
-    const [loading,  setLoading]  = useState(false);
-    const [error,    setError]    = useState('');
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState('');
 
     const toggle = (id: number) =>
         setSelected((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
@@ -540,10 +586,10 @@ function CreateGroupModal({ friends, onClose, onCreated }: {
 function CreateChannelModal({ onClose, onCreated }: {
     onClose: () => void; onCreated: (c: Conversation) => void;
 }) {
-    const [name,    setName]    = useState('');
-    const [desc,    setDesc]    = useState('');
+    const [name, setName] = useState('');
+    const [desc, setDesc] = useState('');
     const [loading, setLoading] = useState(false);
-    const [error,   setError]   = useState('');
+    const [error, setError] = useState('');
 
     const submit = async () => {
         const trimmedName = name.trim();
