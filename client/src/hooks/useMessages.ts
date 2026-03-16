@@ -1,24 +1,17 @@
-// client/src/hooks/useMessages.ts
-// ── CHANGES: offline queue integration ───────────────────────────────────────
-//   1. Import useOfflineQueue
-//   2. flushMessage callback — sends a queued msg via socket with E2E
-//   3. sendMessage checks isOnline+socket.connected, enqueues when offline
-//   4. socket 'connect' event triggers flush()
-//   5. Return isOnline and offlineQueueCount
-
 import { useState, useEffect, useCallback, useRef } from 'react';
 import api from '@/src/lib/axios';
-import { Message, Reaction } from '@/src/types/conversation.types';
+import { Message, Reaction, ConversationType } from '@/src/types/conversation.types';
 import { useE2E } from './useE2E';
 import { useOfflineQueue } from './useOfflineQueue';
 import { QueuedMessage } from '@/src/types/conversation.types';
 
 export const useMessages = (
-    conversationId: number | undefined,
-    currentUserId:  number | string | undefined,
-    socket:         any,
-    otherUserId?: number,
+    conversationId:      number | undefined,
+    currentUserId:       number | string | undefined,
+    socket:              any,
+    otherUserId?:        number,
     onDecryptedMessage?: (msg: Message) => void,
+    conversationType?:   ConversationType,   // ← НОВЕ
 ) => {
     const [messages,      setMessages]      = useState<Message[]>([]);
     const [typingUsers,   setTypingUsers]   = useState<{ userId: number; nickname: string }[]>([]);
@@ -26,13 +19,32 @@ export const useMessages = (
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [jumpTarget,    setJumpTarget]    = useState<number | null>(null);
 
-    const messagesRef     = useRef<Message[]>([]);
-    const typingTimers    = useRef<Map<number, NodeJS.Timeout>>(new Map());
-    const typingTimeout   = useRef<NodeJS.Timeout | null>(null);
+    const messagesRef   = useRef<Message[]>([]);
+    const typingTimers  = useRef<Map<number, NodeJS.Timeout>>(new Map());
+    const typingTimeout = useRef<NodeJS.Timeout | null>(null);
 
     const e2e = useE2E();
 
+    const isGroup  = conversationType === 'GROUP';
+    const isDirect = conversationType === 'DIRECT';
+
     useEffect(() => { messagesRef.current = messages; }, [messages]);
+
+    // ── Helpers шифрування/дешифрування ──────────────────────────────────────
+    const encryptContent = useCallback(async (content: string): Promise<string> => {
+        if (isDirect && otherUserId)    return e2e.encrypt(content, otherUserId);
+        if (isGroup  && conversationId) return e2e.encryptForGroup(content, conversationId);
+        return content;
+    }, [isDirect, isGroup, otherUserId, conversationId, e2e]);
+
+    const decryptContent = useCallback(async (ciphertext: string): Promise<string> => {
+        if (isDirect && otherUserId)    return e2e.decrypt(ciphertext, otherUserId);
+        if (isGroup  && conversationId) return e2e.decryptFromGroup(ciphertext, conversationId);
+        return ciphertext;
+    }, [isDirect, isGroup, otherUserId, conversationId, e2e]);
+
+    const looksEncrypted = (s?: string | null) =>
+        !!s && s.length > 20 && /^[A-Za-z0-9_\-]+$/.test(s);
 
     // ── Fetch initial messages ────────────────────────────────────────────────
     useEffect(() => {
@@ -43,6 +55,8 @@ export const useMessages = (
             return;
         }
 
+        // Очищаємо синхронно — запобігає ре-рендеру VoiceBubble/FileBubble
+        // з неправильним decryptFn поки нові повідомлення ще вантажаться
         setMessages([]);
         setTypingUsers([]);
 
@@ -58,11 +72,11 @@ export const useMessages = (
                 const decrypted = await Promise.all(
                     res.data.map(async (msg: Message) => {
                         let result = msg;
-                        if (msg.content && otherUserId) {
-                            result = { ...result, content: await e2e.decrypt(msg.content, otherUserId) };
+                        if (msg.content && looksEncrypted(msg.content)) {
+                            result = { ...result, content: await decryptContent(msg.content) };
                         }
-                        if (msg.replyTo?.content && otherUserId) {
-                            const replyPlain = await e2e.decrypt(msg.replyTo.content, otherUserId);
+                        if (msg.replyTo?.content && looksEncrypted(msg.replyTo.content)) {
+                            const replyPlain = await decryptContent(msg.replyTo.content);
                             result = { ...result, replyTo: { ...result.replyTo!, content: replyPlain } };
                         }
                         return result;
@@ -73,9 +87,8 @@ export const useMessages = (
                 setHasMore(res.data.length >= 30);
                 if (socket) socket.emit('markAsRead', { conversationId });
 
-                if ( decrypted.length > 0 ) {
-                    const last = decrypted[decrypted.length - 1];
-                    onDecryptedMessage?.(last);
+                if (decrypted.length > 0) {
+                    onDecryptedMessage?.(decrypted[decrypted.length - 1]);
                 }
             } catch (e: any) {
                 if (e.name !== 'CanceledError') console.error('useMessages fetch:', e);
@@ -99,11 +112,11 @@ export const useMessages = (
             const decrypted = await Promise.all(
                 res.data.map(async (msg: Message) => {
                     let result = msg;
-                    if (msg.content && otherUserId) {
-                        result = { ...result, content: await e2e.decrypt(msg.content, otherUserId) };
+                    if (msg.content && looksEncrypted(msg.content)) {
+                        result = { ...result, content: await decryptContent(msg.content) };
                     }
-                    if (msg.replyTo?.content && otherUserId) {
-                        const replyPlain = await e2e.decrypt(msg.replyTo.content, otherUserId);
+                    if (msg.replyTo?.content && looksEncrypted(msg.replyTo.content)) {
+                        const replyPlain = await decryptContent(msg.replyTo.content);
                         result = { ...result, replyTo: { ...result.replyTo!, content: replyPlain } };
                     }
                     return result;
@@ -116,7 +129,7 @@ export const useMessages = (
         } finally {
             setIsLoadingMore(false);
         }
-    }, [conversationId, isLoadingMore, hasMore]);
+    }, [conversationId, isLoadingMore, hasMore, decryptContent]);
 
     // ── Socket events ─────────────────────────────────────────────────────────
     useEffect(() => {
@@ -126,18 +139,17 @@ export const useMessages = (
             if (msg.conversationId !== conversationId) return;
 
             let decryptedMsg = msg;
-            if (msg.content && otherUserId) {
-                decryptedMsg = { ...decryptedMsg, content: await e2e.decrypt(msg.content, otherUserId) };
+            if (msg.content && looksEncrypted(msg.content)) {
+                decryptedMsg = { ...decryptedMsg, content: await decryptContent(msg.content) };
             }
-            if (msg.replyTo?.content && otherUserId) {
-                const replyPlain = await e2e.decrypt(msg.replyTo.content, otherUserId);
+            if (msg.replyTo?.content && looksEncrypted(msg.replyTo.content)) {
+                const replyPlain = await decryptContent(msg.replyTo.content);
                 decryptedMsg = { ...decryptedMsg, replyTo: { ...decryptedMsg.replyTo!, content: replyPlain } };
             }
 
             onDecryptedMessage?.(decryptedMsg);
 
             setMessages((prev) => {
-                // Replace matching optimistic/pending message (same content + sender + no id)
                 const idx = prev.findIndex(
                     (m) =>
                         !m.id &&
@@ -147,16 +159,13 @@ export const useMessages = (
                 );
                 if (idx !== -1) {
                     const next = [...prev];
-                    // Preserve order but replace with server-confirmed message
                     next[idx] = { ...decryptedMsg, isPending: false, _queueId: undefined };
                     return next;
                 }
                 return [...prev, decryptedMsg];
             });
 
-            setTypingUsers((prev) =>
-                prev.filter((t) => t.userId !== Number(msg.senderId)),
-            );
+            setTypingUsers((prev) => prev.filter((t) => t.userId !== Number(msg.senderId)));
 
             if (String(msg.senderId) !== String(currentUserId)) {
                 socket.emit('markAsRead', { conversationId });
@@ -167,49 +176,32 @@ export const useMessages = (
             if (data.conversationId !== conversationId) return;
             setMessages((prev) =>
                 prev.map((m) =>
-                    m.id === data.messageId
-                        ? { ...m, deletedAt: new Date().toISOString() }
-                        : m,
+                    m.id === data.messageId ? { ...m, deletedAt: new Date().toISOString() } : m,
                 ),
             );
         };
 
-        const onEdited = async ( data: {
-            messageId:      number;
-            content:        string;
-            editedAt:       string;
-            conversationId: number;
+        const onEdited = async (data: {
+            messageId: number; content: string; editedAt: string; conversationId: number;
         }) => {
             if (data.conversationId !== conversationId) return;
-
             let content = data.content;
-            if ( content && otherUserId ) {
-                try {
-                    content = await e2e.decrypt(data.content, otherUserId)
-                } catch {
-                    //fallback
-                }
+            if (looksEncrypted(content)) {
+                try { content = await decryptContent(content); } catch {}
             }
-
             setMessages((prev) =>
                 prev.map((m) =>
-                    m.id === data.messageId
-                        ? { ...m, content, editedAt: data.editedAt }
-                        : m,
+                    m.id === data.messageId ? { ...m, content, editedAt: data.editedAt } : m,
                 ),
             );
         };
 
         const onReaction = (data: {
-            messageId:      number;
-            reactions:      Reaction[];
-            conversationId: number;
+            messageId: number; reactions: Reaction[]; conversationId: number;
         }) => {
             if (data.conversationId !== conversationId) return;
             setMessages((prev) =>
-                prev.map((m) =>
-                    m.id === data.messageId ? { ...m, reactions: data.reactions } : m,
-                ),
+                prev.map((m) => m.id === data.messageId ? { ...m, reactions: data.reactions } : m),
             );
         };
 
@@ -218,19 +210,14 @@ export const useMessages = (
             if (String(data.userId) !== String(currentUserId)) {
                 setMessages((prev) =>
                     prev.map((m) =>
-                        String(m.senderId) === String(currentUserId)
-                            ? { ...m, isRead: true }
-                            : m,
+                        String(m.senderId) === String(currentUserId) ? { ...m, isRead: true } : m,
                     ),
                 );
             }
         };
 
         const onTyping = (data: {
-            userId:         number;
-            nickname:       string;
-            conversationId: number;
-            isTyping:       boolean;
+            userId: number; nickname: string; conversationId: number; isTyping: boolean;
         }) => {
             if (data.conversationId !== conversationId) return;
             if (String(data.userId) === String(currentUserId)) return;
@@ -240,16 +227,12 @@ export const useMessages = (
                     if (prev.some((t) => t.userId === data.userId)) return prev;
                     return [...prev, { userId: data.userId, nickname: data.nickname }];
                 });
-
                 const existing = typingTimers.current.get(data.userId);
                 if (existing) clearTimeout(existing);
-
                 typingTimers.current.set(
                     data.userId,
                     setTimeout(() => {
-                        setTypingUsers((prev) =>
-                            prev.filter((t) => t.userId !== data.userId),
-                        );
+                        setTypingUsers((prev) => prev.filter((t) => t.userId !== data.userId));
                         typingTimers.current.delete(data.userId);
                     }, 3500),
                 );
@@ -275,35 +258,26 @@ export const useMessages = (
             socket.off('onTyping',         onTyping);
             socket.off('conversationRead', onRead);
         };
-    }, [socket, conversationId, currentUserId]);
+    }, [socket, conversationId, currentUserId, decryptContent]);
 
     // ── Offline queue ─────────────────────────────────────────────────────────
-    // flushMessage: called by useOfflineQueue for each queued item.
-    // Returns true = delivered (remove from queue), false = retry later.
     const flushMessage = useCallback(async (msg: QueuedMessage): Promise<boolean> => {
         if (!socket?.connected) return false;
         try {
-            const payload = msg.otherUserId
-                ? await e2e.encrypt(msg.content, msg.otherUserId)
-                : msg.content;
-
+            const payload = await encryptContent(msg.content);
             socket.emit('sendMessage', {
                 conversationId: msg.conversationId,
                 content:        payload,
                 replyToId:      msg.replyToId,
             });
-            // The server will broadcast 'onMessage' back, which replaces the
-            // pending optimistic message automatically (matched by content+sender).
             return true;
         } catch {
             return false;
         }
-    }, [socket, e2e]);
+    }, [socket, encryptContent]);
 
     const { queue: offlineQueue, isOnline, enqueue, flush } = useOfflineQueue(flushMessage);
 
-    // Flush queue whenever the socket reconnects (covers the case where the
-    // browser thinks it's online but the socket was still reconnecting).
     useEffect(() => {
         if (!socket) return;
         const onConnect = () => flush();
@@ -318,85 +292,54 @@ export const useMessages = (
         const canSend = !!socket?.connected && isOnline;
 
         if (!canSend) {
-            // ── Offline path: enqueue and show pending message ────────────────
             const queueId = enqueue({
-                conversationId,
-                content,
-                replyToId,
-                createdAt:   new Date().toISOString(),
-                senderId:    currentUserId,
-                otherUserId, // needed for E2E encryption on flush
+                conversationId, content, replyToId,
+                createdAt: new Date().toISOString(),
+                senderId:  currentUserId,
+                otherUserId,
             });
-
             setMessages((prev) => [
                 ...prev,
                 {
-                    content,
-                    senderId:       currentUserId,
-                    conversationId,
-                    createdAt:      new Date().toISOString(),
-                    deletedAt:      null,
-                    editedAt:       null,
-                    reactions:      [],
-                    replyToId:      replyToId ?? null,
-                    isRead:         false,
-                    isPending:      true,
-                    _queueId:       queueId,
+                    content, senderId: currentUserId, conversationId,
+                    createdAt: new Date().toISOString(),
+                    deletedAt: null, editedAt: null, reactions: [],
+                    replyToId: replyToId ?? null, isRead: false,
+                    isPending: true, _queueId: queueId,
                 },
             ]);
             return;
         }
 
-        // ── Online path: encrypt + emit ───────────────────────────────────────
-        const payload = otherUserId
-            ? await e2e.encrypt(content, otherUserId)
-            : content;
-
+        const payload = await encryptContent(content);
         socket.emit('sendMessage', { conversationId, content: payload, replyToId });
 
         setMessages((prev) => [
             ...prev,
             {
-                content,
-                senderId:       currentUserId,
-                conversationId,
-                createdAt:      new Date().toISOString(),
-                deletedAt:      null,
-                editedAt:       null,
-                reactions:      [],
-                replyToId:      replyToId ?? null,
-                isRead:         false,
+                content, senderId: currentUserId, conversationId,
+                createdAt: new Date().toISOString(),
+                deletedAt: null, editedAt: null, reactions: [],
+                replyToId: replyToId ?? null, isRead: false,
             },
         ]);
 
         socket.emit('typing', { conversationId, isTyping: false });
-    }, [conversationId, currentUserId, socket, otherUserId, isOnline, enqueue, e2e]);
+    }, [conversationId, currentUserId, socket, isOnline, enqueue, encryptContent]);
 
     const sendFileMessage = useCallback((payload: {
-        fileUrl:   string;
-        fileName:  string;
-        fileType:  string;
-        fileSize:  number;
-        content?:  string;
-        metadata?: string;
-        replyToId?: number;
+        fileUrl: string; fileName: string; fileType: string; fileSize: number;
+        content?: string; metadata?: string; replyToId?: number;
     }) => {
         if (!conversationId || !socket || !currentUserId) return;
-
         socket.emit('sendMessage', { conversationId, ...payload });
-
         setMessages((prev) => [
             ...prev,
             {
-                content:        payload.content ?? '',
-                senderId:       currentUserId,
-                conversationId,
-                createdAt:      new Date().toISOString(),
-                deletedAt:      null,
-                editedAt:       null,
-                reactions:      [],
-                replyToId:      payload.replyToId ?? null,
-                isRead:         false,
+                content: payload.content ?? '', senderId: currentUserId, conversationId,
+                createdAt: new Date().toISOString(),
+                deletedAt: null, editedAt: null, reactions: [],
+                replyToId: payload.replyToId ?? null, isRead: false,
                 ...payload,
             },
         ]);
@@ -408,19 +351,14 @@ export const useMessages = (
 
     const editMessage = useCallback(async (messageId: number, content: string) => {
         if (!socket) return;
-        const payload = otherUserId
-            ? await e2e.encrypt(content, otherUserId)
-            : content;
+        const payload = await encryptContent(content);
         socket.emit('editMessage', { messageId, content: payload });
-
         setMessages((prev) =>
             prev.map((m) =>
-                m.id === messageId
-                    ? { ...m, content, editedAt: new Date().toISOString() }
-                    : m,
+                m.id === messageId ? { ...m, content, editedAt: new Date().toISOString() } : m,
             ),
         );
-    }, [socket, otherUserId, e2e]);
+    }, [socket, encryptContent]);
 
     const toggleReaction = useCallback((messageId: number, emoji: string) => {
         socket?.emit('toggleReaction', { messageId, emoji });
@@ -463,22 +401,10 @@ export const useMessages = (
     }, []);
 
     return {
-        messages,
-        typingUsers,
-        hasMore,
-        isLoadingMore,
-        jumpTarget,
-        sendMessage,
-        sendFileMessage,
-        deleteMessage,
-        editMessage,
-        toggleReaction,
-        notifyTyping,
-        loadMoreMessages,
-        jumpToMessage,
-        clearJumpTarget,
-        forwardMessage,
-        isOnline,
-        offlineQueueCount: offlineQueue.length,
+        messages, typingUsers, hasMore, isLoadingMore, jumpTarget,
+        sendMessage, sendFileMessage, deleteMessage, editMessage,
+        toggleReaction, notifyTyping, loadMoreMessages,
+        jumpToMessage, clearJumpTarget, forwardMessage,
+        isOnline, offlineQueueCount: offlineQueue.length,
     };
 };
