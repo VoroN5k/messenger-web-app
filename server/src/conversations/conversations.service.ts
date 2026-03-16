@@ -162,6 +162,8 @@ export class ConversationsService {
                         displayName   = other.user.nickname;
                         displayAvatar = other.user.avatarUrl;
                         isOnline      = other.user.isOnline;
+                    } else {
+                        displayName = 'Збережені';
                     }
                 }
 
@@ -260,16 +262,24 @@ export class ConversationsService {
             if(!target) throw new NotFoundException('User not found');
         }
 
-        const existing = await this.prisma.conversation.findFirst({
-            where: {
-                type: 'DIRECT',
-                AND: [
-                    { members: { some: { userId } } },
-                    { members: { some: { userId: targetId } } },
-                ],
-            },
-            include: { members: { include: { user: { select: MEMBER_USER_SELECT } } } },
-        });
+        const existing = isSelf
+        ? await this.prisma.conversation.findFirst({
+                where: {
+                    type: 'DIRECT',
+                    members: { every: { userId } },
+                },
+                include: { members: { include: { user: { select: MEMBER_USER_SELECT } } } },
+            })
+            : await this.prisma.conversation.findFirst({
+                where: {
+                    type: 'DIRECT',
+                    AND: [
+                        { members: { some: { userId } } },
+                        { members: { some: { userId: targetId } } },
+                    ],
+                },
+                include: { members: { include: { user: { select: MEMBER_USER_SELECT } } } },
+            });
 
         if (existing) return existing;
 

@@ -63,9 +63,7 @@ function formatTime(d: string): string {
 function isSavedMessages(conv: Conversation, currentUserId: number | undefined): boolean {
     if (!currentUserId) return false;
     if (conv.type !== 'DIRECT') return false;
-    return conv.members.length === 1 && conv.members[0].userId === currentUserId
-        || (conv.members.length === 2 &&
-            conv.members.every(m => m.userId === currentUserId));
+    return conv.members.length > 0 && conv.members.every(m => m.userId === currentUserId);
 }
 
 export default function Sidebar({

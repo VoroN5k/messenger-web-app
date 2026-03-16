@@ -305,6 +305,10 @@ export default function ChatArea({
     const otherMember  = conversation?.type === 'DIRECT'
         ? conversation.members.find(m => m.userId !== currentUserId)
         : null;
+
+    const isSelfConv = conversation?.type === 'DIRECT' &&
+        conversation.members.every(m => m.userId === currentUserId);
+
     const lastSeenText = otherMember && !conversation?.isOnline
         ? formatLastSeen(otherMember.user?.lastSeen)
         : null;
@@ -599,7 +603,9 @@ export default function ChatArea({
                         </h2>
                         <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
                             {conversation.type === 'DIRECT'
-                                ? (conversation.isOnline ? 'В мережі' : lastSeenText ?? 'Офлайн')
+                                ? isSelfConv
+                                    ? 'Збережені повідомлення'
+                                    : (conversation.isOnline ? 'В мережі' : lastSeenText ?? 'Офлайн')
                                 : `${conversation.members.length} учасників`}
                         </p>
                     </div>
