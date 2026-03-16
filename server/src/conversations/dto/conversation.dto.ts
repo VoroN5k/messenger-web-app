@@ -54,3 +54,8 @@ export class ForwardMessageDto {
     @IsInt() @IsPositive()
     targetConversationId: number;
 }
+
+export class SetGroupKeysDto {
+    @IsArray()
+    keys: Array<{ userId: number; encryptedKey: string }>;
+}

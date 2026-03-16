@@ -57,6 +57,8 @@ model User {
   sentFriendRequests Friendship[] @relation("FriendshipSender")
   receivedFriendRequests Friendship[] @relation("FriendshipReceiver")
   publicKey UserPublicKey?
+  groupKeysAsRecipient GroupEncryptedKey[] @relation("GroupKeyRecipient")
+  groupKeysAsCreator GroupEncryptedKey[] @relation("GroupKeyCreator")
   forwardedMessages Message[] @relation("MessageForwardUser")
 }
 
@@ -86,6 +88,8 @@ model Conversation {
 
   members  ConversationMember[]
   messages Message[]
+
+  groupKeys GroupEncryptedKey[]
 
   @@index([createdById])
 }
@@ -188,5 +192,22 @@ model UserPublicKey {
   updatedAt DateTime @updatedAt
 
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model GroupEncryptedKey {
+  id             Int      @id @default(autoincrement())
+  conversationId Int
+  userId         Int      // отримувач (кому зашифрований ключ)
+  creatorId      Int      // хто зашифрував (чий pubKey використовувався)
+  encryptedKey   String   @db.Text  // груповий AES-ключ, зашифрований через ECDH(creatorPriv, userPub)
+  createdAt      DateTime @default(now())
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           User         @relation("GroupKeyRecipient", fields: [userId],   references: [id], onDelete: Cascade)
+  creator        User         @relation("GroupKeyCreator",   fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([conversationId])
+  @@index([userId])
 }
 

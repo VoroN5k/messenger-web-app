@@ -7,7 +7,7 @@ import { JwtAuthGuard }         from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser }          from '../auth/decorators/current-user.decorator.js';
 import {
     CreateDirectDto, CreateGroupDto, CreateChannelDto,
-    UpdateConversationDto, AddMemberDto, PinMessageDto, ForwardMessageDto,
+    UpdateConversationDto, AddMemberDto, PinMessageDto, ForwardMessageDto, SetGroupKeysDto,
 } from './dto/conversation.dto.js';
 
 @Controller('conversations')
@@ -67,8 +67,6 @@ export class ConversationsController {
     ) {
         return this.conversationsService.getMediaFiles(userId, id);
     }
-
-
 
     @Get(':id/messages/search')
     searchMessages(
@@ -130,5 +128,22 @@ export class ConversationsController {
         @Body() dto: ForwardMessageDto,
     ) {
         return this.conversationsService.forwardMessage(userId, dto.messageId, dto.targetConversationId);
+    }
+
+    @Post(':id/group-keys')
+    setGroupKeys(
+        @CurrentUser('sub') userId: number,
+        @Param('id', ParseIntPipe) id: number,
+        @Body() dto: SetGroupKeysDto,
+    ) {
+        return this.conversationsService.setGroupKeys(userId, id, dto.keys);
+    }
+
+    @Get(':id/group-keys/me')
+    getMyGroupKey(
+        @CurrentUser('sub') userId: number,
+        @Param('id', ParseIntPipe) id: number,
+    ) {
+        return this.conversationsService.getMyGroupKey(userId, id);
     }
 }

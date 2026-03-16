@@ -581,4 +581,37 @@ export class ConversationsService {
         await this.assertAdmin(userId, conversationId);
         return this.prisma.conversation.update({ where: { id: conversationId }, data: dto });
     }
+
+    async setGroupKeys(
+        requesterId: number,
+        conversationId: number,
+        keys: Array<{ userId: number; encryptedKey: string}>
+    ) {
+        await this.assertMember(requesterId, conversationId);
+
+        await Promise.all(
+            keys.map(({ userId, encryptedKey }) =>
+                this.prisma.groupEncryptedKey.upsert({
+                    where: { conversationId_userId: { conversationId, userId } },
+                    create: { conversationId, userId, creatorId: requesterId, encryptedKey },
+                    update: { encryptedKey, creatorId: requesterId },
+                }),
+            ),
+        );
+        return { ok: true };
+    }
+
+    async getMyGroupKey(userId: number, conversationId: number) {
+        await this.assertMember(userId, conversationId);
+
+        const key = await this.prisma.groupEncryptedKey.findUnique({
+            where: { conversationId_userId: { conversationId, userId } },
+            select: { encryptedKey: true, creatorId: true },
+        });
+
+        if (!key) {
+            return null;
+        }
+        return key;
+    }
 }
