@@ -1,25 +1,28 @@
 'use client';
 
+// client/src/app/chat/page.tsx
+// ЗМІНА: прибрано локальний useSocket() — тепер береться з SocketContext
+
 import { useEffect, useState } from 'react';
-import { useAuthStore }         from '@/src/store/useAuthStore';
-import { useSocket }            from '@/src/hooks/useSocket';
-import { useConversations }     from '@/src/hooks/useConversations';
-import { useFriends }           from '@/src/hooks/useFriends';
-import { usePushNotifications } from '@/src/hooks/usePushNotifications';
-import api, { refreshAccessToken } from '@/src/lib/axios'; // ← import the shared fn
-import { jwtDecode }            from 'jwt-decode';
-import { Bell, X }              from 'lucide-react';
-import Sidebar                  from '@/src/components/chat/SideBar';
-import ChatArea                 from '@/src/components/chat/ChatArea';
-import { Conversation }         from '@/src/types/conversation.types';
-import { useWebRTC }           from '@/src/hooks/useWebRTC';
-import { IncomingCallModal }   from '@/src/components/call/IncomingCallModal';
-import { ActiveCallOverlay }   from '@/src/components/call/ActiveCallOverlay';
-import { useE2E }              from "@/src/hooks/useE2E";
+import { useAuthStore }           from '@/src/store/useAuthStore';
+import { useSocket }              from '@/src/context/SocketContext';   // ← з контексту
+import { useConversations }       from '@/src/hooks/useConversations';
+import { useFriends }             from '@/src/hooks/useFriends';
+import { usePushNotifications }   from '@/src/hooks/usePushNotifications';
+import api, { refreshAccessToken } from '@/src/lib/axios';
+import { jwtDecode }              from 'jwt-decode';
+import { Bell, X }                from 'lucide-react';
+import Sidebar                    from '@/src/components/chat/SideBar';
+import ChatArea                   from '@/src/components/chat/ChatArea';
+import { Conversation }           from '@/src/types/conversation.types';
+import { useWebRTC }              from '@/src/hooks/useWebRTC';
+import { IncomingCallModal }      from '@/src/components/call/IncomingCallModal';
+import { ActiveCallOverlay }      from '@/src/components/call/ActiveCallOverlay';
+import { useE2E }                 from '@/src/hooks/useE2E';
 
 export default function ChatPage() {
-    const { user, logout, setAuth } = useAuthStore();
-    const socket = useSocket();
+    const { user, logout } = useAuthStore();
+    const socket = useSocket();   // ← береться з SocketContext, не створюється тут
 
     useE2E();
 
@@ -31,11 +34,6 @@ export default function ChatPage() {
         if (user !== undefined) setIsLoaded(true);
     }, [user]);
 
-    // ── Proactive refresh on load ─────────────────────────────────────────────
-    // Use the shared refreshAccessToken() so this doesn't race with the
-    // 401 interceptor or the silent refresh timer.
-    // Only runs when there is no access token in memory (e.g. after a page
-    // reload — the access token is not persisted, only the refresh cookie is).
     useEffect(() => {
         if (!useAuthStore.getState().accessToken) {
             refreshAccessToken().then((token) => {
@@ -45,21 +43,15 @@ export default function ChatPage() {
     }, []);
 
     const {
-        conversations,
-        isLoading: convsLoading,
-        fetchConversations,
-        markConversationRead,
-        addConversation,
-        updateConversation,
+        conversations, isLoading: convsLoading,
+        fetchConversations, markConversationRead,
+        addConversation, updateConversation,
     } = useConversations(socket);
 
     const {
-        friends,
-        pendingRequests,
-        fetchAll:      fetchFriends,
-        respondToRequest,
-        removeFriend,
-        sendRequest,
+        friends, pendingRequests,
+        fetchAll: fetchFriends,
+        respondToRequest, removeFriend, sendRequest,
     } = useFriends(socket);
 
     const {
@@ -71,7 +63,7 @@ export default function ChatPage() {
 
     const { isSupported, permission, requestPermission } = usePushNotifications(!!user);
 
-    // ── Push banner ───────────────────────────────────────────────────────────
+    // Push banner
     useEffect(() => {
         if (!isSupported) return;
         const dismissed = localStorage.getItem('push-banner-dismissed');
@@ -82,12 +74,9 @@ export default function ChatPage() {
         return () => clearTimeout(t);
     }, [isSupported]);
 
-    // ── Silent refresh ────────────────────────────────────────────────────────
-    // Schedules a proactive refresh ~1 min before the access token expires.
-    // Uses the shared refreshAccessToken() to avoid racing with the interceptor.
+    // Silent token refresh
     useEffect(() => {
         let tid: ReturnType<typeof setTimeout>;
-
         const schedule = (token: string | null) => {
             clearTimeout(tid);
             if (!token) return;
@@ -97,7 +86,6 @@ export default function ChatPage() {
                 tid = setTimeout(() => refreshAccessToken(), delay);
             } catch {}
         };
-
         schedule(useAuthStore.getState().accessToken);
         const unsub = useAuthStore.subscribe(
             (s) => s.accessToken,
@@ -118,16 +106,10 @@ export default function ChatPage() {
         markConversationRead(conv.id);
     };
 
-    const handleMarkRead = (conversationId: number) => {
-        markConversationRead(conversationId);
-    };
-
     if (!isLoaded) return null;
 
     return (
         <div className="flex h-screen bg-gray-100 flex-col">
-
-            {/* Push banner */}
             {showBanner && (
                 <div className="flex items-center justify-between gap-3 px-5 py-3 bg-indigo-600 text-white text-sm z-50">
                     <div className="flex items-center gap-2">
@@ -176,7 +158,7 @@ export default function ChatPage() {
                     conversations={conversations}
                     socket={socket}
                     onConversationUpdate={updateConversation}
-                    onMarkRead={handleMarkRead}
+                    onMarkRead={(id) => markConversationRead(id)}
                     onStartCall={startCall}
                 />
             </div>
@@ -189,10 +171,7 @@ export default function ChatPage() {
                 />
             )}
 
-            {(callState.status === 'calling' ||
-                callState.status === 'connecting' ||
-                callState.status === 'active' ||
-                callState.status === 'ended') && (
+            {(['calling','connecting','active','ended'] as const).includes(callState.status as any) && (
                 <ActiveCallOverlay
                     callState={callState}
                     localStream={localStream}

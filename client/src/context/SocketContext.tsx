@@ -1,0 +1,63 @@
+import {createContext, ReactNode, useContext, useEffect, useState} from "react";
+import {io, Socket} from "socket.io-client";
+import {useAuthStore} from "@/src/store/useAuthStore";
+
+const SocketContext = createContext<Socket | null>(null);
+
+export function SocketProvider({ children }: { children: ReactNode}) {
+    const [socket, setSocket] = useState<Socket | null>(null);
+    const { accessToken } = useAuthStore();
+
+    useEffect(() => {
+        const newSocket = io('http://localhost:4000', {
+            autoConnect: false,
+            transports: ['websocket'],
+        });
+
+        newSocket.on('connect', () => console.log('Socket connected:', newSocket.id));
+        newSocket.on('disconnect', () => console.log('Socket disconnected'));
+
+        setSocket(newSocket);
+
+        return () => {
+            newSocket.disconnect();
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!socket) return;
+
+        if(accessToken) {
+            socket.auth = { token: accessToken };
+            if(socket.disconnected) {
+                socket.connect();
+            } else {
+                socket.emit('updateToken', { token: accessToken });
+            }
+        } else {
+            socket.disconnect();
+        }
+    }, [socket, accessToken]);
+
+    useEffect(() => {
+        if (!socket) return;
+
+        const handleTokenUpdated = ({ success }: { success: boolean }) => {
+            if (!success) {
+                console.warn('[Socket] Token rejected, reconnecting...');
+                socket.disconnect().connect();
+            }
+        };
+
+        socket.on('tokenUpdated', handleTokenUpdated);
+        return () => { socket.off('tokenUpdated', handleTokenUpdated); };
+    }, [socket]);
+
+    return (
+        <SocketContext.Provider value={socket}>
+            {children}
+        </SocketContext.Provider>
+    );
+}
+
+export const useSocket = () => useContext(SocketContext);

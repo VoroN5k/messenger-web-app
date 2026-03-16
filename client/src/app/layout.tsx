@@ -2,6 +2,7 @@ import "./globals.css";
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import {ThemeProvider} from "@/src/context/ThemeProvider";
+import {SocketProvider} from "@/src/context/SocketContext";
 
 const inter = Inter({ subsets: ["latin", "cyrillic"] });
 
@@ -37,7 +38,9 @@ export default function RootLayout({
         </head>
         <body className={inter.className}>
         <ThemeProvider>
-            {children}
+            <SocketProvider>
+                {children}
+            </SocketProvider>
         </ThemeProvider>
         </body>
         </html>
