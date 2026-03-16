@@ -87,6 +87,8 @@ export interface Message {
         sender:  { id: number; nickname: string };
     } | null;
     readBy?: { userId: number; nickname: string }[];
+    isPending?: boolean;
+    _queueId?: string; // for client-side tracking of unsent messages
 }
 
 export interface Friendship {
@@ -112,4 +114,14 @@ export interface UserSearchResult {
     friendshipId:     number | null;
     friendshipStatus: FriendshipStatus | null;
     isRequester:      boolean;
+}
+
+export interface QueuedMessage {
+    queueId: string;
+    conversationId: number;
+    content: string; // plaintext - encrypted on flush
+    replyToId?: number;
+    createdAt: string;
+    senderId: number | string;
+    otherUserId?: number; // for direct chats, used to determine encryption key
 }

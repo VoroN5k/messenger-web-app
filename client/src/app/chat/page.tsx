@@ -15,7 +15,7 @@ import { Conversation }         from '@/src/types/conversation.types';
 import { useWebRTC }           from '@/src/hooks/useWebRTC';
 import { IncomingCallModal }   from '@/src/components/call/IncomingCallModal';
 import { ActiveCallOverlay }   from '@/src/components/call/ActiveCallOverlay';
-import { useE2E }              from "@/src/hooks/eseE2E";
+import { useE2E }              from "@/src/hooks/useE2E";
 
 export default function ChatPage() {
     const { user, logout, setAuth } = useAuthStore();

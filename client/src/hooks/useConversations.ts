@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import api from '@/src/lib/axios';
 import { useAuthStore } from '@/src/store/useAuthStore';
 import { Conversation, Message } from '@/src/types/conversation.types';
-import {useE2E} from "@/src/hooks/eseE2E";
+import {useE2E} from "@/src/hooks/useE2E";
 
 export const useConversations = (socket: any) => {
     const [conversations, setConversations] = useState<Conversation[]>([]);

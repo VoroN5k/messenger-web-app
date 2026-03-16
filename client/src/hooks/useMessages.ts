@@ -1,7 +1,17 @@
+// client/src/hooks/useMessages.ts
+// ── CHANGES: offline queue integration ───────────────────────────────────────
+//   1. Import useOfflineQueue
+//   2. flushMessage callback — sends a queued msg via socket with E2E
+//   3. sendMessage checks isOnline+socket.connected, enqueues when offline
+//   4. socket 'connect' event triggers flush()
+//   5. Return isOnline and offlineQueueCount
+
 import { useState, useEffect, useCallback, useRef } from 'react';
 import api from '@/src/lib/axios';
 import { Message, Reaction } from '@/src/types/conversation.types';
-import {useE2E} from "./eseE2E";
+import { useE2E } from './useE2E';
+import { useOfflineQueue } from './useOfflineQueue';
+import { QueuedMessage } from '@/src/types/conversation.types';
 
 export const useMessages = (
     conversationId: number | undefined,
@@ -44,9 +54,9 @@ export const useMessages = (
 
                 const decrypted = await Promise.all(
                     res.data.map(async (msg: Message) => {
-                       if (!msg.content || !otherUserId) return msg;
-                       const plain = await e2e.decrypt(msg.content, otherUserId);
-                       return { ...msg, content: plain };
+                        if (!msg.content || !otherUserId) return msg;
+                        const plain = await e2e.decrypt(msg.content, otherUserId);
+                        return { ...msg, content: plain };
                     })
                 );
 
@@ -108,6 +118,7 @@ export const useMessages = (
             onDecryptedMessage?.(decryptedMsg);
 
             setMessages((prev) => {
+                // Replace matching optimistic/pending message (same content + sender + no id)
                 const idx = prev.findIndex(
                     (m) =>
                         !m.id &&
@@ -117,7 +128,8 @@ export const useMessages = (
                 );
                 if (idx !== -1) {
                     const next = [...prev];
-                    next[idx]  = decryptedMsg;
+                    // Preserve order but replace with server-confirmed message
+                    next[idx] = { ...decryptedMsg, isPending: false, _queueId: undefined };
                     return next;
                 }
                 return [...prev, decryptedMsg];
@@ -182,10 +194,8 @@ export const useMessages = (
             );
         };
 
-        // FIX 1: Коли інший юзер прочитав — ставимо isRead=true на наші повідомлення
         const onRead = (data: { userId: number; conversationId: number }) => {
             if (data.conversationId !== conversationId) return;
-            // Позначаємо всі наші повідомлення як прочитані
             if (String(data.userId) !== String(currentUserId)) {
                 setMessages((prev) =>
                     prev.map((m) =>
@@ -236,7 +246,7 @@ export const useMessages = (
         socket.on('messageEdited',    onEdited);
         socket.on('reactionToggled',  onReaction);
         socket.on('onTyping',         onTyping);
-        socket.on('conversationRead', onRead);  // FIX 1
+        socket.on('conversationRead', onRead);
 
         return () => {
             socket.off('onMessage',        onMessage);
@@ -248,13 +258,80 @@ export const useMessages = (
         };
     }, [socket, conversationId, currentUserId]);
 
+    // ── Offline queue ─────────────────────────────────────────────────────────
+    // flushMessage: called by useOfflineQueue for each queued item.
+    // Returns true = delivered (remove from queue), false = retry later.
+    const flushMessage = useCallback(async (msg: QueuedMessage): Promise<boolean> => {
+        if (!socket?.connected) return false;
+        try {
+            const payload = msg.otherUserId
+                ? await e2e.encrypt(msg.content, msg.otherUserId)
+                : msg.content;
+
+            socket.emit('sendMessage', {
+                conversationId: msg.conversationId,
+                content:        payload,
+                replyToId:      msg.replyToId,
+            });
+            // The server will broadcast 'onMessage' back, which replaces the
+            // pending optimistic message automatically (matched by content+sender).
+            return true;
+        } catch {
+            return false;
+        }
+    }, [socket, e2e]);
+
+    const { queue: offlineQueue, isOnline, enqueue, flush } = useOfflineQueue(flushMessage);
+
+    // Flush queue whenever the socket reconnects (covers the case where the
+    // browser thinks it's online but the socket was still reconnecting).
+    useEffect(() => {
+        if (!socket) return;
+        const onConnect = () => flush();
+        socket.on('connect', onConnect);
+        return () => { socket.off('connect', onConnect); };
+    }, [socket, flush]);
+
     // ── Actions ───────────────────────────────────────────────────────────────
     const sendMessage = useCallback(async (content: string, replyToId?: number) => {
-        if (!content.trim() || !conversationId || !socket || !currentUserId) return;
+        if (!content.trim() || !conversationId || !currentUserId) return;
 
+        const canSend = !!socket?.connected && isOnline;
+
+        if (!canSend) {
+            // ── Offline path: enqueue and show pending message ────────────────
+            const queueId = enqueue({
+                conversationId,
+                content,
+                replyToId,
+                createdAt:   new Date().toISOString(),
+                senderId:    currentUserId,
+                otherUserId, // needed for E2E encryption on flush
+            });
+
+            setMessages((prev) => [
+                ...prev,
+                {
+                    content,
+                    senderId:       currentUserId,
+                    conversationId,
+                    createdAt:      new Date().toISOString(),
+                    deletedAt:      null,
+                    editedAt:       null,
+                    reactions:      [],
+                    replyToId:      replyToId ?? null,
+                    isRead:         false,
+                    isPending:      true,
+                    _queueId:       queueId,
+                },
+            ]);
+            return;
+        }
+
+        // ── Online path: encrypt + emit ───────────────────────────────────────
         const payload = otherUserId
-        ? await e2e.encrypt(content, otherUserId)
-        : content;
+            ? await e2e.encrypt(content, otherUserId)
+            : content;
 
         socket.emit('sendMessage', { conversationId, content: payload, replyToId });
 
@@ -274,7 +351,7 @@ export const useMessages = (
         ]);
 
         socket.emit('typing', { conversationId, isTyping: false });
-    }, [conversationId, currentUserId, socket, otherUserId]);
+    }, [conversationId, currentUserId, socket, otherUserId, isOnline, enqueue, e2e]);
 
     const sendFileMessage = useCallback((payload: {
         fileUrl:   string;
@@ -314,7 +391,7 @@ export const useMessages = (
         if (!socket) return;
         const payload = otherUserId
             ? await e2e.encrypt(content, otherUserId)
-            :content;
+            : content;
         socket.emit('editMessage', { messageId, content: payload });
 
         setMessages((prev) =>
@@ -382,5 +459,7 @@ export const useMessages = (
         jumpToMessage,
         clearJumpTarget,
         forwardMessage,
+        isOnline,
+        offlineQueueCount: offlineQueue.length,
     };
 };

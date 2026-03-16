@@ -9,10 +9,11 @@ import {
     ImageOff, Search, ChevronUp, ChevronDown,
     Reply, Users, Hash, Phone, Video,
     Mic, Pin, PinOff, Forward, LayoutGrid,
+    WifiOff
 } from 'lucide-react';
 import { useMessages }   from '@/src/hooks/useMessages';
 import { useSearch }     from '@/src/hooks/useSearch';
-import { useE2E }        from '@/src/hooks/eseE2E';
+import { useE2E }        from '@/src/hooks/useE2E';
 import { uploadFile, isImageType, formatFileSize } from '@/src/lib/uploadFile';
 import { Avatar }        from './Avatar';
 import { EmojiPicker }   from './EmojiPicker';
@@ -84,10 +85,32 @@ const HighlightText = ({ text, query }: { text: string; query: string }) => {
 
 const CP = 'M1.5 5L5 8.5L12.5 1';
 const MessageStatus = ({ msg }: { msg: Message }) => {
+    // ── Pending: message is in offline queue ──────────────────────────────────
+    if (msg.isPending) {
+        return (
+            <svg
+                width="14" height="14" viewBox="0 0 24 24" fill="none"
+                className="inline-block shrink-0 opacity-60"
+            >
+                <title>Очікує відправки...</title>
+                <circle cx="12" cy="12" r="9"
+                        stroke="rgba(255,255,255,0.7)" strokeWidth="1.8"/>
+                <path d="M12 7v5l2.5 2.5"
+                      stroke="rgba(255,255,255,0.7)" strokeWidth="1.8"
+                      strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+        );
+    }
+
     const isRead = msg.isRead === true;
     const c = isRead ? '#69dafa' : 'rgba(255,255,255,0.5)';
+
     if (!msg.id)
-        return <svg width="14" height="10" viewBox="0 0 14 10" fill="none" className="inline-block shrink-0"><path d={CP} stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>;
+        return (
+            <svg width="14" height="10" viewBox="0 0 14 10" fill="none" className="inline-block shrink-0">
+                <path d={CP} stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+        );
     return (
         <svg width="19" height="10" viewBox="0 0 19 10" fill="none" className="inline-block shrink-0">
             <path d={CP}                   stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
@@ -299,6 +322,7 @@ export default function ChatArea({
         messages, typingUsers, hasMore, isLoadingMore, jumpTarget,
         sendMessage, sendFileMessage, deleteMessage, editMessage, toggleReaction,
         notifyTyping, loadMoreMessages, jumpToMessage, clearJumpTarget,
+        isOnline, offlineQueueCount
     } = useMessages(
         conversation?.id,
         currentUserId,
@@ -911,6 +935,20 @@ export default function ChatArea({
                 })}
                 <div ref={messagesEndRef} />
             </div>
+
+            {(!isOnline || !socket?.connected) && (
+                <div className="px-4 py-2 bg-amber-50 dark:bg-amber-900/20 border-t border-amber-100 dark:border-amber-800/50 flex items-center gap-2">
+                    <WifiOff size={13} className="text-amber-500 shrink-0" />
+                    <span className="text-xs text-amber-700 dark:text-amber-400 flex-1">
+            Немає з'єднання — повідомлення надішлються автоматично
+        </span>
+                    {offlineQueueCount > 0 && (
+                        <span className="text-xs font-semibold text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/50 px-2 py-0.5 rounded-full shrink-0">
+                {offlineQueueCount}
+            </span>
+                    )}
+                </div>
+            )}
 
             {/* Typing indicator */}
             {typingUsers.length > 0 && (
