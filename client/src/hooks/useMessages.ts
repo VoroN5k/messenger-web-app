@@ -54,9 +54,15 @@ export const useMessages = (
 
                 const decrypted = await Promise.all(
                     res.data.map(async (msg: Message) => {
-                        if (!msg.content || !otherUserId) return msg;
-                        const plain = await e2e.decrypt(msg.content, otherUserId);
-                        return { ...msg, content: plain };
+                        let result = msg;
+                        if (msg.content && otherUserId) {
+                            result = { ...result, content: await e2e.decrypt(msg.content, otherUserId) };
+                        }
+                        if (msg.replyTo?.content && otherUserId) {
+                            const replyPlain = await e2e.decrypt(msg.replyTo.content, otherUserId);
+                            result = { ...result, replyTo: { ...result.replyTo!, content: replyPlain } };
+                        }
+                        return result;
                     })
                 );
 
@@ -89,8 +95,15 @@ export const useMessages = (
 
             const decrypted = await Promise.all(
                 res.data.map(async (msg: Message) => {
-                    if (!msg.content || !otherUserId) return msg;
-                    return { ...msg, content: await e2e.decrypt(msg.content, otherUserId) };
+                    let result = msg;
+                    if (msg.content && otherUserId) {
+                        result = { ...result, content: await e2e.decrypt(msg.content, otherUserId) };
+                    }
+                    if (msg.replyTo?.content && otherUserId) {
+                        const replyPlain = await e2e.decrypt(msg.replyTo.content, otherUserId);
+                        result = { ...result, replyTo: { ...result.replyTo!, content: replyPlain } };
+                    }
+                    return result;
                 })
             );
 
@@ -111,8 +124,11 @@ export const useMessages = (
 
             let decryptedMsg = msg;
             if (msg.content && otherUserId) {
-                const plain = await e2e.decrypt(msg.content, otherUserId);
-                decryptedMsg = { ...msg, content: plain };
+                decryptedMsg = { ...decryptedMsg, content: await e2e.decrypt(msg.content, otherUserId) };
+            }
+            if (msg.replyTo?.content && otherUserId) {
+                const replyPlain = await e2e.decrypt(msg.replyTo.content, otherUserId);
+                decryptedMsg = { ...decryptedMsg, replyTo: { ...decryptedMsg.replyTo!, content: replyPlain } };
             }
 
             onDecryptedMessage?.(decryptedMsg);
