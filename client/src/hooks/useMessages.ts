@@ -43,6 +43,9 @@ export const useMessages = (
             return;
         }
 
+        setMessages([]);
+        setTypingUsers([]);
+
         const ctrl = new AbortController();
 
         (async () => {
