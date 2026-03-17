@@ -14,23 +14,27 @@ export const useConversations = (socket: any) => {
 
     // HELPER: decode lasMessage for one conversation (used on initial fetch)
     const decryptLastMessage = useCallback(async (conv: Conversation): Promise<Conversation> => {
-        if (
-            conv.type !== 'DIRECT' ||
-            !conv.lastMessage?.content ||
-            !conv.lastMessage.content.trim()
-        ) return conv;
-
-        const otherMember = conv.members.find(m => m.userId !== currentUserId);
-        if (!otherMember) return conv;
+        if (!conv.lastMessage?.content || !conv.lastMessage.content.trim()) return conv;
 
         const c = conv.lastMessage.content;
         const isCiphertext = c.length > 20 && /^[A-Za-z0-9_\-]+$/.test(c);
         if (!isCiphertext) return conv;
 
         try {
-            const plain = await e2e.decrypt(c, otherMember.userId);
-            // Якщо decrypt повернув той самий ciphertext (E2E ще не готовий) — не оновлюємо
-            if (plain === c) return conv;
+            let plain: string;
+
+            if (conv.type === 'DIRECT') {
+                const otherMember = conv.members.find(m => m.userId !== currentUserId);
+                if (!otherMember) return conv;
+                plain = await e2e.decrypt(c, otherMember.userId);
+                if (plain === c) return conv;
+            } else if (conv.type === 'GROUP') {
+                plain = await e2e.decryptFromGroup(c, conv.id);
+                if (plain === c) return conv;
+            } else {
+                return conv;
+            }
+
             return { ...conv, lastMessage: { ...conv.lastMessage, content: plain } };
         } catch {
             return conv;
@@ -67,43 +71,52 @@ export const useConversations = (socket: any) => {
 
         const onMessage = (msg: Message) => {
             const isOwnMessage = String(msg.senderId) === String(currentUserId);
-
-            let displayContent = msg.content;
             const isCiphertext = msg.content?.length > 20 && /^[A-Za-z0-9_\-]+$/.test(msg.content ?? '');
 
             if (isCiphertext) {
-
                 setConversations((prev) => {
                     const conv = prev.find(c => c.id === msg.conversationId);
-                    const otherMember = conv?.members.find(m => m.userId !== currentUserId);
-                    if (otherMember) {
-                        e2e.decrypt(msg.content, otherMember.userId).then(plain => {
-                            setConversations(prevConvs =>
-                                prevConvs
-                                    .map(c => c.id !== msg.conversationId ? c : {
-                                        ...c,
-                                        lastMessage: {
-                                            id:        msg.id!,
-                                            content:   plain,
-                                            senderId:  Number(msg.senderId),
-                                            createdAt: msg.createdAt as string,
-                                            fileType:  msg.fileType ?? null,
-                                            fileUrl:   msg.fileUrl  ?? null,
-                                        },
-                                        unreadCount: isOwnMessage ? c.unreadCount : c.unreadCount + 1,
-                                        updatedAt:   msg.createdAt as string,
-                                    })
-                                    .sort((a, b) =>
-                                        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-                                    ),
-                            );
-                        });
+                    if (!conv) return prev;
+
+                    let decryptPromise: Promise<string>;
+
+                    if (conv.type === 'DIRECT') {
+                        const otherMember = conv.members.find(m => m.userId !== currentUserId);
+                        if (!otherMember) return prev;
+                        decryptPromise = e2e.decrypt(msg.content, otherMember.userId);
+                    } else if (conv.type === 'GROUP') {
+                        decryptPromise = e2e.decryptFromGroup(msg.content, conv.id);
+                    } else {
+                        return prev;
                     }
+
+                    decryptPromise.then(plain => {
+                        setConversations(prevConvs =>
+                            prevConvs
+                                .map(c => c.id !== msg.conversationId ? c : {
+                                    ...c,
+                                    lastMessage: {
+                                        id:        msg.id!,
+                                        content:   plain,
+                                        senderId:  Number(msg.senderId),
+                                        createdAt: msg.createdAt as string,
+                                        fileType:  msg.fileType ?? null,
+                                        fileUrl:   msg.fileUrl  ?? null,
+                                    },
+                                    unreadCount: isOwnMessage ? c.unreadCount : c.unreadCount + 1,
+                                    updatedAt:   msg.createdAt as string,
+                                })
+                                .sort((a, b) =>
+                                    new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+                                ),
+                        );
+                    });
                     return prev;
                 });
                 return;
             }
 
+            // Не зашифроване (CHANNEL або plaintext)
             setConversations((prev) =>
                 prev
                     .map((c) =>
@@ -111,7 +124,7 @@ export const useConversations = (socket: any) => {
                             ...c,
                             lastMessage: {
                                 id:        msg.id!,
-                                content:   displayContent,
+                                content:   msg.content,
                                 senderId:  Number(msg.senderId),
                                 createdAt: msg.createdAt as string,
                                 fileType:  msg.fileType ?? null,
@@ -125,7 +138,7 @@ export const useConversations = (socket: any) => {
                         new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
                     ),
             );
-        }
+        };
 
         const onEdited = (data: {
             messageId: number;
