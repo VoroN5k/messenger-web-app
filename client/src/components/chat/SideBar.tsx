@@ -22,6 +22,7 @@ import {
     UserSearchResult,
 } from '@/src/types/conversation.types';
 import { User } from '@/src/types/auth.types';
+import {useE2E} from "@/src/hooks/useE2E";
 
 type SidebarTab = 'chats' | 'friends';
 
@@ -480,6 +481,7 @@ export default function Sidebar({
             {showNewGroup && (
                 <CreateGroupModal
                     friends={friends}
+                    currentUserId={currentUser?.id}
                     onClose={() => setShowNewGroup(false)}
                     onCreated={(conv) => {
                         onAddConversation(conv);
@@ -506,12 +508,17 @@ export default function Sidebar({
 
 // ── Create Group Modal ────────────────────────────────────────────────────────
 function CreateGroupModal({ friends, onClose, onCreated }: {
-    friends: FriendItem[]; onClose: () => void; onCreated: (c: Conversation) => void;
+    friends: FriendItem[];
+    onClose: () => void;
+    onCreated: (c: Conversation) => void;
+    currentUserId?: number;
 }) {
     const [name, setName] = useState('');
     const [selected, setSelected] = useState<number[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+
+    const e2e = useE2E()
 
     const toggle = (id: number) =>
         setSelected((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
@@ -523,7 +530,16 @@ function CreateGroupModal({ friends, onClose, onCreated }: {
         setError(''); setLoading(true);
         try {
             const res = await api.post('/conversations/group', { name: trimmedName, memberIds: selected });
-            onCreated(res.data as Conversation);
+            const conv = res.data as Conversation;
+
+            const allMemberIds = conv.members.map(m => m.userId);
+            try {
+                await e2e.createAndDistributeGroupKey(conv.id, allMemberIds);
+            } catch (err) {
+                console.warn('[E2E] Group key distribution failed: ', err);
+            }
+
+            onCreated(conv);
         } catch (e: any) {
             const msg = e.response?.data?.message || 'Помилка створення';
             setError(Array.isArray(msg) ? msg[0] : msg);
