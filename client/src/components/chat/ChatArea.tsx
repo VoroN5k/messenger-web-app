@@ -320,7 +320,9 @@ export default function ChatArea({
     // Passed down to FileBubble and VoiceBubble so they can decrypt on load.
     const decryptFn = otherUserId
         ? (data: ArrayBuffer) => e2e.decryptBinary(data, otherUserId)
-        : undefined;
+        : conversation?.type === 'GROUP' && conversation?.id
+            ? (data: ArrayBuffer) => e2e.decryptBinaryFromGroup(data, conversation.id)
+            : undefined;
 
     const {
         messages, typingUsers, hasMore, isLoadingMore, jumpTarget,
@@ -346,6 +348,7 @@ export default function ChatArea({
                 },
             });
         },
+        conversation?.type,
     );
 
     const { query, setQuery, results, isSearching, isOpen, setIsOpen, close: closeSearch, loadedCount } =
@@ -428,8 +431,11 @@ export default function ChatArea({
             if (otherUserId) {
                 const buf    = await file.arrayBuffer();
                 const encBuf = await e2e.encryptBinary(buf, otherUserId);
-                // Keep original MIME type so the server accepts the upload;
-                // encrypted flag is communicated via metadata.
+                fileToUpload = new File([encBuf], file.name, { type: file.type });
+                encMeta      = JSON.stringify({ encrypted: true });
+            } else if (conversation?.type === 'GROUP' && conversation?.id) {
+                const buf    = await file.arrayBuffer();
+                const encBuf = await e2e.encryptBinaryForGroup(buf, conversation.id);
                 fileToUpload = new File([encBuf], file.name, { type: file.type });
                 encMeta      = JSON.stringify({ encrypted: true });
             }
@@ -470,6 +476,11 @@ export default function ChatArea({
             if (otherUserId) {
                 const buf    = await blob.arrayBuffer();
                 const encBuf = await e2e.encryptBinary(buf, otherUserId);
+                fileToUpload = new File([encBuf], 'voice.wav', { type: mimeType });
+                metaObj      = { ...baseMeta, encrypted: true };
+            } else if (conversation?.type === 'GROUP' && conversation?.id) {
+                const buf    = await blob.arrayBuffer();
+                const encBuf = await e2e.encryptBinaryForGroup(buf, conversation.id);
                 fileToUpload = new File([encBuf], 'voice.wav', { type: mimeType });
                 metaObj      = { ...baseMeta, encrypted: true };
             } else {

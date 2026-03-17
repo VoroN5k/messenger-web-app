@@ -11,7 +11,7 @@ export const useMessages = (
     socket:              any,
     otherUserId?:        number,
     onDecryptedMessage?: (msg: Message) => void,
-    conversationType?:   ConversationType,   // ← НОВЕ
+    conversationType?:   ConversationType,
 ) => {
     const [messages,      setMessages]      = useState<Message[]>([]);
     const [typingUsers,   setTypingUsers]   = useState<{ userId: number; nickname: string }[]>([]);
