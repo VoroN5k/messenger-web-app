@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import api from '@/src/lib/axios';
-import { Message, Reaction, ConversationType } from '@/src/types/conversation.types';
+import { Message, Reaction, ConversationType, ConversationMember } from '@/src/types/conversation.types';
 import { useE2E } from './useE2E';
 import { useOfflineQueue } from './useOfflineQueue';
 import { QueuedMessage } from '@/src/types/conversation.types';
@@ -12,6 +12,8 @@ export const useMessages = (
     otherUserId?:        number,
     onDecryptedMessage?: (msg: Message) => void,
     conversationType?:   ConversationType,
+    // Список userId учасників групи — потрібен для prefetch sender keys
+    groupMemberIds?:     number[],
 ) => {
     const [messages,      setMessages]      = useState<Message[]>([]);
     const [typingUsers,   setTypingUsers]   = useState<{ userId: number; nickname: string }[]>([]);
@@ -30,23 +32,27 @@ export const useMessages = (
 
     useEffect(() => { messagesRef.current = messages; }, [messages]);
 
-    // ── Helpers шифрування/дешифрування ──────────────────────────────────────
+    //Encrypt
     const encryptContent = useCallback(async (content: string): Promise<string> => {
         if (isDirect && otherUserId)    return e2e.encrypt(content, otherUserId);
         if (isGroup  && conversationId) return e2e.encryptForGroup(content, conversationId);
         return content;
     }, [isDirect, isGroup, otherUserId, conversationId, e2e]);
 
-    const decryptContent = useCallback(async (ciphertext: string): Promise<string> => {
-        if (isDirect && otherUserId)    return e2e.decrypt(ciphertext, otherUserId);
-        if (isGroup  && conversationId) return e2e.decryptFromGroup(ciphertext, conversationId);
+    // Decrypt — тепер приймає senderId для групових повідомлень
+    const decryptContent = useCallback(async (
+        ciphertext: string,
+        senderId: number | string,
+    ): Promise<string> => {
+        if (isDirect && otherUserId) return e2e.decrypt(ciphertext, otherUserId);
+        if (isGroup  && conversationId) return e2e.decryptFromGroup(ciphertext, conversationId, Number(senderId));
         return ciphertext;
     }, [isDirect, isGroup, otherUserId, conversationId, e2e]);
 
     const looksEncrypted = (s?: string | null) =>
         !!s && s.length > 20 && /^[A-Za-z0-9_\-]+$/.test(s);
 
-    // ── Fetch initial messages ────────────────────────────────────────────────
+    //Fetch initial messages
     useEffect(() => {
         if (!conversationId) {
             setMessages([]);
@@ -55,8 +61,6 @@ export const useMessages = (
             return;
         }
 
-        // Очищаємо синхронно — запобігає ре-рендеру VoiceBubble/FileBubble
-        // з неправильним decryptFn поки нові повідомлення ще вантажаться
         setMessages([]);
         setTypingUsers([]);
 
@@ -64,6 +68,11 @@ export const useMessages = (
 
         (async () => {
             try {
+                // Для групи — prefetch всіх sender keys перед завантаженням повідомлень
+                if (isGroup && groupMemberIds?.length) {
+                    await e2e.prefetchGroupSenderKeys(conversationId, groupMemberIds);
+                }
+
                 const res = await api.get(
                     `/conversations/${conversationId}/messages`,
                     { signal: ctrl.signal },
@@ -73,10 +82,10 @@ export const useMessages = (
                     res.data.map(async (msg: Message) => {
                         let result = msg;
                         if (msg.content && looksEncrypted(msg.content)) {
-                            result = { ...result, content: await decryptContent(msg.content) };
+                            result = { ...result, content: await decryptContent(msg.content, msg.senderId) };
                         }
                         if (msg.replyTo?.content && looksEncrypted(msg.replyTo.content)) {
-                            const replyPlain = await decryptContent(msg.replyTo.content);
+                            const replyPlain = await decryptContent(msg.replyTo.content, msg.senderId);
                             result = { ...result, replyTo: { ...result.replyTo!, content: replyPlain } };
                         }
                         return result;
@@ -98,7 +107,7 @@ export const useMessages = (
         return () => ctrl.abort();
     }, [conversationId, socket]);
 
-    // ── Pagination ────────────────────────────────────────────────────────────
+    // Pagination
     const loadMoreMessages = useCallback(async () => {
         if (!conversationId || isLoadingMore || !hasMore || !messagesRef.current.length) return;
         setIsLoadingMore(true);
@@ -113,10 +122,10 @@ export const useMessages = (
                 res.data.map(async (msg: Message) => {
                     let result = msg;
                     if (msg.content && looksEncrypted(msg.content)) {
-                        result = { ...result, content: await decryptContent(msg.content) };
+                        result = { ...result, content: await decryptContent(msg.content, msg.senderId) };
                     }
                     if (msg.replyTo?.content && looksEncrypted(msg.replyTo.content)) {
-                        const replyPlain = await decryptContent(msg.replyTo.content);
+                        const replyPlain = await decryptContent(msg.replyTo.content, msg.senderId);
                         result = { ...result, replyTo: { ...result.replyTo!, content: replyPlain } };
                     }
                     return result;
@@ -131,7 +140,7 @@ export const useMessages = (
         }
     }, [conversationId, isLoadingMore, hasMore, decryptContent]);
 
-    // ── Socket events ─────────────────────────────────────────────────────────
+    // Socket events
     useEffect(() => {
         if (!socket) return;
 
@@ -140,10 +149,10 @@ export const useMessages = (
 
             let decryptedMsg = msg;
             if (msg.content && looksEncrypted(msg.content)) {
-                decryptedMsg = { ...decryptedMsg, content: await decryptContent(msg.content) };
+                decryptedMsg = { ...decryptedMsg, content: await decryptContent(msg.content, msg.senderId) };
             }
             if (msg.replyTo?.content && looksEncrypted(msg.replyTo.content)) {
-                const replyPlain = await decryptContent(msg.replyTo.content);
+                const replyPlain = await decryptContent(msg.replyTo.content, msg.senderId);
                 decryptedMsg = { ...decryptedMsg, replyTo: { ...decryptedMsg.replyTo!, content: replyPlain } };
             }
 
@@ -182,12 +191,13 @@ export const useMessages = (
         };
 
         const onEdited = async (data: {
-            messageId: number; content: string; editedAt: string; conversationId: number;
+            messageId: number; content: string; editedAt: string;
+            conversationId: number; senderId?: number;
         }) => {
             if (data.conversationId !== conversationId) return;
             let content = data.content;
-            if (looksEncrypted(content)) {
-                try { content = await decryptContent(content); } catch {}
+            if (looksEncrypted(content) && data.senderId) {
+                try { content = await decryptContent(content, data.senderId); } catch {}
             }
             setMessages((prev) =>
                 prev.map((m) =>
@@ -260,7 +270,7 @@ export const useMessages = (
         };
     }, [socket, conversationId, currentUserId, decryptContent]);
 
-    // ── Offline queue ─────────────────────────────────────────────────────────
+    // Offline queue
     const flushMessage = useCallback(async (msg: QueuedMessage): Promise<boolean> => {
         if (!socket?.connected) return false;
         try {
@@ -285,7 +295,7 @@ export const useMessages = (
         return () => { socket.off('connect', onConnect); };
     }, [socket, flush]);
 
-    // ── Actions ───────────────────────────────────────────────────────────────
+    // Actions
     const sendMessage = useCallback(async (content: string, replyToId?: number) => {
         if (!content.trim() || !conversationId || !currentUserId) return;
 

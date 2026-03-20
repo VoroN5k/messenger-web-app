@@ -29,7 +29,7 @@ export const useConversations = (socket: any) => {
                 plain = await e2e.decrypt(c, otherMember.userId);
                 if (plain === c) return conv;
             } else if (conv.type === 'GROUP') {
-                plain = await e2e.decryptFromGroup(c, conv.id);
+                plain = await e2e.decryptFromGroup(c, conv.id, Number(conv.lastMessage!.senderId));
                 if (plain === c) return conv;
             } else {
                 return conv;
@@ -85,7 +85,7 @@ export const useConversations = (socket: any) => {
                         if (!otherMember) return prev;
                         decryptPromise = e2e.decrypt(msg.content, otherMember.userId);
                     } else if (conv.type === 'GROUP') {
-                        decryptPromise = e2e.decryptFromGroup(msg.content, conv.id);
+                        decryptPromise = e2e.decryptFromGroup(msg.content, conv.id, Number(msg.senderId));
                     } else {
                         return prev;
                     }
