@@ -1,4 +1,5 @@
-const KEY_VERSION = 'v3';
+const KEY_VERSION = 'v4';
+const KEY_VERSION_PREV = 'v3'
 
 export async function generateKeyPair(): Promise<{
     publicKey: string;
@@ -54,6 +55,7 @@ export async function deriveSharedKey(
     );
 }
 
+// Message ecrypt / decrypt
 export async function encryptMessage(aesKey: CryptoKey, plaintext: string): Promise<string> {
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const encoded = new TextEncoder().encode(plaintext);
@@ -99,7 +101,60 @@ export async function decryptFile(aesKey: CryptoKey, data: ArrayBuffer): Promise
     ) as Promise<ArrayBuffer>;
 }
 
-// ── Key persistence в IndexedDB ───────────────────────────────────────────────
+const VAULT_LS_KEY = (userId: number) => `e2e_vault_${userId}`;
+
+async function getOrCreateVaultKey(userId: number): Promise<CryptoKey> {
+    const lsKey = VAULT_LS_KEY(userId);
+    let secret = localStorage.getItem(lsKey);
+
+    if(!secret) {
+        const bytes = crypto.getRandomValues(new Uint8Array(32));
+        secret = bufToBase64url(bytes.buffer as ArrayBuffer);
+        localStorage.setItem(lsKey, secret);
+    }
+
+    const raw = base64urlToBuf(secret);
+    const hkdfKey = await crypto.subtle.importKey('raw', raw, 'HKDF', false, ['deriveKey']);
+
+    return crypto.subtle.deriveKey(
+        {
+            name: 'HKDF',
+            hash: 'SHA-256',
+            salt: new TextEncoder().encode(`vault-v1-${userId}`),
+            info: new TextEncoder().encode(`e2e-private-key-protection`),
+        },
+        hkdfKey,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt', 'decrypt'],
+    );
+}
+
+async function encryptKeyBytes(rawKey: ArrayBuffer, userId: number): Promise<ArrayBuffer> {
+    const vaultKey = await getOrCreateVaultKey(userId);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const cipher = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, vaultKey, rawKey);
+
+    const result = new Uint8Array(12 + cipher.byteLength);
+    result.set(iv);
+    result.set(new Uint8Array(cipher), 12);
+    return result.buffer as ArrayBuffer;
+}
+
+async function decryptKeyBytes(
+    encryptedData: ArrayBuffer,
+    userId: number,
+): Promise<ArrayBuffer> {
+    const vaultKey = await getOrCreateVaultKey(userId);
+    const bytes    = new Uint8Array(encryptedData);
+    return crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: bytes.slice(0, 12) },
+        vaultKey,
+        bytes.slice(12).buffer as ArrayBuffer,
+    );
+}
+
+// Key persistence в IndexedDB
 const DB_NAME    = 'messenger-keys';
 const STORE_NAME = 'keypairs';
 
@@ -114,27 +169,103 @@ function openDB(): Promise<IDBDatabase> {
     });
 }
 
-export async function savePrivateKey(userId: number, key: CryptoKey): Promise<void> {
-    const db = await openDB();
-    await new Promise<void>((res, rej) => {
-        const tx  = db.transaction(STORE_NAME, 'readwrite');
-        const req = tx.objectStore(STORE_NAME).put(key, `privkey_${KEY_VERSION}_${userId}`);
-        req.onsuccess = () => res();
-        req.onerror   = () => rej(req.error);
-    });
-}
-
-export async function loadPrivateKey(userId: number): Promise<CryptoKey | null> {
-    const db = await openDB();
+function idbGet(db: IDBDatabase, key: string): Promise<unknown> {
     return new Promise((res, rej) => {
-        const tx  = db.transaction(STORE_NAME, 'readonly');
-        const req = tx.objectStore(STORE_NAME).get(`privkey_${KEY_VERSION}_${userId}`);
+        const req = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(key);
         req.onsuccess = () => res(req.result ?? null);
         req.onerror   = () => rej(req.error);
     });
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+function idbPut(db: IDBDatabase, key: string, value: unknown): Promise<void> {
+    return new Promise((res, rej) => {
+        const req = db.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME).put(value, key);
+        req.onsuccess = () => res();
+        req.onerror   = () => rej(req.error);
+    });
+}
+
+function idbDelete(db: IDBDatabase, key: string): Promise<void> {
+    return new Promise((res, rej) => {
+        const req = db.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME).delete(key);
+        req.onsuccess = () => res();
+        req.onerror   = () => rej(req.error);
+    });
+}
+
+export async function savePrivateKey(userId: number, key: CryptoKey): Promise<void> {
+    const rawKey    = await crypto.subtle.exportKey('pkcs8', key);
+    const encrypted = await encryptKeyBytes(rawKey, userId);
+
+    const db = await openDB();
+    await idbPut(db, `privkey_${KEY_VERSION}_${userId}`, encrypted);
+}
+
+export async function loadPrivateKey(userId: number): Promise<CryptoKey | null> {
+    const db = await openDB();
+
+    // ── v4: encrypted ArrayBuffer ─────────────────────────────────────────────
+    const stored = await idbGet(db, `privkey_${KEY_VERSION}_${userId}`);
+
+    if (stored instanceof ArrayBuffer || stored instanceof Uint8Array) {
+        return decryptAndImport(
+            stored instanceof Uint8Array ? (stored.buffer as ArrayBuffer) : stored,
+            userId,
+        );
+    }
+
+    // ── Migration: v3 → v4 (CryptoKey stored directly) ───────────────────────
+    const legacy = await idbGet(db, `privkey_${KEY_VERSION_PREV}_${userId}`);
+
+    if (legacy && typeof (legacy as CryptoKey).type === 'string') {
+        // Це CryptoKey — мігруємо
+        try {
+            await savePrivateKey(userId, legacy as CryptoKey);
+            await idbDelete(db, `privkey_${KEY_VERSION_PREV}_${userId}`);
+            console.info('[E2E] Migrated private key v3 → v4 (encrypted storage)');
+            return loadPrivateKey(userId);
+        } catch (err) {
+            console.error('[E2E] Migration failed:', err);
+            return null;
+        }
+    }
+
+    return null;
+}
+
+export async function deletePrivateKey(userId: number): Promise<void> {
+    localStorage.removeItem(VAULT_LS_KEY(userId));
+    const db = await openDB();
+    await Promise.allSettled([
+        idbDelete(db, `privkey_${KEY_VERSION}_${userId}`),
+        idbDelete(db, `privkey_${KEY_VERSION_PREV}_${userId}`),
+    ]);
+}
+
+// Internals
+async function decryptAndImport(
+    encryptedData: ArrayBuffer,
+    userId: number,
+): Promise<CryptoKey | null> {
+    try {
+        const rawKey = await decryptKeyBytes(encryptedData, userId);
+
+        // Імпортуємо як NON-EXTRACTABLE навіть якщо XSS дістанеться до об'єкта
+        return crypto.subtle.importKey(
+            'pkcs8',
+            rawKey,
+            { name: 'X25519' },
+            false, // non-extractable
+            ['deriveKey', 'deriveBits'],
+        );
+    } catch (err) {
+
+        console.warn('[E2E] Cannot decrypt private key (vault secret missing?):', err);
+        return null;
+    }
+}
+
+// Helpers
 function bufToBase64url(buf: ArrayBuffer): string {
     return btoa(String.fromCharCode(...new Uint8Array(buf)))
         .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
