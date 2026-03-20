@@ -1,5 +1,4 @@
 
-
 generator client {
   provider = "prisma-client"
   output   = "../generated/prisma"
@@ -39,7 +38,7 @@ model User {
   password  String
   role      Role      @default(USER)
   avatarUrl String?
-  statusEmoji String? // e.g. "😀"
+  statusEmoji String?
   isEmailVerified Boolean @default(false)
   emailVerifyToken String?
   passwordResetToken String?
@@ -57,9 +56,11 @@ model User {
   sentFriendRequests Friendship[] @relation("FriendshipSender")
   receivedFriendRequests Friendship[] @relation("FriendshipReceiver")
   publicKey UserPublicKey?
-  groupKeysAsRecipient GroupEncryptedKey[] @relation("GroupKeyRecipient")
-  groupKeysAsCreator GroupEncryptedKey[] @relation("GroupKeyCreator")
   forwardedMessages Message[] @relation("MessageForwardUser")
+
+  // Sender Key relations
+  ownedSenderKeys     GroupSenderKey[] @relation("SenderKeyOwner")
+  receivedSenderKeys  GroupSenderKey[] @relation("SenderKeyRecipient")
 }
 
 model Session {
@@ -86,10 +87,9 @@ model Conversation {
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
-  members  ConversationMember[]
-  messages Message[]
-
-  groupKeys GroupEncryptedKey[]
+  members    ConversationMember[]
+  messages   Message[]
+  senderKeys GroupSenderKey[]
 
   @@index([createdById])
 }
@@ -120,9 +120,9 @@ model Message {
   fileName       String?
   fileType       String?
   fileSize       Int?
-  metadata       String?  @db.Text // ( voice waveform data, poll options, etc. )
-  forwardedFromId Int?     // for message forwarding
-  forwardedFromUserId Int? // for message forwarding
+  metadata       String?  @db.Text
+  forwardedFromId Int?
+  forwardedFromUserId Int?
   senderId       Int
   conversationId Int
   replyToId      Int?
@@ -187,27 +187,27 @@ model PushSubscription {
 model UserPublicKey {
   id        Int      @id @default(autoincrement())
   userId    Int      @unique
-  publicKey String   // base X25519 public key
+  publicKey String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
-model GroupEncryptedKey {
+model GroupSenderKey {
   id             Int      @id @default(autoincrement())
   conversationId Int
-  userId         Int      // отримувач (кому зашифрований ключ)
-  creatorId      Int      // хто зашифрував (чий pubKey використовувався)
-  encryptedKey   String   @db.Text  // груповий AES-ключ, зашифрований через ECDH(creatorPriv, userPub)
+  senderId       Int
+  recipientId    Int
+  encryptedKey   String   @db.Text
   createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  user           User         @relation("GroupKeyRecipient", fields: [userId],   references: [id], onDelete: Cascade)
-  creator        User         @relation("GroupKeyCreator",   fields: [creatorId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User         @relation("SenderKeyOwner",     fields: [senderId],    references: [id], onDelete: Cascade)
+  recipient    User         @relation("SenderKeyRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
 
-  @@unique([conversationId, userId])
-  @@index([conversationId])
-  @@index([userId])
+  @@unique([conversationId, senderId, recipientId])
+  @@index([conversationId, recipientId])
+  @@index([conversationId, senderId])
 }
-

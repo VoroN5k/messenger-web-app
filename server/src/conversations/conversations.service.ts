@@ -10,7 +10,7 @@ const ALLOWED_EMOJIS = ['👍','❤️','😂','😮','😢','😡','🔥','👏
 const MSG_SELECT = {
     id: true, content: true, createdAt: true, editedAt: true, deletedAt: true,
     fileUrl: true, fileName: true, fileType: true, fileSize: true,
-    metadata: true, // ← FIX: was missing — waveform/encrypted flag lost on every round-trip
+    metadata: true,
     senderId: true, conversationId: true, replyToId: true,
     forwardedFromId: true, forwardedFromUser: true,
     sender: { select: { id: true, nickname: true, avatarUrl: true } },
@@ -40,7 +40,7 @@ const MEMBER_USER_SELECT = {
 export class ConversationsService {
     constructor(private readonly prisma: PrismaService) {}
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    // Helpers
     private groupReactions(reactions: { emoji: string; userId: number }[]) {
         const map = new Map<string, number[]>();
         for (const r of reactions) {
@@ -109,7 +109,7 @@ export class ConversationsService {
         return map;
     }
 
-    // ── My conversations ──────────────────────────────────────────────────────
+    // My conversations
     async getMyConversations(userId: number) {
         const memberships = await this.prisma.conversationMember.findMany({
             where: { userId },
@@ -253,7 +253,7 @@ export class ConversationsService {
         return { ...this.mapMessage(msg), isRead: false };
     }
 
-    // ── Get or create DIRECT ──────────────────────────────────────────────────
+    // Get or create DIRECT
     async getOrCreateDirect(userId: number, targetId: number) {
         const isSelf = userId === targetId;
 
@@ -300,7 +300,7 @@ export class ConversationsService {
         });
     }
 
-    // ── Create GROUP ──────────────────────────────────────────────────────────
+    // Create GROUP
     async createGroup(userId: number, dto: { name: string; description?: string; memberIds: number[] }) {
         const uniqueIds = [...new Set(dto.memberIds.filter((id) => id !== userId))];
         return this.prisma.conversation.create({
@@ -320,7 +320,7 @@ export class ConversationsService {
         });
     }
 
-    // ── Create CHANNEL ────────────────────────────────────────────────────────
+    // Create CHANNEL
     async createChannel(userId: number, dto: { name: string; description?: string }) {
         return this.prisma.conversation.create({
             data: {
@@ -334,7 +334,7 @@ export class ConversationsService {
         });
     }
 
-    // ── Single conversation ───────────────────────────────────────────────────
+    // Single conversation
     async getConversation(userId: number, conversationId: number) {
         await this.assertMember(userId, conversationId);
         return this.prisma.conversation.findUnique({
@@ -343,7 +343,7 @@ export class ConversationsService {
         });
     }
 
-    // ── Messages ──────────────────────────────────────────────────────────────
+    // Messages
     async getMessages(userId: number, conversationId: number, cursor?: number) {
         await this.assertMember(userId, conversationId);
 
@@ -422,7 +422,7 @@ export class ConversationsService {
         })
     }
 
-    // ── Save message (from gateway) ───────────────────────────────────────────
+    // Save message (from gateway)
     async saveMessage(userId: number, conversationId: number, dto: {
         content?: string; fileUrl?: string; fileName?: string;
         fileType?: string; fileSize?: number; replyToId?: number;
@@ -458,7 +458,7 @@ export class ConversationsService {
         return { ...this.mapMessage(msg), isRead: false };
     }
 
-    // ── Mark as read ──────────────────────────────────────────────────────────
+    //  Mark as read
     async markAsRead(userId: number, conversationId: number) {
         await this.prisma.conversationMember.updateMany({
             where: { conversationId, userId },
@@ -466,7 +466,7 @@ export class ConversationsService {
         });
     }
 
-    // ── Delete / Edit / React ─────────────────────────────────────────────────
+    // Delete / Edit / React
     async deleteMessage(messageId: number, userId: number) {
         const msg = await this.prisma.message.findUnique({ where: { id: messageId } });
         if (!msg) throw new NotFoundException('Message not found');
@@ -528,7 +528,7 @@ export class ConversationsService {
         return { grouped: this.groupReactions(reactions), conversationId: msg.conversationId };
     }
 
-    // ── Members ───────────────────────────────────────────────────────────────
+    // Members
     async addMember(adminId: number, conversationId: number, targetUserId: number) {
         const conv = await this.prisma.conversation.findUnique({ where: { id: conversationId } });
         if (conv?.type === 'DIRECT') throw new BadRequestException('Cannot add to direct chats');
@@ -557,6 +557,10 @@ export class ConversationsService {
             if (target?.role === 'OWNER') throw new ForbiddenException('Cannot remove owner');
         }
 
+        await this.prisma.groupSenderKey.deleteMany({
+            where: { conversationId, senderId: targetUserId },
+        })
+
         await this.prisma.conversationMember.delete({
             where: { conversationId_userId: { conversationId, userId: targetUserId } },
         });
@@ -582,36 +586,46 @@ export class ConversationsService {
         return this.prisma.conversation.update({ where: { id: conversationId }, data: dto });
     }
 
-    async setGroupKeys(
+    async setSenderKey(
         requesterId: number,
         conversationId: number,
-        keys: Array<{ userId: number; encryptedKey: string}>
+        keys: Array<{ recipientId: number; encryptedKey: string }>,
     ) {
         await this.assertMember(requesterId, conversationId);
 
         await Promise.all(
-            keys.map(({ userId, encryptedKey }) =>
-                this.prisma.groupEncryptedKey.upsert({
-                    where: { conversationId_userId: { conversationId, userId } },
-                    create: { conversationId, userId, creatorId: requesterId, encryptedKey },
-                    update: { encryptedKey, creatorId: requesterId },
+            keys.map(({ recipientId, encryptedKey }) =>
+                this.prisma.groupSenderKey.upsert({
+                    where: {
+                        conversationId_senderId_recipientId: {
+                            conversationId,
+                            senderId: requesterId,
+                            recipientId,
+                        },
+                    },
+                    create: {
+                        conversationId,
+                        senderId: requesterId,
+                        recipientId,
+                        encryptedKey,
+                    },
+                    update: { encryptedKey },
                 }),
             ),
         );
+
         return { ok: true };
     }
 
-    async getMyGroupKey(userId: number, conversationId: number) {
+    async getSenderKey(userId: number, conversationId: number) {
         await this.assertMember(userId, conversationId);
 
-        const key = await this.prisma.groupEncryptedKey.findUnique({
-            where: { conversationId_userId: { conversationId, userId } },
-            select: { encryptedKey: true, creatorId: true },
-        });
+        const keys = await this.prisma.groupSenderKey.findMany({
+            where: { conversationId, recipientId: userId },
+            select: { senderId: true, encryptedKey: true },
+        })
 
-        if (!key) {
-            return null;
-        }
-        return key;
+        return keys;
     }
+
 }
