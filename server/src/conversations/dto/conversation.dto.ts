@@ -55,7 +55,7 @@ export class ForwardMessageDto {
     targetConversationId: number;
 }
 
-export class SetGroupKeysDto {
+export class SetSenderKeysDto {
     @IsArray()
-    keys: Array<{ userId: number; encryptedKey: string }>;
+    keys: Array<{ recipientId: number; encryptedKey: string }>;
 }

@@ -617,7 +617,7 @@ export class ConversationsService {
         return { ok: true };
     }
 
-    async getSenderKey(userId: number, conversationId: number) {
+    async getSenderKeysForMe(userId: number, conversationId: number) {
         await this.assertMember(userId, conversationId);
 
         const keys = await this.prisma.groupSenderKey.findMany({

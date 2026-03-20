@@ -7,7 +7,7 @@ import { JwtAuthGuard }         from '../auth/guards/jwt-auth.guard.js';
 import { CurrentUser }          from '../auth/decorators/current-user.decorator.js';
 import {
     CreateDirectDto, CreateGroupDto, CreateChannelDto,
-    UpdateConversationDto, AddMemberDto, PinMessageDto, ForwardMessageDto, SetGroupKeysDto,
+    UpdateConversationDto, AddMemberDto, PinMessageDto, ForwardMessageDto, SetSenderKeysDto,
 } from './dto/conversation.dto.js';
 
 @Controller('conversations')
@@ -130,20 +130,20 @@ export class ConversationsController {
         return this.conversationsService.forwardMessage(userId, dto.messageId, dto.targetConversationId);
     }
 
-    @Post(':id/group-keys')
+    @Post(':id/sender-keys')
     setGroupKeys(
         @CurrentUser('sub') userId: number,
         @Param('id', ParseIntPipe) id: number,
-        @Body() dto: SetGroupKeysDto,
+        @Body() dto: SetSenderKeysDto,
     ) {
-        return this.conversationsService.setGroupKeys(userId, id, dto.keys);
+        return this.conversationsService.setSenderKey(userId, id, dto.keys);
     }
 
-    @Get(':id/group-keys/me')
+    @Get(':id/sender-keys/for-me')
     getMyGroupKey(
         @CurrentUser('sub') userId: number,
         @Param('id', ParseIntPipe) id: number,
     ) {
-        return this.conversationsService.getMyGroupKey(userId, id);
+        return this.conversationsService.getSenderKeysForMe(userId, id);
     }
 }
