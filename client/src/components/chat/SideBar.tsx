@@ -1,11 +1,5 @@
 'use client';
 
-// client/src/components/chat/SideBar.tsx
-// ЗМІНИ:
-//   1. Додано кнопку "Збережені" під пошуком у вкладці Чати
-//   2. Клік на неї відкриває self-DM (userId === userId)
-//   3. Saved чат відображається спеціальним значком у списку розмов
-
 import { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import {
@@ -60,7 +54,6 @@ function formatTime(d: string): string {
     return date.toLocaleDateString('uk-UA', { day: 'numeric', month: 'short' });
 }
 
-// Перевіряємо чи це чат із самим собою (Saved)
 function isSavedMessages(conv: Conversation, currentUserId: number | undefined): boolean {
     if (!currentUserId) return false;
     if (conv.type !== 'DIRECT') return false;
@@ -88,7 +81,6 @@ export default function Sidebar({
     const { setAuth, user, accessToken } = useAuthStore();
     const searchTimer = useRef<NodeJS.Timeout | null>(null);
 
-    // ── Avatar upload ─────────────────────────────────────────────────────────
     const handleSaveAvatar = async (blob: Blob) => {
         const fd = new FormData();
         fd.append('avatar', blob, 'avatar.jpg');
@@ -97,7 +89,6 @@ export default function Sidebar({
         setShowCropModal(false);
     };
 
-    // ── User search ───────────────────────────────────────────────────────────
     const handleSearch = (q: string) => {
         setSearchQuery(q);
         if (searchTimer.current) clearTimeout(searchTimer.current);
@@ -113,7 +104,6 @@ export default function Sidebar({
         }, 350);
     };
 
-    // ── Open DM ───────────────────────────────────────────────────────────────
     const openDirect = async (targetUserId: number) => {
         const res  = await api.post('/conversations/direct', { targetUserId });
         const conv = res.data as Conversation;
@@ -123,16 +113,13 @@ export default function Sidebar({
         setSearchQuery(''); setSearchResults([]); setTab('chats');
     };
 
-    // ── Open Saved Messages ───────────────────────────────────────────────────
     const openSaved = async () => {
         if (!currentUser) return;
-        // Спочатку шукаємо в вже завантажених розмовах
         const existing = conversations.find(c => isSavedMessages(c, currentUser.id));
         if (existing) {
             onSelectConversation(existing);
             return;
         }
-        // Якщо немає — створюємо
         const res  = await api.post('/conversations/direct', { targetUserId: currentUser.id });
         const conv = res.data as Conversation;
         onAddConversation(conv);
@@ -140,7 +127,6 @@ export default function Sidebar({
         socket?.emit('joinConversation', { conversationId: conv.id });
     };
 
-    // ── Send friend request ───────────────────────────────────────────────────
     const handleSendRequest = async (userId: number) => {
         setSendingReq(userId);
         try {
@@ -161,7 +147,6 @@ export default function Sidebar({
     return (
         <aside className="w-[340px] bg-white dark:bg-slate-800 border-r border-gray-100 dark:border-slate-700 flex flex-col z-20 shrink-0 transition-colors duration-200">
 
-            {/* ── Header ── */}
             <div className="px-4 py-4 border-b border-gray-100 dark:border-slate-700 flex items-center justify-between">
                 <div className="flex items-center gap-3 min-w-0">
                     <div className="relative group cursor-pointer" onClick={() => setShowCropModal(true)}>
@@ -217,7 +202,6 @@ export default function Sidebar({
                 </div>
             </div>
 
-            {/* ── Tabs ── */}
             <div className="flex border-b border-gray-100 dark:border-slate-700">
                 {(['chats', 'friends'] as SidebarTab[]).map((t) => (
                     <button key={t} onClick={() => setTab(t)}
@@ -240,7 +224,6 @@ export default function Sidebar({
                 ))}
             </div>
 
-            {/* ── Search bar ── */}
             <div className="px-3 py-2.5 border-b border-gray-100 dark:border-slate-700">
                 <div className="relative">
                     <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
@@ -259,15 +242,11 @@ export default function Sidebar({
                 </div>
             </div>
 
-            {/* ── Content ── */}
             <div className="flex-1 overflow-y-auto">
 
-                {/* ══ CHATS tab ══ */}
                 {tab === 'chats' && (
                     <>
-                        {/* ── Saved + New Group/Channel ── */}
                         <div className="flex gap-1.5 px-3 py-2">
-                            {/* Збережені повідомлення */}
                             <button
                                 onClick={openSaved}
                                 className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-600 text-xs text-slate-500 dark:text-slate-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 hover:border-amber-200 dark:hover:border-amber-700 hover:text-amber-600 dark:hover:text-amber-400 transition-all cursor-pointer shrink-0"
@@ -310,7 +289,6 @@ export default function Sidebar({
                                              : 'hover:bg-slate-50 dark:hover:bg-slate-700/50 border-l-transparent'}`}
                                     >
                                         <div className="relative shrink-0">
-                                            {/* Збережені — спеціальна іконка */}
                                             {isSaved ? (
                                                 <div className="w-12 h-12 rounded-full flex items-center justify-center bg-amber-100 dark:bg-amber-900/40">
                                                     <Bookmark size={22} className="text-amber-500" />
@@ -362,7 +340,6 @@ export default function Sidebar({
                     </>
                 )}
 
-                {/* ══ FRIENDS tab ══ */}
                 {tab === 'friends' && (
                     <>
                         {pendingRequests.length > 0 && (
@@ -474,7 +451,6 @@ export default function Sidebar({
                 )}
             </div>
 
-            {/* ── Modals ── */}
             {showCropModal && (
                 <AvatarCropModal onClose={() => setShowCropModal(false)} onSave={handleSaveAvatar} />
             )}
@@ -506,7 +482,6 @@ export default function Sidebar({
     );
 }
 
-// ── Create Group Modal ────────────────────────────────────────────────────────
 function CreateGroupModal({ friends, onClose, onCreated }: {
     friends: FriendItem[];
     onClose: () => void;
@@ -518,7 +493,7 @@ function CreateGroupModal({ friends, onClose, onCreated }: {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
 
-    const e2e = useE2E()
+    const e2e = useE2E();
 
     const toggle = (id: number) =>
         setSelected((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
@@ -534,9 +509,11 @@ function CreateGroupModal({ friends, onClose, onCreated }: {
 
             const allMemberIds = conv.members.map(m => m.userId);
             try {
-                await e2e.createAndDistributeGroupKey(conv.id, allMemberIds);
+                // distributeMySenderKey генерує sender key поточного юзера і
+                // розповсюджує його зашифрованим для кожного учасника групи
+                await e2e.distributeMySenderKey(conv.id, allMemberIds);
             } catch (err) {
-                console.warn('[E2E] Group key distribution failed: ', err);
+                console.warn('[E2E] Sender key distribution failed: ', err);
             }
 
             onCreated(conv);
@@ -596,7 +573,6 @@ function CreateGroupModal({ friends, onClose, onCreated }: {
     );
 }
 
-// ── Create Channel Modal ──────────────────────────────────────────────────────
 function CreateChannelModal({ onClose, onCreated }: {
     onClose: () => void; onCreated: (c: Conversation) => void;
 }) {

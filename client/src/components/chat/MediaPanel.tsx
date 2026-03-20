@@ -25,10 +25,10 @@ interface Props {
     conversationId: number;
     currentUserId:  number | string;
     onClose:        () => void;
-    decryptFn?:     (data: ArrayBuffer) => Promise<ArrayBuffer>;
+    // senderId передається щоб знати чий ключ використати для розшифровки
+    decryptFn?:     (data: ArrayBuffer, senderId: number) => Promise<ArrayBuffer>;
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
 function parseMeta(raw: string | null): Record<string, any> | null {
     if (!raw) return null;
     try { return JSON.parse(raw); } catch { return null; }
@@ -61,10 +61,15 @@ function formatDay(dateStr: string): string {
     return d.toLocaleDateString('uk-UA', { day: 'numeric', month: 'long', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
 }
 
-// ── Encrypted image tile — decrypts on mount ──────────────────────────────────
+// Компонент для зашифрованих зображень — розшифровує при монтуванні
+// передаємо senderId щоб useE2E знав чий ключ використати
 function EncryptedImageTile({
                                 m, decryptFn, onClick,
-                            }: { m: MediaFile; decryptFn: (data: ArrayBuffer) => Promise<ArrayBuffer>; onClick: (url: string) => void }) {
+                            }: {
+    m: MediaFile;
+    decryptFn: (data: ArrayBuffer, senderId: number) => Promise<ArrayBuffer>;
+    onClick: (url: string) => void;
+}) {
     const [blobUrl, setBlobUrl] = useState<string | null>(null);
     const [err,     setErr]     = useState(false);
 
@@ -72,7 +77,7 @@ function EncryptedImageTile({
         let url: string | null = null;
         fetch(m.fileUrl)
             .then(r => r.arrayBuffer())
-            .then(buf => decryptFn(buf))
+            .then(buf => decryptFn(buf, m.senderId))
             .then(dec => {
                 url = URL.createObjectURL(new Blob([dec], { type: m.fileType ?? 'image/jpeg' }));
                 setBlobUrl(url);
@@ -101,7 +106,6 @@ function EncryptedImageTile({
     );
 }
 
-// ── Main MediaPanel ───────────────────────────────────────────────────────────
 export function MediaPanel({ conversationId, currentUserId, onClose, decryptFn }: Props) {
     const [tab,      setTab]      = useState<Tab>('media');
     const [all,      setAll]      = useState<MediaFile[]>([]);
@@ -109,7 +113,6 @@ export function MediaPanel({ conversationId, currentUserId, onClose, decryptFn }
     const [lightbox, setLightbox] = useState<{ src: string; name?: string } | null>(null);
     const panelRef = useRef<HTMLDivElement>(null);
 
-    // ── Fetch all media once ──────────────────────────────────────────────────
     useEffect(() => {
         setLoading(true);
         api.get<MediaFile[]>(`/conversations/${conversationId}/media`)
@@ -118,7 +121,6 @@ export function MediaPanel({ conversationId, currentUserId, onClose, decryptFn }
             .finally(() => setLoading(false));
     }, [conversationId]);
 
-    // ── Close on outside click ────────────────────────────────────────────────
     useEffect(() => {
         const h = (e: MouseEvent) => {
             if (panelRef.current && !panelRef.current.contains(e.target as Node)) onClose();
@@ -127,7 +129,6 @@ export function MediaPanel({ conversationId, currentUserId, onClose, decryptFn }
         return () => { clearTimeout(t); document.removeEventListener('mousedown', h); };
     }, [onClose]);
 
-    // ── Close on Escape ───────────────────────────────────────────────────────
     useEffect(() => {
         const h = (e: KeyboardEvent) => { if (e.key === 'Escape' && !lightbox) onClose(); };
         document.addEventListener('keydown', h);
@@ -136,7 +137,6 @@ export function MediaPanel({ conversationId, currentUserId, onClose, decryptFn }
 
     const { media, voice, files } = categorize(all);
 
-    // ── Group by day ──────────────────────────────────────────────────────────
     function groupByDay(items: MediaFile[]) {
         const groups: { label: string; items: MediaFile[] }[] = [];
         for (const m of items) {
@@ -156,14 +156,12 @@ export function MediaPanel({ conversationId, currentUserId, onClose, decryptFn }
 
     return (
         <>
-            {/* ── Panel ── */}
             <div
                 ref={panelRef}
                 className="absolute top-0 right-0 h-full w-[320px] bg-white dark:bg-slate-800
                            border-l border-slate-100 dark:border-slate-700 flex flex-col z-20
                            shadow-xl animate-in slide-in-from-right-4 duration-200"
             >
-                {/* Header */}
                 <div className="flex items-center justify-between px-4 py-3.5 border-b border-slate-100 dark:border-slate-700 shrink-0">
                     <h3 className="font-semibold text-slate-800 dark:text-slate-100 text-sm">Вкладення</h3>
                     <button onClick={onClose}
@@ -172,7 +170,6 @@ export function MediaPanel({ conversationId, currentUserId, onClose, decryptFn }
                     </button>
                 </div>
 
-                {/* Tabs */}
                 <div className="flex border-b border-slate-100 dark:border-slate-700 shrink-0">
                     {TAB_DATA.map(t => (
                         <button
@@ -194,7 +191,6 @@ export function MediaPanel({ conversationId, currentUserId, onClose, decryptFn }
                     ))}
                 </div>
 
-                {/* Content */}
                 <div className="flex-1 overflow-y-auto">
                     {loading ? (
                         <div className="flex items-center justify-center h-full">
@@ -224,7 +220,6 @@ export function MediaPanel({ conversationId, currentUserId, onClose, decryptFn }
                 </div>
             </div>
 
-            {/* Lightbox */}
             {lightbox && (
                 <ImageModal
                     src={lightbox.src}
@@ -237,13 +232,12 @@ export function MediaPanel({ conversationId, currentUserId, onClose, decryptFn }
     );
 }
 
-// ── Media Grid ────────────────────────────────────────────────────────────────
 function MediaGrid({
                        groups, decryptFn, onLightbox,
                    }: {
     items:      MediaFile[];
     groups:     { label: string; items: MediaFile[] }[];
-    decryptFn?: (data: ArrayBuffer) => Promise<ArrayBuffer>;
+    decryptFn?: (data: ArrayBuffer, senderId: number) => Promise<ArrayBuffer>;
     onLightbox: (s: { src: string; name?: string }) => void;
 }) {
     if (!groups.length) return <Empty label="Фото і відео відсутні" />;
@@ -287,14 +281,14 @@ function MediaGrid({
     );
 }
 
-// ── Voice List ────────────────────────────────────────────────────────────────
 function VoiceList({
                        groups, currentUserId, decryptFn,
                    }: {
     items:         MediaFile[];
     groups:        { label: string; items: MediaFile[] }[];
     currentUserId: number | string;
-    decryptFn?:    (data: ArrayBuffer) => Promise<ArrayBuffer>;
+    // senderId передається щоб VoiceBubble знав чий ключ використати
+    decryptFn?:    (data: ArrayBuffer, senderId: number) => Promise<ArrayBuffer>;
 }) {
     if (!groups.length) return <Empty label="Голосових повідомлень немає" />;
 
@@ -324,7 +318,8 @@ function VoiceList({
                                                 fileUrl={m.fileUrl}
                                                 metadata={m.metadata}
                                                 isMe={false}
-                                                onDecrypt={decryptFn}
+                                                // передаємо senderId конкретного повідомлення
+                                                onDecrypt={decryptFn ? (d) => decryptFn(d, m.senderId) : undefined}
                                             />
                                         </div>
                                     </div>
@@ -338,13 +333,12 @@ function VoiceList({
     );
 }
 
-// ── File List ─────────────────────────────────────────────────────────────────
 function FileList({
                       groups, decryptFn,
                   }: {
     items:      MediaFile[];
     groups:     { label: string; items: MediaFile[] }[];
-    decryptFn?: (data: ArrayBuffer) => Promise<ArrayBuffer>;
+    decryptFn?: (data: ArrayBuffer, senderId: number) => Promise<ArrayBuffer>;
 }) {
     if (!groups.length) return <Empty label="Файлів немає" />;
 
@@ -379,7 +373,8 @@ function FileList({
 function FileRow({ m, encrypted, decryptFn }: {
     m:          MediaFile;
     encrypted:  boolean;
-    decryptFn?: (data: ArrayBuffer) => Promise<ArrayBuffer>;
+    // senderId передається щоб знати чий ключ використати при завантаженні
+    decryptFn?: (data: ArrayBuffer, senderId: number) => Promise<ArrayBuffer>;
 }) {
     const [blobUrl,    setBlobUrl]    = useState<string | null>(null);
     const [decrypting, setDecrypting] = useState(false);
@@ -389,10 +384,10 @@ function FileRow({ m, encrypted, decryptFn }: {
             setDecrypting(true);
             try {
                 const buf = await fetch(m.fileUrl).then(r => r.arrayBuffer());
-                const dec = await decryptFn(buf);
+                // передаємо senderId конкретного файлу
+                const dec = await decryptFn(buf, m.senderId);
                 const url = URL.createObjectURL(new Blob([dec], { type: m.fileType ?? 'application/octet-stream' }));
                 setBlobUrl(url);
-                // Trigger download
                 const a = document.createElement('a');
                 a.href = url; a.download = m.fileName ?? 'file'; a.click();
             } catch {} finally { setDecrypting(false); }
@@ -446,7 +441,6 @@ function FileRow({ m, encrypted, decryptFn }: {
     );
 }
 
-// ── Empty state ───────────────────────────────────────────────────────────────
 function Empty({ label }: { label: string }) {
     return (
         <div className="flex flex-col items-center justify-center h-full gap-2 text-slate-300 dark:text-slate-600 py-16">
