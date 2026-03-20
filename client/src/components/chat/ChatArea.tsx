@@ -319,10 +319,14 @@ export default function ChatArea({
     // Shared decrypt function for the current conversation's peer.
     // Passed down to FileBubble and VoiceBubble so they can decrypt on load.
     const decryptFn = otherUserId
-        ? (data: ArrayBuffer) => e2e.decryptBinary(data, otherUserId)
-        : conversation?.type === 'GROUP' && conversation?.id
-            ? (data: ArrayBuffer) => e2e.decryptBinaryFromGroup(data, conversation.id)
-            : undefined;
+       ? (data: ArrayBuffer) => e2e.decryptBinary(data, otherUserId)
+       : conversation?.type === 'GROUP' && conversation?.id
+           ? (data: ArrayBuffer, senderId: number) => e2e.decryptBinaryFromGroup(data, conversation.id, senderId)
+          : undefined;
+
+    const groupMemberIds = conversation?.type === 'GROUP'
+        ? conversation.members.map(m => m.userId)
+        : undefined;
 
     const {
         messages, typingUsers, hasMore, isLoadingMore, jumpTarget,
@@ -349,6 +353,7 @@ export default function ChatArea({
             });
         },
         conversation?.type,
+        groupMemberIds,
     );
 
     const { query, setQuery, results, isSearching, isOpen, setIsOpen, close: closeSearch, loadedCount } =
@@ -897,7 +902,7 @@ export default function ChatArea({
                                                         fileUrl={msg.fileUrl!}
                                                         metadata={msg.metadata}
                                                         isMe={isMe}
-                                                        onDecrypt={decryptFn}
+                                                        onDecrypt={decryptFn ? (d) => decryptFn(d, Number(msg.senderId)) : undefined}
                                                     />
                                                 )}
 
@@ -906,7 +911,7 @@ export default function ChatArea({
                                                     <FileBubble
                                                         msg={msg}
                                                         isMe={isMe}
-                                                        onDecrypt={decryptFn}
+                                                        onDecrypt={decryptFn ? (d) => decryptFn(d, Number(msg.senderId)) : undefined}
                                                     />
                                                 )}
 
