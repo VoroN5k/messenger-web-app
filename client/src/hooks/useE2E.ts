@@ -11,6 +11,7 @@ import {
     generateKeyPair,
     loadPrivateKey,
     savePrivateKey,
+    deletePrivateKey,
 } from "@/src/lib/crypto";
 import api from "@/src/lib/axios";
 
@@ -129,17 +130,18 @@ export function useE2E() {
 
     useEffect(() => {
         if (!user?.id) {
-            privateKey  = null;
-            initialized = false;
-            initPromise = null;
-            sessionKeys.clear();
-            pendingEcdh.clear();
-            mySenderKeys.clear();
-            peerSenderKeys.clear();
-            pendingSender.clear();
-            prefetchedConvs.clear();
-            onReadyCallbacks = [];
-            setIsReady(false);
+          const prevId = user?.id;
+          privateKey  = null;
+          initialized = false;
+          initPromise = null;
+          sessionKeys.clear();
+          pendingEcdh.clear();
+          mySenderKeys.clear();
+          peerSenderKeys.clear();
+          pendingSender.clear();
+          prefetchedConvs.clear();
+          onReadyCallbacks = [];
+          setIsReady(false);
         }
     }, [user?.id]);
 
@@ -475,6 +477,7 @@ export function useE2E() {
         distributeMySenderKey,
         prefetchGroupSenderKeys,
         invalidateGroupKeys,
+        clearAllKeyMaterial: () => user?.id ? deletePrivateKey(user.id) : Promise.resolve(),
         // meta
         isReady,
     };
