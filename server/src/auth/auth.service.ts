@@ -19,13 +19,13 @@ import { EmailService } from './email/email.service.js';
 export class AuthService {
     private readonly logger = new Logger(AuthService.name);
     private readonly MAX_SESSIONS = 5;
-    private readonly REFRESH_TOKEN_EXPIRY = 7 * 24 * 60 * 60 * 1000; // 7 днів
-    private readonly RESET_TOKEN_EXPIRY_MS = 60 * 60 * 1000; // 1 година
+    private readonly REFRESH_TOKEN_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 днів
+    private readonly RESET_TOKEN_EXPIRY_MS   = 60 * 60 * 1000;           // 1 година
 
     constructor(
-        private readonly prisma: PrismaService,
-        private readonly jwtService: JwtService,
-        private readonly emailService: EmailService,
+        private readonly prisma:        PrismaService,
+        private readonly jwtService:    JwtService,
+        private readonly emailService:  EmailService,
     ) {}
 
     // REGISTER
@@ -46,13 +46,13 @@ export class AuthService {
             }
 
             const hashedPassword = await bcrypt.hash(password, 10);
-            const verifyToken = generateToken();
+            const verifyToken    = generateToken();
 
             const user = await tx.user.create({
                 data: {
                     email,
                     nickname,
-                    password: hashedPassword,
+                    password:        hashedPassword,
                     isEmailVerified: false,
                     emailVerifyToken: hashToken(verifyToken),
                 },
@@ -60,8 +60,7 @@ export class AuthService {
 
             await this.emailService.sendVerificationEmail(email, verifyToken);
 
-
-            return this.issueNewTokens(user.id, meta, tx);
+            return this.issueTokens(user.id, meta, tx);
         });
     }
 
@@ -77,61 +76,75 @@ export class AuthService {
             throw new UnauthorizedException('Please verify your email first');
         }
 
-        return this.issueNewTokens(user.id, meta);
+        return this.issueTokens(user.id, meta);
     }
 
     // REFRESH
-    async refresh(refreshToken: string, meta: SessionMeta) {
-        let payload: JWTPayload;
-        try {
-            payload = this.jwtService.verify(refreshToken);
-        } catch (e) {
-            throw new UnauthorizedException('Invalid or expired refresh token');
-        }
-
-        const hashed = hashToken(refreshToken);
+    async refresh(rawRefreshToken: string, meta: SessionMeta) {
+        const hashed = hashToken(rawRefreshToken);
 
         return this.prisma.$transaction(async (tx) => {
             const session = await tx.session.findUnique({
-                where: { refreshToken: hashed },
+                where:   { refreshToken: hashed },
+                include: { user: true },
             });
 
             if (!session) {
-                this.logger.warn(`Security alert! Token reuse by user ID: ${payload.sub}`);
-                await tx.session.deleteMany({ where: { userId: payload.sub } });
-                throw new UnauthorizedException('Security alert: session compromised');
+                this.logger.warn(
+                    `Refresh token not found — possible reuse attack (hash: ${hashed.slice(0, 12)}…)`,
+                );
+                throw new UnauthorizedException('Invalid or expired refresh token');
             }
 
-            return this.rotateSession(session.id, payload.sub, meta, tx);
+            if (session.expiresAt < new Date()) {
+                await tx.session.delete({ where: { id: session.id } });
+                throw new UnauthorizedException('Refresh token expired, please log in again');
+            }
+
+            return this.rotateSession(session.id, session.userId, meta, tx);
         });
     }
 
+    // FORGOT PASSWORD
     async forgotPassword(email: string): Promise<void> {
         const user = await this.prisma.user.findUnique({ where: { email } });
 
-        if(!user || !user.isEmailVerified) return;
+        // Константний час відповіді щоб уникнути email enumeration (timing attack)
+        const FIXED_DELAY_MS = 500;
+        const start = Date.now();
 
-        const rawToken = generateToken();
-        const expires = new Date(Date.now() + this.RESET_TOKEN_EXPIRY_MS);
+        try {
+            if (!user || !user.isEmailVerified) return;
 
-        await this.prisma.user.update({
-            where: { id: user.id },
-            data: {
-                passwordResetToken: hashToken(rawToken),
-                passwordResetExpires: expires,
-            },
-        });
+            const rawToken = generateToken();
+            const expires  = new Date(Date.now() + this.RESET_TOKEN_EXPIRY_MS);
 
-        await this.emailService.sendPasswordResetEmail(email, rawToken);
-        this.logger.log(`Password reset email sent to ${email}`);
+            await this.prisma.user.update({
+                where: { id: user.id },
+                data: {
+                    passwordResetToken:   hashToken(rawToken),
+                    passwordResetExpires: expires,
+                },
+            });
+
+            await this.emailService.sendPasswordResetEmail(email, rawToken);
+            this.logger.log(`Password reset email sent to ${email}`);
+        } finally {
+            // Завжди чекаємо однаковий час незалежно від того чи існує email
+            const elapsed = Date.now() - start;
+            if (elapsed < FIXED_DELAY_MS) {
+                await sleep(FIXED_DELAY_MS - elapsed);
+            }
+        }
     }
 
+    // RESET PASSWORD
     async resetPassword(token: string, newPassword: string): Promise<void> {
         const hashed = hashToken(token);
 
         const user = await this.prisma.user.findFirst({
             where: {
-                passwordResetToken: hashed,
+                passwordResetToken:   hashed,
                 passwordResetExpires: { gt: new Date() },
             },
         });
@@ -144,33 +157,101 @@ export class AuthService {
             this.prisma.user.update({
                 where: { id: user.id },
                 data: {
-                    password: hashedPassword,
-                    passwordResetToken: null,
+                    password:             hashedPassword,
+                    passwordResetToken:   null,
                     passwordResetExpires: null,
                 },
             }),
-
+            // Інвалідуємо всі сесії після скидання пароля
             this.prisma.session.deleteMany({ where: { userId: user.id } }),
         ]);
 
         this.logger.log(`Password reset successful for user: ${user.id}`);
     }
 
-    // ISSUE TOKENS
-    private async issueNewTokens(userId: number, meta: SessionMeta, tx?: any) {
-        const client = tx || this.prisma;
+    // CHANGE PASSWORD
+    async changePassword(userId: number, oldPass: string, newPass: string) {
+        const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+
+        if (!(await bcrypt.compare(oldPass, user.password))) {
+            throw new UnauthorizedException('Current password incorrect');
+        }
+
+        const hashedPassword = await bcrypt.hash(newPass, 10);
+
+        await this.prisma.$transaction([
+            this.prisma.user.update({
+                where: { id: userId },
+                data:  { password: hashedPassword },
+            }),
+            this.prisma.session.deleteMany({ where: { userId } }),
+        ]);
+
+        return { message: 'Password updated' };
+    }
+
+    // VERIFY EMAIL
+    async verifyEmail(token: string) {
+        const user = await this.prisma.user.findFirst({
+            where: { emailVerifyToken: hashToken(token) },
+        });
+        if (!user) throw new BadRequestException('Invalid token');
+
+        await this.prisma.user.update({
+            where: { id: user.id },
+            data:  { isEmailVerified: true, emailVerifyToken: null },
+        });
+        return { message: 'Email verified' };
+    }
+
+    // LOGOUT
+    async logout(rawRefreshToken: string) {
+        await this.prisma.session.deleteMany({
+            where: { refreshToken: hashToken(rawRefreshToken) },
+        });
+    }
+
+    async logoutAll(userId: number) {
+        await this.prisma.session.deleteMany({ where: { userId } });
+    }
+
+    // SESSIONS
+    async getUserSessions(userId: number) {
+        return this.prisma.session.findMany({
+            where:   { userId },
+            select:  {
+                id: true, userAgent: true, ipAddress: true,
+                createdAt: true, expiresAt: true,
+            },
+            orderBy: { createdAt: 'desc' },
+        });
+    }
+
+    // INTERNALS
+
+    /**
+     * Видає пару токенів і зберігає сесію.
+     *
+     * - accessToken  - короткоживучий JWT (15 хв). Несе payload для авторизації.
+     * - refreshToken - випадкові 32 байти (crypto.randomBytes).
+     *   У БД зберігається тільки SHA-256 хеш, сирий токен — тільки в куці.
+     */
+    private async issueTokens(userId: number, meta: SessionMeta, tx?: any) {
+        const client    = tx || this.prisma;
         const userAgent = meta.userAgent || 'unknown';
 
-        const existingSession = await client.session.findFirst({
+        // Якщо для цього useragent вже є сесія — ротуємо її
+        const existing = await client.session.findFirst({
             where: { userId, userAgent },
         });
 
-        if (existingSession) {
-            return this.rotateSession(existingSession.id, userId, meta, client);
+        if (existing) {
+            return this.rotateSession(existing.id, userId, meta, client);
         }
 
+        // Якщо досягли ліміту сесій - видаляємо найстарішу
         const activeSessions = await client.session.findMany({
-            where: { userId },
+            where:   { userId },
             orderBy: { createdAt: 'asc' },
         });
 
@@ -178,95 +259,70 @@ export class AuthService {
             await client.session.delete({ where: { id: activeSessions[0].id } });
         }
 
-
-        const { accessToken, refreshToken } = await this.generateJwt(userId, client);
+        const { accessToken, rawRefreshToken } = await this.generateTokens(userId, client);
 
         await client.session.create({
             data: {
                 userId,
-                refreshToken: hashToken(refreshToken),
+                refreshToken: hashToken(rawRefreshToken),
                 userAgent,
                 ipAddress: meta.ip || 'unknown',
-                expiresAt: new Date(Date.now() + this.REFRESH_TOKEN_EXPIRY),
+                expiresAt: new Date(Date.now() + this.REFRESH_TOKEN_EXPIRY_MS),
             },
         });
 
-        return { accessToken, refreshToken };
+        return { accessToken, refreshToken: rawRefreshToken };
     }
 
-    // ROTATE SESSION
-    private async rotateSession(sessionId: number, userId: number, meta: SessionMeta, client: any) {
-        const { accessToken, refreshToken } = await this.generateJwt(userId, client);
+    /**
+     * Атомарно замінює хеш refresh token в існуючій сесії.
+     * Старий токен одразу інвалідується - повторне використання неможливе.
+     */
+    private async rotateSession(
+        sessionId: number,
+        userId:    number,
+        meta:      SessionMeta,
+        client:    any,
+    ) {
+        const { accessToken, rawRefreshToken } = await this.generateTokens(userId, client);
 
         await client.session.update({
             where: { id: sessionId },
             data: {
-                refreshToken: hashToken(refreshToken),
-                ipAddress: meta.ip || 'unknown',
-                expiresAt: new Date(Date.now() + this.REFRESH_TOKEN_EXPIRY),
+                refreshToken: hashToken(rawRefreshToken),
+                ipAddress:    meta.ip || 'unknown',
+                expiresAt:    new Date(Date.now() + this.REFRESH_TOKEN_EXPIRY_MS),
             },
         });
 
-        return { accessToken, refreshToken };
+        return { accessToken, refreshToken: rawRefreshToken };
     }
 
-    // GENERATE JWT
-    private async generateJwt(userId: number, tx?: any) {
-        const client = tx || this.prisma;
-
-
-        const user = await client.user.findUniqueOrThrow({ where: { id: userId } });
+    /**
+     * Генерує:
+     *   - accessToken: підписаний JWT з payload користувача
+     *   - rawRefreshToken: криптографічно випадковий hex-рядок
+     */
+    private async generateTokens(userId: number, client?: any) {
+        const db   = client || this.prisma;
+        const user = await db.user.findUniqueOrThrow({ where: { id: userId } });
 
         const payload: JWTPayload = {
-            sub: user.id,
-            email: user.email,
+            sub:      user.id,
+            email:    user.email,
             nickname: user.nickname,
-            role: user.role,
+            role:     user.role,
             avatarUrl: user.avatarUrl ?? null,
         };
 
         return {
-            accessToken: this.jwtService.sign(payload, { expiresIn: '15m' }),
-            refreshToken: this.jwtService.sign(payload, { expiresIn: '7d' }),
+            accessToken:     this.jwtService.sign(payload, { expiresIn: '15m' }),
+            rawRefreshToken: generateToken(),
         };
     }
+}
 
-
-    async changePassword(userId: number, oldPass: string, newPass: string) {
-        const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
-        if (!(await bcrypt.compare(oldPass, user.password))) {
-            throw new UnauthorizedException('Current password incorrect');
-        }
-
-        const hashedPassword = await bcrypt.hash(newPass, 10);
-        await this.prisma.$transaction([
-            this.prisma.user.update({ where: { id: userId }, data: { password: hashedPassword } }),
-            this.prisma.session.deleteMany({ where: { userId } }),
-        ]);
-        return { message: 'Password updated' };
-    }
-
-    async verifyEmail(token: string) {
-        const user = await this.prisma.user.findFirst({ where: { emailVerifyToken: hashToken(token) } });
-        if (!user) throw new BadRequestException('Invalid token');
-        await this.prisma.user.update({ where: { id: user.id }, data: { isEmailVerified: true, emailVerifyToken: null } });
-        return { message: 'Email verified' };
-    }
-
-    async logout(refreshToken: string) {
-        await this.prisma.session.deleteMany({ where: { refreshToken: hashToken(refreshToken) } });
-    }
-
-    async logoutAll(userId: number) {
-        await this.prisma.session.deleteMany({ where: { userId } });
-    }
-
-    async getUserSessions(userId: number) {
-        return this.prisma.session.findMany({
-            where: { userId },
-            select: { id: true, userAgent: true, ipAddress: true, createdAt: true, expiresAt: true },
-            orderBy: { createdAt: 'desc' }
-        });
-    }
-
+// Utility
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }

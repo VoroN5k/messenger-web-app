@@ -204,7 +204,7 @@ export async function savePrivateKey(userId: number, key: CryptoKey): Promise<vo
 export async function loadPrivateKey(userId: number): Promise<CryptoKey | null> {
     const db = await openDB();
 
-    // ── v4: encrypted ArrayBuffer ─────────────────────────────────────────────
+    // v4: encrypted ArrayBuffer
     const stored = await idbGet(db, `privkey_${KEY_VERSION}_${userId}`);
 
     if (stored instanceof ArrayBuffer || stored instanceof Uint8Array) {
