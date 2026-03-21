@@ -444,7 +444,7 @@ export default function ChatArea({
                     maxHeight:     1920,
                     quality:       0.75,
                     outputFormat:  'image/jpeg',
-                    skipIfSmaller: 200 * 1024, // не стискаємо файли < 200 KB
+                    skipIfSmaller: 100 * 1024, // не стискаємо файли < 200 KB
                 });
 
                 console.info(
