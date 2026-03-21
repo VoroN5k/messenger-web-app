@@ -91,7 +91,7 @@ export class AuthService {
 
             if (!session) {
                 this.logger.warn(
-                    `Refresh token not found — possible reuse attack (hash: ${hashed.slice(0, 12)}…)`,
+                    `Refresh token not found - possible reuse attack (hash: ${hashed.slice(0, 12)}…)`,
                 );
                 throw new UnauthorizedException('Invalid or expired refresh token');
             }

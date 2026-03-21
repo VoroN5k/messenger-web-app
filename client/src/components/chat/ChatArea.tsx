@@ -28,6 +28,7 @@ import { User }          from '@/src/types/auth.types';
 import { Socket }        from 'socket.io-client';
 import {ImageModal} from "@/src/components/chat/ImageModal";
 import {MediaPanel} from "@/src/components/chat/MediaPanel";
+import {compressImage} from "@/src/lib/compressImage";
 
 interface ChatAreaProps {
     currentUser:           User | null;
@@ -313,7 +314,7 @@ export default function ChatArea({
         ? formatLastSeen(otherMember.user?.lastSeen)
         : null;
 
-    // ── E2E for binary (file/voice) encryption ────────────────────────────────
+    // E2E for binary (file/voice) encryption
     const e2e = useE2E();
 
     // Shared decrypt function for the current conversation's peer.
@@ -422,35 +423,71 @@ export default function ChatArea({
         }
     };
 
-    // ── File upload — encrypts bytes for DIRECT chats before upload ───────────
+    // File upload - encrypts bytes for DIRECT chats before upload
     const handleFileUpload = useCallback(async (file: File) => {
         if (!file || !conversation) return;
         setUploadError(null); setUploadProgress(0);
         const ctrl = new AbortController();
         abortRef.current = ctrl;
         try {
-            let fileToUpload = file;
+            // Стиснення зображень перед шифруванням і відправкою
+            // Стискаємо оригінальний файл до шифрування — шифруємо вже менший blob.
+            // Зберігаємо originalFile для відображення
+            let fileToProcess = file;
+            let displayName   = file.name;
+            let displayType   = file.type;
+            let displaySize   = file.size;
+
+            if (file.type.startsWith('image/')) {
+                const result = await compressImage(file, {
+                    maxWidth:      1920,
+                    maxHeight:     1920,
+                    quality:       0.75,
+                    outputFormat:  'image/jpeg',
+                    skipIfSmaller: 200 * 1024, // не стискаємо файли < 200 KB
+                });
+
+                console.info(
+                    `[compress] ${file.name} (${(file.size / 1024).toFixed(0)} KB)`,
+                    result.wasCompressed
+                        ? `→ ${(result.compressedSize / 1024).toFixed(0)} KB (-${result.savedPercent}%)`
+                        : `→ не стискалось (${
+                            file.size <= 200 * 1024 ? 'файл < 200KB' :
+                                !file.type.startsWith('image/') ? 'не зображення' :
+                                    'стиснутий більший за оригінал'
+                        })`,
+                );
+
+                if (result.wasCompressed) {
+                    fileToProcess = result.file;
+                    displayType   = result.file.type;   // jpeg/webp
+                    displaySize   = result.originalSize; // показуємо оригінальний розмір
+                }
+            }
+
+            // ── E2E шифрування (стисненого файлу) ────────────────────────────────
+            let fileToUpload = fileToProcess;
             let encMeta: string | undefined;
 
-            // Encrypt file bytes for DIRECT (E2E) conversations
             if (otherUserId) {
-                const buf    = await file.arrayBuffer();
+                const buf    = await fileToProcess.arrayBuffer();
                 const encBuf = await e2e.encryptBinary(buf, otherUserId);
-                fileToUpload = new File([encBuf], file.name, { type: file.type });
+                fileToUpload = new File([encBuf], fileToProcess.name, { type: fileToProcess.type });
                 encMeta      = JSON.stringify({ encrypted: true });
             } else if (conversation?.type === 'GROUP' && conversation?.id) {
-                const buf    = await file.arrayBuffer();
+                const buf    = await fileToProcess.arrayBuffer();
                 const encBuf = await e2e.encryptBinaryForGroup(buf, conversation.id);
-                fileToUpload = new File([encBuf], file.name, { type: file.type });
+                fileToUpload = new File([encBuf], fileToProcess.name, { type: fileToProcess.type });
                 encMeta      = JSON.stringify({ encrypted: true });
             }
 
             const r = await uploadFile(fileToUpload, setUploadProgress, ctrl.signal);
+
             sendFileMessage({
                 fileUrl:   r.url,
-                fileName:  file.name,   // original name
-                fileType:  file.type,   // original MIME
-                fileSize:  file.size,   // original (plaintext) size
+                fileName:  displayName,  // оригінальне ім'я для відображення
+                fileType:  displayType,  // стиснутий тип (jpeg/webp) або оригінальний
+                fileSize:  displaySize,  // оригінальний розмір для відображення
                 replyToId: replyTo?.id,
                 metadata:  encMeta,
             });
