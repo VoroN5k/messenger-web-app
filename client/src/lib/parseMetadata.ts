@@ -1,13 +1,3 @@
-/**
- * Safe Metadata Parser (client-side)
- *
- * mimeType: приймаємо будь-який audio/* —
- * MediaRecorder може повертати різні варіанти:
- *   "audio/webm;codecs=opus"
- *   "audio/webm; codecs=opus"   (з пробілом)
- *   'audio/webm;codecs="opus"'  (з лапками)
- * Жорсткий allowlist ламав відтворення якщо формат не збігався точно.
- */
 
 export interface MessageMetadata {
     waveform:  number[];
@@ -44,7 +34,7 @@ function isSafeAudioMime(mime: string): boolean {
 
 /**
  * Безпечно парсить metadata рядок.
- * Ніколи не кидає помилку — при будь-якій проблемі повертає defaults.
+ * Ніколи не кидає помилку - при будь-якій проблемі повертає defaults.
  */
 export function parseMetadata(raw: string | null | undefined): MessageMetadata {
     if (!raw) return { ...DEFAULTS };

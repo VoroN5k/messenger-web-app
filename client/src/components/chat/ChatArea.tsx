@@ -14,7 +14,7 @@ import {
 import { useMessages }   from '@/src/hooks/useMessages';
 import { useSearch }     from '@/src/hooks/useSearch';
 import { useE2E }        from '@/src/hooks/useE2E';
-import { uploadFile, isImageType, formatFileSize } from '@/src/lib/uploadFile';
+import {uploadFile, isImageType, formatFileSize, mimeFromFileName} from '@/src/lib/uploadFile';
 import { Avatar }        from './Avatar';
 import { EmojiPicker }   from './EmojiPicker';
 import { VoiceRecorder } from './VoiceRecorder';
@@ -162,7 +162,10 @@ const FileBubble = ({
 
     const { encrypted: isEncryptedFlag } = parseMetadata(msg.metadata);
     const isEncrypted = isEncryptedFlag && !!onDecrypt;
-    const displayMime = msg.fileType ?? undefined;
+    const displayMime =
+         (msg.fileType && msg.fileType !== 'application/octet-stream')
+             ? msg.fileType
+             : (mimeFromFileName(msg.fileName ?? '') ?? msg.fileType ?? undefined);
 
     // Decrypt effect — only runs once we have a valid signed URL
     useEffect(() => {
@@ -199,7 +202,7 @@ const FileBubble = ({
         : (signedSrc ?? msg.fileUrl!);
 
     // Image — open in lightbox
-    if (isImageType(displayMime) && !err) {
+    if (isImageType(displayMime, msg.fileName) && !err) {
         return (
             <>
                 <img
@@ -438,10 +441,20 @@ export default function ChatArea({
             // Зберігаємо originalFile для відображення
             let fileToProcess = file;
             let displayName   = file.name;
-            let displayType   = file.type;
             let displaySize   = file.size;
 
-            if (file.type.startsWith('image/')) {
+
+           let displayType = file.type;
+           if (!displayType || displayType === 'application/octet-stream') {
+               const derived = mimeFromFileName(file.name);
+               if (derived) displayType = derived;
+           }
+
+           if (displayType !== file.type) {
+               fileToProcess = new File([file], file.name, { type: displayType });
+           }
+
+            if (displayType.startsWith('image/')) {
                 const result = await compressImage(file, {
                     maxWidth:      1920,
                     maxHeight:     1920,
@@ -810,7 +823,7 @@ export default function ChatArea({
                     const isVoice    = !!msg.fileUrl && !!msg.fileType?.startsWith('audio/') &&
                         !!(msg.metadata || msg.fileName === 'Голосове повідомлення');
                     const hasFile    = !!msg.fileUrl && !isDeleted && !isVoice;
-                    const isImage    = hasFile && isImageType(msg.fileType);
+                    const isImage    = hasFile && isImageType(msg.fileType, msg.fileName);
                     const msgKey     = msg.id ? `msg-${msg.id}` : `tmp-${idx}`;
                     const isHovered  = hoveredKey === msgKey;
                     const isConfirm  = msg.id != null && confirmDelId === msg.id;
