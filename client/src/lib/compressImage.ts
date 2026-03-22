@@ -14,14 +14,14 @@ export async function compressImage(
         savedPercent: 0,
     };
 
-    if(!file.type.startsWith('/image') || SKIP_MIME.has(file.type)) return noOp;
+    if(!file.type.startsWith('image/') || SKIP_MIME.has(file.type)) return noOp;
 
     const {
         maxWidth = 1920,
         maxHeight = 1080,
         quality = 0.82,
         outputFormat = 'image/jpeg',
-        skipIfSmaller = 100 * 1024, // 200KB
+        skipIfSmaller = 100 * 1024, // 100KB
     } = opts;
 
     if (file.size <= skipIfSmaller) return noOp;
