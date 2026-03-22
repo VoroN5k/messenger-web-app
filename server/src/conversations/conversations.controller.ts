@@ -17,14 +17,12 @@ import {
 export class ConversationsController {
     constructor(private readonly conversationsService: ConversationsService) {}
 
-    // Read-heavy — generous limit
     @SkipThrottle()
     @Get()
     getAll(@CurrentUser('sub') userId: number) {
         return this.conversationsService.getMyConversations(userId);
     }
 
-    // Creating conversations — moderate limit
     @Throttle({ default: { ttl: 60_000, limit: 20 } })
     @Post('direct')
     createDirect(@CurrentUser('sub') userId: number, @Body() dto: CreateDirectDto) {
@@ -59,20 +57,20 @@ export class ConversationsController {
         return this.conversationsService.updateConversation(userId, id, dto);
     }
 
-    // Pagination — 120 req/min (user scrolls fast)
     @Throttle({ default: { ttl: 60_000, limit: 120 } })
     @Get(':id/messages')
     getMessages(
         @CurrentUser('sub') userId: number,
         @Param('id', ParseIntPipe) id: number,
         @Query('cursor') cursor?: string,
+        @Query('after')  after?:  string,   // ← НОВЕ: завантажити новіші повідомлення
         @Query('around') around?: string,
     ) {
         if (around) return this.conversationsService.getMessagesAround(userId, id, parseInt(around, 10));
+        if (after)  return this.conversationsService.getMessagesAfter(userId,  id, parseInt(after,  10));
         return this.conversationsService.getMessages(userId, id, cursor ? parseInt(cursor, 10) : undefined);
     }
 
-    // Media gallery — 30 req/min
     @Throttle({ default: { ttl: 60_000, limit: 30 } })
     @Get(':id/media')
     getMedia(
@@ -82,7 +80,6 @@ export class ConversationsController {
         return this.conversationsService.getMediaFiles(userId, id);
     }
 
-    // Search — 30 req/min (debounced on client anyway)
     @Throttle({ default: { ttl: 60_000, limit: 30 } })
     @Get(':id/messages/search')
     searchMessages(
@@ -152,7 +149,6 @@ export class ConversationsController {
         return this.conversationsService.forwardMessage(userId, dto.messageId, dto.targetConversationId);
     }
 
-    // E2E key distribution — 30 req/min
     @Throttle({ default: { ttl: 60_000, limit: 30 } })
     @Post(':id/sender-keys')
     setGroupKeys(

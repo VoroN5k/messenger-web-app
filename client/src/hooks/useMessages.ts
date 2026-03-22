@@ -1,9 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import api from '@/src/lib/axios';
-import { Message, Reaction, ConversationType, ConversationMember } from '@/src/types/conversation.types';
+import { Message, Reaction, ConversationType, QueuedMessage } from '@/src/types/conversation.types';
 import { useE2E } from './useE2E';
 import { useOfflineQueue } from './useOfflineQueue';
-import { QueuedMessage } from '@/src/types/conversation.types';
 
 export const useMessages = (
     conversationId:      number | undefined,
@@ -14,18 +13,19 @@ export const useMessages = (
     conversationType?:   ConversationType,
     groupMemberIds?:     number[],
 ) => {
-    const [messages,      setMessages]      = useState<Message[]>([]);
-    const [typingUsers,   setTypingUsers]   = useState<{ userId: number; nickname: string }[]>([]);
-    const [hasMore,       setHasMore]       = useState(true);
-    const [isLoadingMore, setIsLoadingMore] = useState(false);
-    const [jumpTarget,    setJumpTarget]    = useState<number | null>(null);
+    const [messages,       setMessages]       = useState<Message[]>([]);
+    const [typingUsers,    setTypingUsers]    = useState<{ userId: number; nickname: string }[]>([]);
+    const [hasMore,        setHasMore]        = useState(true);
+    const [hasMoreNewer,   setHasMoreNewer]   = useState(false);
+    const [isLoadingMore,  setIsLoadingMore]  = useState(false);
+    const [isLoadingNewer, setIsLoadingNewer] = useState(false);
+    const [jumpTarget,     setJumpTarget]     = useState<number | null>(null);
 
-    const messagesRef   = useRef<Message[]>([]);
-    const typingTimers  = useRef<Map<number, NodeJS.Timeout>>(new Map());
-    const typingTimeout = useRef<NodeJS.Timeout | null>(null);
-    // Throttle: last time we sent isTyping:true to the server
+    const messagesRef      = useRef<Message[]>([]);
+    const typingTimers     = useRef<Map<number, NodeJS.Timeout>>(new Map());
+    const typingTimeout    = useRef<NodeJS.Timeout | null>(null);
     const lastTypingSentAt = useRef<number>(0);
-    const TYPING_THROTTLE_MS = 1500; // send at most once per 1.5s
+    const TYPING_THROTTLE_MS = 1500;
 
     const e2e = useE2E();
 
@@ -44,7 +44,7 @@ export const useMessages = (
         ciphertext: string,
         senderId: number | string,
     ): Promise<string> => {
-        if (isDirect && otherUserId) return e2e.decrypt(ciphertext, otherUserId);
+        if (isDirect && otherUserId)    return e2e.decrypt(ciphertext, otherUserId);
         if (isGroup  && conversationId) return e2e.decryptFromGroup(ciphertext, conversationId, Number(senderId));
         return ciphertext;
     }, [isDirect, isGroup, otherUserId, conversationId, e2e]);
@@ -52,21 +52,36 @@ export const useMessages = (
     const looksEncrypted = (s?: string | null) =>
         !!s && s.length > 20 && /^[A-Za-z0-9_\-]+$/.test(s);
 
-    const isDuplicate = useCallback((prev: Message[], incoming: Message): boolean => {
-        if (incoming.id) return prev.some(m => m.id === incoming.id);
-        return false;
-    }, []);
+    // Shared decrypt helper (used in all fetch paths)
+    const decryptMessages = useCallback(async (raw: Message[]): Promise<Message[]> => {
+        return Promise.all(
+            raw.map(async (msg) => {
+                let result = msg;
+                if (msg.content && looksEncrypted(msg.content)) {
+                    result = { ...result, content: await decryptContent(msg.content, msg.senderId) };
+                }
+                if (msg.replyTo?.content && looksEncrypted(msg.replyTo.content)) {
+                    const plain = await decryptContent(msg.replyTo.content, msg.senderId);
+                    result = { ...result, replyTo: { ...result.replyTo!, content: plain } };
+                }
+                return result;
+            }),
+        );
+    }, [decryptContent]);
 
+    // Initial load
     useEffect(() => {
         if (!conversationId) {
             setMessages([]);
             setTypingUsers([]);
             setHasMore(true);
+            setHasMoreNewer(false);
             return;
         }
 
         setMessages([]);
         setTypingUsers([]);
+        setHasMoreNewer(false);
 
         const ctrl = new AbortController();
 
@@ -81,20 +96,7 @@ export const useMessages = (
                     { signal: ctrl.signal },
                 );
 
-                const decrypted = await Promise.all(
-                    res.data.map(async (msg: Message) => {
-                        let result = msg;
-                        if (msg.content && looksEncrypted(msg.content)) {
-                            result = { ...result, content: await decryptContent(msg.content, msg.senderId) };
-                        }
-                        if (msg.replyTo?.content && looksEncrypted(msg.replyTo.content)) {
-                            const replyPlain = await decryptContent(msg.replyTo.content, msg.senderId);
-                            result = { ...result, replyTo: { ...result.replyTo!, content: replyPlain } };
-                        }
-                        return result;
-                    })
-                );
-
+                const decrypted = await decryptMessages(res.data);
                 setMessages(decrypted);
                 setHasMore(res.data.length >= 30);
                 if (socket) socket.emit('markAsRead', { conversationId });
@@ -110,6 +112,17 @@ export const useMessages = (
         return () => ctrl.abort();
     }, [conversationId, socket]);
 
+    const deduplicateMessages = (msgs: Message[]): Message[] => {
+        const seen = new Set<number | string>();
+        return msgs.filter((m) => {
+            const id = m.id ?? m._queueId;
+            if (!id || seen.has(id)) return false;
+            seen.add(id);
+            return true;
+        });
+    };
+
+    // Load older messages (scroll UP)
     const loadMoreMessages = useCallback(async () => {
         if (!conversationId || isLoadingMore || !hasMore || !messagesRef.current.length) return;
         setIsLoadingMore(true);
@@ -120,28 +133,42 @@ export const useMessages = (
             );
             if (res.data.length < 30) setHasMore(false);
 
-            const decrypted = await Promise.all(
-                res.data.map(async (msg: Message) => {
-                    let result = msg;
-                    if (msg.content && looksEncrypted(msg.content)) {
-                        result = { ...result, content: await decryptContent(msg.content, msg.senderId) };
-                    }
-                    if (msg.replyTo?.content && looksEncrypted(msg.replyTo.content)) {
-                        const replyPlain = await decryptContent(msg.replyTo.content, msg.senderId);
-                        result = { ...result, replyTo: { ...result.replyTo!, content: replyPlain } };
-                    }
-                    return result;
-                })
-            );
-
-            setMessages((prev) => [...decrypted, ...prev]);
+            const decrypted = await decryptMessages(res.data);
+            setMessages((prev) => deduplicateMessages([...decrypted, ...prev]));
         } catch (e) {
             console.error('loadMore:', e);
         } finally {
             setIsLoadingMore(false);
         }
-    }, [conversationId, isLoadingMore, hasMore, decryptContent]);
+    }, [conversationId, isLoadingMore, hasMore, decryptMessages]);
 
+    // Load newer messages (scroll DOWN after jump)
+    const loadNewerMessages = useCallback(async () => {
+        if (!conversationId || isLoadingNewer || !hasMoreNewer || !messagesRef.current.length) return;
+        setIsLoadingNewer(true);
+        try {
+            const lastId = messagesRef.current[messagesRef.current.length - 1].id;
+            const res    = await api.get(
+                `/conversations/${conversationId}/messages?after=${lastId}`,
+            );
+
+            if (!res.data.length) {
+                setHasMoreNewer(false);
+                return;
+            }
+
+            if (res.data.length < 30) setHasMoreNewer(false);
+
+            const decrypted = await decryptMessages(res.data);
+            setMessages((prev) => deduplicateMessages([...prev, ...decrypted]));
+        } catch (e) {
+            console.error('loadNewer:', e);
+        } finally {
+            setIsLoadingNewer(false);
+        }
+    }, [conversationId, isLoadingNewer, hasMoreNewer, decryptMessages]);
+
+    // Socket events
     useEffect(() => {
         if (!socket) return;
 
@@ -153,8 +180,8 @@ export const useMessages = (
                 decryptedMsg = { ...decryptedMsg, content: await decryptContent(msg.content, msg.senderId) };
             }
             if (msg.replyTo?.content && looksEncrypted(msg.replyTo.content)) {
-                const replyPlain = await decryptContent(msg.replyTo.content, msg.senderId);
-                decryptedMsg = { ...decryptedMsg, replyTo: { ...decryptedMsg.replyTo!, content: replyPlain } };
+                const plain = await decryptContent(msg.replyTo.content, msg.senderId);
+                decryptedMsg = { ...decryptedMsg, replyTo: { ...decryptedMsg.replyTo!, content: plain } };
             }
 
             onDecryptedMessage?.(decryptedMsg);
@@ -174,6 +201,9 @@ export const useMessages = (
                     next[idx] = { ...decryptedMsg, isPending: false, _queueId: undefined };
                     return next;
                 }
+
+                // New incoming message while in jump window → we're now at the live edge
+                setHasMoreNewer(false);
                 return [...prev, decryptedMsg];
             });
 
@@ -298,6 +328,7 @@ export const useMessages = (
         return () => { socket.off('connect', onConnect); };
     }, [socket, flush]);
 
+    // sendMessage
     const sendMessage = useCallback(async (content: string, replyToId?: number) => {
         if (!content.trim() || !conversationId || !currentUserId) return;
 
@@ -313,8 +344,7 @@ export const useMessages = (
             setMessages((prev) => [
                 ...prev,
                 {
-                    content,
-                    senderId: currentUserId, conversationId,
+                    content, senderId: currentUserId, conversationId,
                     createdAt: new Date().toISOString(),
                     deletedAt: null, editedAt: null, reactions: [],
                     replyToId: replyToId ?? null, isRead: false,
@@ -329,16 +359,11 @@ export const useMessages = (
         setMessages((prev) => [
             ...prev,
             {
-                content,
-                senderId:      currentUserId,
-                conversationId,
-                createdAt:     new Date().toISOString(),
-                deletedAt:     null,
-                editedAt:      null,
-                reactions:     [],
-                replyToId:     replyToId ?? null,
-                isRead:        false,
-                _queueId:      tmpId,
+                content, senderId: currentUserId, conversationId,
+                createdAt: new Date().toISOString(),
+                deletedAt: null, editedAt: null, reactions: [],
+                replyToId: replyToId ?? null, isRead: false,
+                _queueId: tmpId,
             },
         ]);
 
@@ -392,39 +417,61 @@ export const useMessages = (
 
     const notifyTyping = useCallback(() => {
         if (!socket || !conversationId) return;
-
         const now = Date.now();
-
-        // Throttle: skip if we sent isTyping:true recently
         if (now - lastTypingSentAt.current < TYPING_THROTTLE_MS) return;
-
         lastTypingSentAt.current = now;
         socket.emit('typing', { conversationId, isTyping: true });
-
-        // Schedule isTyping:false after 2.5s of silence
         if (typingTimeout.current) clearTimeout(typingTimeout.current);
         typingTimeout.current = setTimeout(() => {
             socket.emit('typing', { conversationId, isTyping: false });
-            lastTypingSentAt.current = 0; // reset so next keystroke fires immediately
+            lastTypingSentAt.current = 0;
         }, 2500);
     }, [socket, conversationId]);
 
+    // Jump to message
     const jumpToMessage = useCallback(async (messageId: number) => {
         if (messagesRef.current.some((m) => m.id === messageId)) {
             setJumpTarget(messageId);
-        } else {
-            try {
-                const res = await api.get(
-                    `/conversations/${conversationId}/messages?around=${messageId}`,
-                );
-                setMessages(res.data);
-                setHasMore(true);
-                setJumpTarget(messageId);
-            } catch (e) {
-                console.error('jumpToMessage:', e);
-            }
+            return;
         }
-    }, [conversationId]);
+
+        if (isGroup && conversationId && groupMemberIds?.length) {
+            await e2e.prefetchGroupSenderKeys(conversationId, groupMemberIds).catch(() => {});
+        }
+
+        try {
+            const res = await api.get(
+                `/conversations/${conversationId}/messages?around=${messageId}`,
+            );
+
+            const decrypted = await decryptMessages(res.data);
+            setMessages(decrypted);
+            setHasMore(true);        // older messages exist above
+            setHasMoreNewer(true);   // newer messages exist below the jump point
+            setJumpTarget(messageId);
+        } catch (e) {
+            console.error('jumpToMessage:', e);
+        }
+    }, [conversationId, decryptMessages, isGroup, groupMemberIds, e2e]);
+
+    const resetToLatest = useCallback(async () => {
+        if (!conversationId) return;
+
+        if (isGroup && groupMemberIds?.length) {
+            await e2e.prefetchGroupSenderKeys(conversationId, groupMemberIds).catch(() => {});
+        }
+
+        try {
+            const res = await api.get(`/conversations/${conversationId}/messages`);
+            const decrypted = await decryptMessages(res.data);
+            setMessages(decrypted);
+            setHasMore(res.data.length >= 30);
+            setHasMoreNewer(false);  // ← тепер на живому краї
+            if (socket) socket.emit('markAsRead', { conversationId });
+        } catch (e) {
+            console.error('resetToLatest:', e);
+        }
+    }, [conversationId, decryptMessages, socket, isGroup, groupMemberIds, e2e]);
 
     const clearJumpTarget = useCallback(() => setJumpTarget(null), []);
 
@@ -437,9 +484,13 @@ export const useMessages = (
     }, []);
 
     return {
-        messages, typingUsers, hasMore, isLoadingMore, jumpTarget,
+        messages, typingUsers,
+        hasMore, hasMoreNewer,
+        isLoadingMore, isLoadingNewer,
+        jumpTarget,
         sendMessage, sendFileMessage, deleteMessage, editMessage,
-        toggleReaction, notifyTyping, loadMoreMessages,
+        toggleReaction, notifyTyping,
+        loadMoreMessages, loadNewerMessages, resetToLatest,
         jumpToMessage, clearJumpTarget, forwardMessage,
         isOnline, offlineQueueCount: offlineQueue.length,
     };

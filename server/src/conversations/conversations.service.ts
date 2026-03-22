@@ -384,6 +384,23 @@ export class ConversationsService {
         );
     }
 
+    async getMessagesAfter(userId: number, conversationId: number, after: number) {
+        await this.assertMember(userId, conversationId);
+
+        const msgs = await this.prisma.message.findMany({
+            where:   { conversationId, id: { gt: after } },
+            select:  MSG_SELECT,
+            take:    30,
+            orderBy: { id: 'asc' },   // ASC — від старішого до новішого
+        });
+
+        const otherMembersLastRead = await this.getOtherMembersLastRead(conversationId, userId);
+
+        return msgs.map((msg) =>
+            this.mapMessageWithRead(msg, userId, otherMembersLastRead),
+        );
+    }
+
     async searchMessages(userId: number, conversationId: number, query: string) {
         await this.assertMember(userId, conversationId);
         const q = query.trim();

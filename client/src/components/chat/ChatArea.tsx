@@ -3,13 +3,13 @@
 import React, {
     useState, useRef, useEffect, UIEvent, useCallback,
 } from 'react';
-import { Paperclip, Loader2, Pin, PinOff } from 'lucide-react';
+import { Paperclip, Loader2, Pin, PinOff, ArrowDown } from 'lucide-react';
 
-import { useMessages }   from '@/src/hooks/useMessages';
-import { useSearch }     from '@/src/hooks/useSearch';
-import { useE2E }        from '@/src/hooks/useE2E';
-import { uploadFile, mimeFromFileName }    from '@/src/lib/uploadFile';
-import { compressImage } from '@/src/lib/compressImage';
+import { useMessages }              from '@/src/hooks/useMessages';
+import { useSearch }                from '@/src/hooks/useSearch';
+import { useE2E }                   from '@/src/hooks/useE2E';
+import { uploadFile, mimeFromFileName } from '@/src/lib/uploadFile';
+import { compressImage }            from '@/src/lib/compressImage';
 
 import { ChatHeader }   from './ChatHeader';
 import { SearchPanel }  from './SearchPanel';
@@ -66,7 +66,7 @@ export default function ChatArea({
     const lastMsgIdRef   = useRef<string | number | null>(null);
     const msgRefsMap     = useRef<Record<number, HTMLDivElement | null>>({});
 
-    // Conversation helpers
+    // Conversation-level helpers
     const otherUserId = conversation?.type === 'DIRECT'
         ? conversation.members.find(m => m.userId !== currentUserId)?.userId
         : undefined;
@@ -75,11 +75,11 @@ export default function ChatArea({
         ? conversation.members.map(m => m.userId)
         : undefined;
 
-    const myMember = conversation?.members.find(m => m.userId === currentUserId);
-    const canPost  = conversation?.type !== 'CHANNEL' || myMember?.role !== 'MEMBER';
-    const isGroup  = conversation?.type === 'GROUP';
-    const isChannel= conversation?.type === 'CHANNEL';
-    const canPin   = myMember?.role === 'OWNER' || myMember?.role === 'ADMIN';
+    const myMember  = conversation?.members.find(m => m.userId === currentUserId);
+    const canPost   = conversation?.type !== 'CHANNEL' || myMember?.role !== 'MEMBER';
+    const isGroup   = conversation?.type === 'GROUP';
+    const isChannel = conversation?.type === 'CHANNEL';
+    const canPin    = myMember?.role === 'OWNER' || myMember?.role === 'ADMIN';
 
     // E2E
     const e2e = useE2E();
@@ -92,9 +92,13 @@ export default function ChatArea({
 
     // Messages hook
     const {
-        messages, typingUsers, hasMore, isLoadingMore, jumpTarget,
+        messages, typingUsers,
+        hasMore, hasMoreNewer,
+        isLoadingMore, isLoadingNewer,
+        jumpTarget,
         sendMessage, sendFileMessage, deleteMessage, editMessage, toggleReaction,
-        notifyTyping, loadMoreMessages, jumpToMessage, clearJumpTarget,
+        notifyTyping, loadMoreMessages, loadNewerMessages, resetToLatest,
+        jumpToMessage, clearJumpTarget,
         isOnline, offlineQueueCount,
     } = useMessages(
         conversation?.id, currentUserId, socket, otherUserId,
@@ -103,8 +107,12 @@ export default function ChatArea({
             onConversationUpdate?.({
                 id: msg.conversationId,
                 lastMessage: {
-                    id: msg.id, content: msg.content, senderId: Number(msg.senderId),
-                    createdAt: msg.createdAt as string, fileType: msg.fileType ?? null, fileUrl: msg.fileUrl ?? null,
+                    id:        msg.id,
+                    content:   msg.content,
+                    senderId:  Number(msg.senderId),
+                    createdAt: msg.createdAt as string,
+                    fileType:  msg.fileType ?? null,
+                    fileUrl:   msg.fileUrl  ?? null,
                 },
             });
         },
@@ -114,21 +122,23 @@ export default function ChatArea({
 
     // Search hook
     const {
-        query, setQuery, results, isSearching, isOpen: isSearchOpen,
-        setIsOpen: setSearchOpen, close: closeSearch, loadedCount,
+        query, setQuery, results, isSearching,
+        isOpen: isSearchOpen, setIsOpen: setSearchOpen,
+        close: closeSearch, loadedCount,
     } = useSearch(conversation?.id, otherUserId);
 
-    // Auto-scroll
+    // Auto-scroll to bottom on new messages (skip when in jump mode)
     useEffect(() => {
         if (!messages.length) return;
         const last = messages[messages.length - 1];
         const id   = last.id ?? (last.createdAt as string);
-        if (id !== lastMsgIdRef.current && !jumpTarget) {
+        if (id !== lastMsgIdRef.current && !jumpTarget && !hasMoreNewer) {
             messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
             lastMsgIdRef.current = id;
         }
     }, [messages]);
 
+    // Mark as read when other user's message arrives
     useEffect(() => {
         if (!messages.length || !conversation) return;
         const last = messages[messages.length - 1];
@@ -137,6 +147,7 @@ export default function ChatArea({
         }
     }, [messages]);
 
+    // Scroll to jumped message and clear highlight after 2.5s
     useEffect(() => {
         if (jumpTarget === null) return;
         const el = msgRefsMap.current[jumpTarget];
@@ -147,49 +158,62 @@ export default function ChatArea({
         }
     }, [jumpTarget, messages]);
 
+    // Reset search navigation when results change
     useEffect(() => { setSearchNavIdx(0); }, [results]);
 
-    // Keyboard shortcuts
+    // Keyboard shortcuts - Escape closes edit / reply / search
     useEffect(() => {
-        const h = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') {
-                if (editingId !== null)  cancelEdit();
-                else if (replyTo)        setReplyTo(null);
-                else if (isSearchOpen)   closeSearch();
-            }
+        const handler = (e: KeyboardEvent) => {
+            if (e.key !== 'Escape') return;
+            if (editingId !== null) cancelEdit();
+            else if (replyTo)       setReplyTo(null);
+            else if (isSearchOpen)  closeSearch();
         };
-        document.addEventListener('keydown', h);
-        return () => document.removeEventListener('keydown', h);
+        document.addEventListener('keydown', handler);
+        return () => document.removeEventListener('keydown', handler);
     }, [editingId, replyTo, isSearchOpen]);
 
+    // Focus edit input when entering edit mode
     useEffect(() => {
         if (editingId !== null) {
             editInputRef.current?.focus();
-            const l = editInputRef.current?.value.length ?? 0;
-            editInputRef.current?.setSelectionRange(l, l);
+            const len = editInputRef.current?.value.length ?? 0;
+            editInputRef.current?.setSelectionRange(len, len);
         }
     }, [editingId]);
 
+    // Focus search input when panel opens
     useEffect(() => {
         if (isSearchOpen) setTimeout(() => searchInputRef.current?.focus(), 50);
     }, [isSearchOpen]);
 
-    // Infinite scroll
+    // Bidirectional infinite scroll:
+    // - scroll up triggers loading older messages (cursor-based)
+    // - scroll down triggers loading newer messages (only when in jump mode)
     const handleScroll = async (e: UIEvent<HTMLDivElement>) => {
-        const t = e.currentTarget;
-        if (t.scrollTop <= 1 && hasMore && !isLoadingMore) {
-            const prev = t.scrollHeight;
+        const el = e.currentTarget;
+
+        if (el.scrollTop <= 1 && hasMore && !isLoadingMore) {
+            const prevHeight = el.scrollHeight;
             await loadMoreMessages();
-            requestAnimationFrame(() => { t.scrollTop = t.scrollHeight - prev; });
+            requestAnimationFrame(() => { el.scrollTop = el.scrollHeight - prevHeight; });
+            return;
+        }
+
+        const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+        if (distanceFromBottom <= 100 && hasMoreNewer && !isLoadingNewer) {
+            await loadNewerMessages();
         }
     };
 
-    // File upload
+    // File upload with optional image compression and E2E encryption
     const handleFileUpload = useCallback(async (file: File) => {
         if (!file || !conversation) return;
-        setUploadError(null); setUploadProgress(0);
+        setUploadError(null);
+        setUploadProgress(0);
         const ctrl = new AbortController();
         abortRef.current = ctrl;
+
         try {
             let fileToProcess = file;
             let displayName   = file.name;
@@ -205,7 +229,13 @@ export default function ChatArea({
             }
 
             if (displayType.startsWith('image/')) {
-                const result = await compressImage(file, { maxWidth: 1920, maxHeight: 1920, quality: 0.75, outputFormat: 'image/jpeg', skipIfSmaller: 100 * 1024 });
+                const result = await compressImage(file, {
+                    maxWidth:      1920,
+                    maxHeight:     1920,
+                    quality:       0.75,
+                    outputFormat:  'image/jpeg',
+                    skipIfSmaller: 100 * 1024,
+                });
                 if (result.wasCompressed) {
                     fileToProcess = result.file;
                     displayType   = result.file.type;
@@ -229,25 +259,43 @@ export default function ChatArea({
             }
 
             const r = await uploadFile(fileToUpload, setUploadProgress, ctrl.signal);
-            sendFileMessage({ fileUrl: r.url, fileName: displayName, fileType: displayType, fileSize: displaySize, replyToId: replyTo?.id, metadata: encMeta });
+            sendFileMessage({
+                fileUrl:   r.url,
+                fileName:  displayName,
+                fileType:  displayType,
+                fileSize:  displaySize,
+                replyToId: replyTo?.id,
+                metadata:  encMeta,
+            });
             setReplyTo(null);
         } catch (err: any) {
             if (err.message !== 'Upload cancelled') setUploadError(err.message ?? 'Помилка');
-        } finally { setUploadProgress(null); abortRef.current = null; }
+        } finally {
+            setUploadProgress(null);
+            abortRef.current = null;
+        }
     }, [conversation, sendFileMessage, replyTo, otherUserId, e2e]);
 
-    // Voice message
+    // Voice message - encrypts blob before upload
     const mimeToExtension = (m: string) => {
-        if (m === 'audio/webm') return 'webm'; if (m === 'audio/ogg') return 'ogg';
-        if (m === 'audio/mp4')  return 'mp4';  if (m === 'audio/mpeg') return 'mp3';
-        if (m === 'audio/wav')  return 'wav';  return 'webm';
+        if (m === 'audio/webm') return 'webm';
+        if (m === 'audio/ogg')  return 'ogg';
+        if (m === 'audio/mp4')  return 'mp4';
+        if (m === 'audio/mpeg') return 'mp3';
+        if (m === 'audio/wav')  return 'wav';
+        return 'webm';
     };
 
-    const sendVoiceMessage = useCallback(async (blob: Blob, waveform: number[], duration: number, mimeType: string) => {
+    const sendVoiceMessage = useCallback(async (
+        blob: Blob, waveform: number[], duration: number, mimeType: string,
+    ) => {
         if (!conversation) return;
-        setShowVoice(false); setUploadError(null); setUploadProgress(0);
+        setShowVoice(false);
+        setUploadError(null);
+        setUploadProgress(0);
         const ctrl = new AbortController();
         abortRef.current = ctrl;
+
         try {
             const baseMeta = { waveform, duration, mimeType };
             let fileToUpload: File;
@@ -257,25 +305,34 @@ export default function ChatArea({
                 const buf = await blob.arrayBuffer();
                 const enc = await e2e.encryptBinary(buf, otherUserId);
                 fileToUpload = new File([enc], `voice.${mimeToExtension(mimeType)}`, { type: mimeType });
-                metaObj = { ...baseMeta, encrypted: true };
+                metaObj      = { ...baseMeta, encrypted: true };
             } else if (conversation?.type === 'GROUP' && conversation?.id) {
                 const buf = await blob.arrayBuffer();
                 const enc = await e2e.encryptBinaryForGroup(buf, conversation.id);
                 fileToUpload = new File([enc], `voice.${mimeToExtension(mimeType)}`, { type: mimeType });
-                metaObj = { ...baseMeta, encrypted: true };
+                metaObj      = { ...baseMeta, encrypted: true };
             } else {
                 fileToUpload = new File([blob], `voice.${mimeToExtension(mimeType)}`, { type: mimeType });
-                metaObj = baseMeta;
+                metaObj      = baseMeta;
             }
 
             const r = await uploadFile(fileToUpload, setUploadProgress, ctrl.signal);
-            sendFileMessage({ fileUrl: r.url, fileName: 'Голосове повідомлення', fileType: mimeType, fileSize: blob.size, metadata: JSON.stringify(metaObj) });
+            sendFileMessage({
+                fileUrl:  r.url,
+                fileName: 'Голосове повідомлення',
+                fileType: mimeType,
+                fileSize: blob.size,
+                metadata: JSON.stringify(metaObj),
+            });
         } catch (err: any) {
             if (err.message !== 'Upload cancelled') setUploadError(err.message ?? 'Помилка');
-        } finally { setUploadProgress(null); abortRef.current = null; }
+        } finally {
+            setUploadProgress(null);
+            abortRef.current = null;
+        }
     }, [conversation, sendFileMessage, otherUserId, e2e]);
 
-    // Pin / Forward
+    // Socket-based pin / unpin
     const pinMessage = useCallback((msgId: number) => {
         if (!conversation) return;
         socket?.emit('pinMessage', { conversationId: conversation.id, messageId: msgId });
@@ -286,30 +343,41 @@ export default function ChatArea({
         socket?.emit('unpinMessage', { conversationId: conversation.id });
     }, [socket, conversation]);
 
+    // Socket-based forward
     const forwardMessage = useCallback((msgId: number, targetConvId: number) => {
         socket?.emit('forwardMessage', { messageId: msgId, targetConversationId: targetConvId });
     }, [socket]);
 
-    // Drag & drop
+    // Drag-and-drop file upload
     const onDragEnter = (e: React.DragEvent) => {
-        e.preventDefault(); setDragCounter(c => c + 1);
+        e.preventDefault();
+        setDragCounter(c => c + 1);
         if (e.dataTransfer.types.includes('Files')) setIsDragging(true);
     };
     const onDragLeave = (e: React.DragEvent) => {
         e.preventDefault();
-        setDragCounter(c => { const n = c - 1; if (n <= 0) { setIsDragging(false); return 0; } return n; });
+        setDragCounter(c => {
+            const n = c - 1;
+            if (n <= 0) { setIsDragging(false); return 0; }
+            return n;
+        });
     };
     const onDrop = (e: React.DragEvent) => {
-        e.preventDefault(); setIsDragging(false); setDragCounter(0);
-        const f = e.dataTransfer.files[0]; if (f) handleFileUpload(f);
+        e.preventDefault();
+        setIsDragging(false);
+        setDragCounter(0);
+        const f = e.dataTransfer.files[0];
+        if (f) handleFileUpload(f);
     };
 
     // Edit helpers
     const startEdit = (msg: Message) => {
         if (!msg.id || msg.deletedAt || msg.fileUrl) return;
         if (Date.now() - new Date(msg.createdAt).getTime() > EDIT_WINDOW_MS) return;
-        setEditingId(msg.id); setEditingContent(msg.content);
-        setConfirmDelId(null); setPickerKey(null);
+        setEditingId(msg.id);
+        setEditingContent(msg.content);
+        setConfirmDelId(null);
+        setPickerKey(null);
     };
     const cancelEdit = () => { setEditingId(null); setEditingContent(''); };
     const submitEdit = (id: number) => {
@@ -317,7 +385,7 @@ export default function ChatArea({
         cancelEdit();
     };
 
-    // Search navigation
+    // Search result navigation
     const navSearch = (dir: 'prev' | 'next') => {
         if (!results.length) return;
         const next = dir === 'next'
@@ -332,10 +400,11 @@ export default function ChatArea({
         e.preventDefault();
         if (!inputValue.trim()) return;
         sendMessage(inputValue.trim(), replyTo?.id);
-        setInputValue(''); setReplyTo(null);
+        setInputValue('');
+        setReplyTo(null);
     };
 
-    // Empty state
+    // Empty state - no conversation selected
     if (!conversation) {
         return (
             <div className="flex-1 flex items-center justify-center bg-slate-50 dark:bg-slate-900 text-slate-400 font-medium flex-col gap-3 transition-colors duration-200">
@@ -345,25 +414,41 @@ export default function ChatArea({
         );
     }
 
-    // Render
     return (
         <main
             className="flex-1 flex flex-col bg-slate-50 dark:bg-slate-900 relative min-w-0 transition-colors duration-200"
-            onDragEnter={onDragEnter} onDragLeave={onDragLeave}
-            onDragOver={(e) => e.preventDefault()} onDrop={onDrop}
+            onDragEnter={onDragEnter}
+            onDragLeave={onDragLeave}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={onDrop}
         >
-            {/* Drag overlay */}
+            {/* Drag-and-drop overlay */}
             {isDragging && (
                 <div className="absolute inset-0 z-50 bg-indigo-500/10 backdrop-blur-[2px] flex items-center justify-center pointer-events-none">
                     <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl px-10 py-8 flex flex-col items-center gap-3 border-2 border-dashed border-indigo-400">
                         <Paperclip size={36} className="text-indigo-400" />
-                        <p className="text-indigo-600 dark:text-indigo-400 font-semibold text-lg">Відпустіть, щоб надіслати файл</p>
+                        <p className="text-indigo-600 dark:text-indigo-400 font-semibold text-lg">
+                            Відпустіть, щоб надіслати файл
+                        </p>
                         <p className="text-slate-400 text-sm">Максимум 10 МБ</p>
                     </div>
                 </div>
             )}
 
-            {/* Header */}
+            {/* Floating "back to latest" button - shown outside scroll container so it stays visible */}
+            {hasMoreNewer && (
+                <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-20">
+                    <button
+                        onClick={resetToLatest}
+                        className="flex items-center gap-1.5 px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-semibold rounded-full shadow-lg transition-all cursor-pointer animate-bounce"
+                    >
+                        <ArrowDown size={13} />
+                        Перейти до останніх
+                    </button>
+                </div>
+            )}
+
+            {/* Chat header */}
             <ChatHeader
                 conversation={conversation}
                 currentUser={currentUser}
@@ -374,7 +459,7 @@ export default function ChatArea({
                 onStartCall={onStartCall}
             />
 
-            {/* Pinned message */}
+            {/* Pinned message banner */}
             {conversation.pinnedMessage && (
                 <div className="bg-amber-50 dark:bg-amber-900/20 border-b border-amber-100 dark:border-amber-900/40 px-4 py-2 flex items-center gap-2 z-10">
                     <Pin size={13} className="text-amber-500 shrink-0" />
@@ -390,7 +475,11 @@ export default function ChatArea({
                         </p>
                     </button>
                     {canPin && (
-                        <button onClick={unpinMessage} className="p-1 text-slate-400 hover:text-red-500 cursor-pointer transition-colors" title="Відкріпити">
+                        <button
+                            onClick={unpinMessage}
+                            className="p-1 text-slate-400 hover:text-red-500 cursor-pointer transition-colors"
+                            title="Відкріпити"
+                        >
                             <PinOff size={13} />
                         </button>
                     )}
@@ -414,8 +503,13 @@ export default function ChatArea({
                 />
             )}
 
-            {/* Messages list */}
-            <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-5 py-5 space-y-1">
+            {/* Scrollable message list */}
+            <div
+                ref={scrollRef}
+                onScroll={handleScroll}
+                className="flex-1 overflow-y-auto px-5 py-5 space-y-1"
+            >
+                {/* Spinner for older messages loading at the top */}
                 {isLoadingMore && (
                     <div className="flex justify-center py-2">
                         <Loader2 className="w-5 h-5 animate-spin text-violet-400" />
@@ -456,10 +550,18 @@ export default function ChatArea({
                         onDeleteMessage={deleteMessage}
                     />
                 ))}
+
+                {/* Spinner for newer messages loading at the bottom */}
+                {isLoadingNewer && (
+                    <div className="flex justify-center py-2">
+                        <Loader2 className="w-5 h-5 animate-spin text-violet-400" />
+                    </div>
+                )}
+
                 <div ref={messagesEndRef} />
             </div>
 
-            {/* Input + banners */}
+            {/* Input bar with reply preview, upload progress and typing indicator */}
             <ChatInput
                 canPost={!!canPost}
                 inputValue={inputValue}
@@ -483,7 +585,7 @@ export default function ChatArea({
                 notifyTyping={notifyTyping}
             />
 
-            {/* Modals */}
+            {/* Forward modal */}
             {forwardMsg && (
                 <ForwardModal
                     conversations={conversations}
@@ -491,6 +593,8 @@ export default function ChatArea({
                     onClose={() => setForwardMsg(null)}
                 />
             )}
+
+            {/* Media attachments panel */}
             {showMedia && conversation && (
                 <MediaPanel
                     conversationId={conversation.id}

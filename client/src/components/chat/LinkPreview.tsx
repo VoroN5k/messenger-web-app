@@ -26,8 +26,9 @@ interface Props {
 }
 
 export function LinkPreview({ url, isMe }: Props) {
+    // undefined = іще завантажується; null = завантажилось, але OG-даних немає або помилка
     const [data, setData] = useState<OgData | null | undefined>(
-        cache.has(url) ? cache.get(url) : undefined
+        cache.has(url) ? cache.get(url) : undefined,
     );
 
     useEffect(() => {
@@ -38,48 +39,76 @@ export function LinkPreview({ url, isMe }: Props) {
                 cache.set(url, d);
                 setData(d);
             })
-            .catch(() => { cache.set(url, null); setData(null); });
+            .catch(() => {
+                cache.set(url, null);
+                setData(null);
+            });
     }, [url]);
 
-    if (!data) return null;
-    if (!data.title && !data.description && !data.image) return null;
+    // Ще завантажується — не показуємо нічого (уникаємо мерехтіння)
+    if (data === undefined) return null;
+
+    // OG-дані є і містять хоч щось корисне
+    if (data && (data.title || data.description || data.image)) {
+        return (
+            <a
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`mt-2 flex flex-col gap-1.5 rounded-xl overflow-hidden border cursor-pointer
+                    hover:opacity-90 transition-opacity no-underline
+                    ${isMe
+                    ? 'border-white/20 bg-white/10'
+                    : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/40'}`}
+            >
+                {data.image && (
+                    <img
+                        src={data.image}
+                        alt={data.title ?? ''}
+                        className="w-full max-h-32 object-cover"
+                        onError={e => (e.currentTarget.style.display = 'none')}
+                    />
+                )}
+                <div className="px-3 py-2 flex flex-col gap-0.5">
+                    {data.siteName && (
+                        <div className="flex items-center gap-1">
+                            <ExternalLink size={10} className={isMe ? 'text-indigo-200' : 'text-slate-400'} />
+                            <span className={`text-[10px] font-medium uppercase tracking-wide truncate
+                                ${isMe ? 'text-indigo-200' : 'text-slate-400'}`}>
+                                {data.siteName}
+                            </span>
+                        </div>
+                    )}
+                    {data.title && (
+                        <p className={`text-xs font-semibold leading-tight line-clamp-2
+                            ${isMe ? 'text-white' : 'text-slate-700 dark:text-slate-200'}`}>
+                            {data.title}
+                        </p>
+                    )}
+                    {data.description && (
+                        <p className={`text-[11px] line-clamp-2 leading-snug
+                            ${isMe ? 'text-indigo-200' : 'text-slate-500 dark:text-slate-400'}`}>
+                            {data.description}
+                        </p>
+                    )}
+                </div>
+            </a>
+        );
+    }
 
     return (
-        <a href={url} target="_blank" rel="noopener noreferrer"
-           className={`mt-2 flex flex-col gap-1.5 rounded-xl overflow-hidden border cursor-pointer
-               hover:opacity-90 transition-opacity no-underline
-               ${isMe
-               ? 'border-white/20 bg-white/10'
-               : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/40'}`}>
-
-            {data.image && (
-                <img src={data.image} alt={data.title ?? ''} className="w-full max-h-32 object-cover"
-                     onError={e => (e.currentTarget.style.display = 'none')} />
-            )}
-
-            <div className="px-3 py-2 flex flex-col gap-0.5">
-                {data.siteName && (
-                    <div className="flex items-center gap-1">
-                        <ExternalLink size={10} className={isMe ? 'text-indigo-200' : 'text-slate-400'} />
-                        <span className={`text-[10px] font-medium uppercase tracking-wide truncate
-                            ${isMe ? 'text-indigo-200' : 'text-slate-400'}`}>
-                            {data.siteName}
-                        </span>
-                    </div>
-                )}
-                {data.title && (
-                    <p className={`text-xs font-semibold leading-tight line-clamp-2
-                        ${isMe ? 'text-white' : 'text-slate-700 dark:text-slate-200'}`}>
-                        {data.title}
-                    </p>
-                )}
-                {data.description && (
-                    <p className={`text-[11px] line-clamp-2 leading-snug
-                        ${isMe ? 'text-indigo-200' : 'text-slate-500 dark:text-slate-400'}`}>
-                        {data.description}
-                    </p>
-                )}
-            </div>
+        <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`mt-1.5 inline-flex items-center gap-1 text-[11px] underline underline-offset-2 break-all
+                ${isMe ? 'text-indigo-200 hover:text-white' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
+        >
+            <ExternalLink size={10} className="shrink-0" />
+            {(() => {
+                try { return new URL(url).hostname.replace(/^www\./, ''); }
+                catch { return url.slice(0, 40); }
+            })()}
         </a>
     );
 }

@@ -2,12 +2,14 @@ import {Injectable, Logger} from "@nestjs/common";
 import {OgData} from "./interfaces/og.interface.js";
 import {safeFetch, SsrfError} from "./guards/ssrf.guard.js";
 
+const SUCCESS_TTL_MS = 10 * 60 * 1000; // 10 хвилин — успішні результати
+const ERROR_TTL_MS   =  2 * 60 * 1000; // 2 хвилини — помилки/timeout (дозволяє retry пізніше)
+
 @Injectable()
 export class OgService {
     private readonly logger = new Logger(OgService.name);
 
-    private readonly cache = new Map<string, { data: OgData | null; ts: number }>();
-    private readonly TTL = 10 * 60 * 1000; // 10 хвилин
+    private readonly cache = new Map<string, { data: OgData | null; ts: number; ttl: number }>();
 
     async fetch(rawUrl: string): Promise<OgData | null> {
         let url: URL;
@@ -21,55 +23,61 @@ export class OgService {
 
         const key = url.toString();
 
-        // Cache
         const cached = this.cache.get(key);
-        if ( cached && Date.now() - cached.ts < this.TTL) return cached.data;
+        if (cached && Date.now() - cached.ts < cached.ttl) return cached.data;
 
-        // Safe fetch
         try {
             const res = await safeFetch(key, {
-                timeoutMs:    5_000,
-                maxBytes:     512 * 1024, // 512 KB — для OG парсингу достатньо
+                timeoutMs:    8_000,  // ← збільшено з 5_000; Wikipedia та важкі сторінки потребують більше
+                maxBytes:     512 * 1024,
                 maxRedirects: 3,
             });
 
             if (!res || res.status === 204) {
-                this.cache.set(key, { data: null, ts: Date.now() });
+                this.cache.set(key, { data: null, ts: Date.now(), ttl: ERROR_TTL_MS });
                 return null;
             }
 
             if (!res.ok) {
-                this.cache.set(key, { data: null, ts: Date.now() });
+                this.cache.set(key, { data: null, ts: Date.now(), ttl: ERROR_TTL_MS });
                 return null;
             }
 
             const html = await res.text();
             const data = this.parseOgData(key, html, url);
 
-            this.cache.set(key, { data, ts: Date.now() });
+            this.cache.set(key, {
+                data,
+                ts:  Date.now(),
+                ttl: data ? SUCCESS_TTL_MS : ERROR_TTL_MS,
+            });
             return data;
 
         } catch (err: any) {
+            const isTimeout = err.name === 'AbortError' || err.message === 'This operation was aborted';
+
             if (err instanceof SsrfError) {
-                // SSRF спроба — логуємо як попередження (не error щоб не спамити)
-                this.logger.warn(`[SSRF blocked] ${err.message} — requested by URL: ${rawUrl}`);
+                this.logger.warn(`[SSRF blocked] ${err.message} — URL: ${rawUrl}`);
+            } else if (isTimeout) {
+                this.logger.warn(`OG fetch timed out for ${rawUrl}`);
             } else {
                 this.logger.warn(`OG fetch failed for ${rawUrl}: ${err.message}`);
             }
 
-            // Не кешуємо помилки мережі (тільки SSRF — щоб не допускати retry flood)
-            if (err instanceof SsrfError) {
-                this.cache.set(key, { data: null, ts: Date.now() });
-            }
+            // Кешуємо ВСІ помилки (мережа, timeout, SSRF) щоб уникнути retry flood.
+            // SSRF блокуємо надовго, тимчасові помилки — коротший TTL для можливого retry.
+            this.cache.set(key, {
+                data: null,
+                ts:   Date.now(),
+                ttl:  err instanceof SsrfError ? SUCCESS_TTL_MS : ERROR_TTL_MS,
+            });
 
             return null;
         }
     }
 
-    // OG / meta парсер
     private parseOgData(key: string, html: string, url: URL): OgData | null {
         const getMeta = (attr: string, val: string): string | undefined => {
-            // <meta property="og:title" content="...">  або навпаки
             const a = html.match(
                 new RegExp(`<meta[^>]+${attr}=["']${escapeRegex(val)}["'][^>]+content=["']([^"']{1,500})["']`, 'i'),
             );
@@ -90,11 +98,9 @@ export class OgService {
 
         let image = getMeta('property', 'og:image') || getMeta('name', 'twitter:image');
 
-        // Перетворюємо відносні URL зображень на абсолютні
         if (image) {
             try {
                 image = new URL(image, url.origin).toString();
-                // Не дозволяємо data: URLs або інші схеми
                 const imgUrl = new URL(image);
                 if (imgUrl.protocol !== 'http:' && imgUrl.protocol !== 'https:') {
                     image = undefined;
@@ -108,7 +114,6 @@ export class OgService {
             getMeta('property', 'og:site_name') ||
             url.hostname.replace(/^www\./, '');
 
-        // Якщо нічого корисного не знайшли — не повертаємо порожній об'єкт
         if (!title && !description && !image) return null;
 
         return {
@@ -121,13 +126,10 @@ export class OgService {
     }
 }
 
-// Helpers
-
 function escapeRegex(s: string): string {
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** Прибираємо HTML entities і зайві пробіли */
 function sanitizeText(text: string): string {
     return text
         .replace(/&amp;/g,  '&')
@@ -138,5 +140,5 @@ function sanitizeText(text: string): string {
         .replace(/&nbsp;/g, ' ')
         .replace(/\s+/g, ' ')
         .trim()
-        .slice(0, 300); // обмежуємо довжину
+        .slice(0, 300);
 }
