@@ -12,7 +12,6 @@ export const useMessages = (
     otherUserId?:        number,
     onDecryptedMessage?: (msg: Message) => void,
     conversationType?:   ConversationType,
-    // Список userId учасників групи — потрібен для prefetch sender keys
     groupMemberIds?:     number[],
 ) => {
     const [messages,      setMessages]      = useState<Message[]>([]);
@@ -24,6 +23,9 @@ export const useMessages = (
     const messagesRef   = useRef<Message[]>([]);
     const typingTimers  = useRef<Map<number, NodeJS.Timeout>>(new Map());
     const typingTimeout = useRef<NodeJS.Timeout | null>(null);
+    // Throttle: last time we sent isTyping:true to the server
+    const lastTypingSentAt = useRef<number>(0);
+    const TYPING_THROTTLE_MS = 1500; // send at most once per 1.5s
 
     const e2e = useE2E();
 
@@ -32,14 +34,12 @@ export const useMessages = (
 
     useEffect(() => { messagesRef.current = messages; }, [messages]);
 
-    //Encrypt
     const encryptContent = useCallback(async (content: string): Promise<string> => {
         if (isDirect && otherUserId)    return e2e.encrypt(content, otherUserId);
         if (isGroup  && conversationId) return e2e.encryptForGroup(content, conversationId);
         return content;
     }, [isDirect, isGroup, otherUserId, conversationId, e2e]);
 
-    // Decrypt — тепер приймає senderId для групових повідомлень
     const decryptContent = useCallback(async (
         ciphertext: string,
         senderId: number | string,
@@ -52,18 +52,11 @@ export const useMessages = (
     const looksEncrypted = (s?: string | null) =>
         !!s && s.length > 20 && /^[A-Za-z0-9_\-]+$/.test(s);
 
-    // Deduplication helper
-    const isDuplicate = useCallback((
-        prev: Message[],
-        incoming: Message,
-    ): boolean => {
-        if (incoming.id) {
-            return prev.some(m => m.id === incoming.id);
-        }
+    const isDuplicate = useCallback((prev: Message[], incoming: Message): boolean => {
+        if (incoming.id) return prev.some(m => m.id === incoming.id);
         return false;
     }, []);
 
-    //Fetch initial messages
     useEffect(() => {
         if (!conversationId) {
             setMessages([]);
@@ -79,7 +72,6 @@ export const useMessages = (
 
         (async () => {
             try {
-                // Для групи — prefetch всіх sender keys перед завантаженням повідомлень
                 if (isGroup && groupMemberIds?.length) {
                     await e2e.prefetchGroupSenderKeys(conversationId, groupMemberIds);
                 }
@@ -118,7 +110,6 @@ export const useMessages = (
         return () => ctrl.abort();
     }, [conversationId, socket]);
 
-    // Pagination
     const loadMoreMessages = useCallback(async () => {
         if (!conversationId || isLoadingMore || !hasMore || !messagesRef.current.length) return;
         setIsLoadingMore(true);
@@ -151,7 +142,6 @@ export const useMessages = (
         }
     }, [conversationId, isLoadingMore, hasMore, decryptContent]);
 
-    // Socket events
     useEffect(() => {
         if (!socket) return;
 
@@ -177,9 +167,7 @@ export const useMessages = (
                         !m.id &&
                         String(m.senderId) === String(decryptedMsg.senderId) &&
                         (m.fileUrl ?? null) === (decryptedMsg.fileUrl ?? null) &&
-                        (decryptedMsg.fileUrl
-                            ? true
-                            : m.content === decryptedMsg.content),
+                        (decryptedMsg.fileUrl ? true : m.content === decryptedMsg.content),
                 );
                 if (idx !== -1) {
                     const next = [...prev];
@@ -310,7 +298,6 @@ export const useMessages = (
         return () => { socket.off('connect', onConnect); };
     }, [socket, flush]);
 
-    // Actions
     const sendMessage = useCallback(async (content: string, replyToId?: number) => {
         if (!content.trim() || !conversationId || !currentUserId) return;
 
@@ -359,7 +346,6 @@ export const useMessages = (
             const payload = await encryptContent(content);
             socket.emit('sendMessage', { conversationId, content: payload, replyToId });
         } catch (err) {
-            // Якщо шифрування впало - видаляємо оптимістичне повідомлення
             console.error('[sendMessage] encrypt failed:', err);
             setMessages((prev) => prev.filter(m => m._queueId !== tmpId));
         }
@@ -406,10 +392,20 @@ export const useMessages = (
 
     const notifyTyping = useCallback(() => {
         if (!socket || !conversationId) return;
+
+        const now = Date.now();
+
+        // Throttle: skip if we sent isTyping:true recently
+        if (now - lastTypingSentAt.current < TYPING_THROTTLE_MS) return;
+
+        lastTypingSentAt.current = now;
         socket.emit('typing', { conversationId, isTyping: true });
+
+        // Schedule isTyping:false after 2.5s of silence
         if (typingTimeout.current) clearTimeout(typingTimeout.current);
         typingTimeout.current = setTimeout(() => {
             socket.emit('typing', { conversationId, isTyping: false });
+            lastTypingSentAt.current = 0; // reset so next keystroke fires immediately
         }, 2500);
     }, [socket, conversationId]);
 

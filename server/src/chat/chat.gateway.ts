@@ -10,6 +10,7 @@ import { JwtService }             from '@nestjs/jwt';
 import { ConversationsService }   from '../conversations/conversations.service.js';
 import { FriendsService }         from '../friends/friends.service.js';
 import { PushService }            from '../push/push.service.js';
+import { WsRateLimiter }          from './ws-rate-limiter.js';
 
 @WebSocketGateway({ cors: { origin: 'http://localhost:3000', credentials: true } })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -17,15 +18,63 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private logger      = new Logger('ChatGateway');
     private activeUsers = new Map<number, Set<string>>();
 
+    //Per-event rate limiters
+    // sendMessage: 60 messages/min — prevents message flood
+    private readonly msgLimiter      = new WsRateLimiter(60, 60);
+    // typing: 20/min — client debounces at 2.5s so this is very generous
+    private readonly typingLimiter   = new WsRateLimiter(20, 60);
+    // reactions: 30/min
+    private readonly reactLimiter    = new WsRateLimiter(30, 60);
+    // delete/edit: 30/min
+    private readonly mutateLimiter   = new WsRateLimiter(30, 60);
+    // friend requests: 10/min
+    private readonly friendLimiter   = new WsRateLimiter(10, 60);
+    // calls: 10/min — prevents call spam
+    private readonly callLimiter     = new WsRateLimiter(10, 60);
+    // forward: 20/min
+    private readonly forwardLimiter  = new WsRateLimiter(20, 60);
+
     constructor(
         private readonly prisma:      PrismaService,
         private readonly jwtService:  JwtService,
         private readonly convService: ConversationsService,
         private readonly friends:     FriendsService,
         private readonly push:        PushService,
-    ) {}
+    ) {
+        // Clean up stale rate-limit windows every 5 minutes
+        setInterval(() => {
+            this.msgLimiter.cleanup();
+            this.typingLimiter.cleanup();
+            this.reactLimiter.cleanup();
+            this.mutateLimiter.cleanup();
+            this.friendLimiter.cleanup();
+            this.callLimiter.cleanup();
+            this.forwardLimiter.cleanup();
+        }, 5 * 60 * 1000);
+    }
 
-    // ── Connection ────────────────────────────────────────────────────────────
+    // Helpers
+    private rateLimit(
+        client: Socket,
+        limiter: WsRateLimiter,
+        event: string,
+    ): boolean {
+        const userId = client.data.user?.id as number | undefined;
+        if (!userId) return false;
+
+        if (!limiter.isAllowed(userId)) {
+            client.emit('rateLimited', {
+                event,
+                retryAfter: limiter.retryAfter(userId),
+                message: `Too many ${event} events. Try again in ${limiter.retryAfter(userId)}s.`,
+            });
+            this.logger.warn(`Rate limited user ${userId} on event "${event}"`);
+            return false;
+        }
+        return true;
+    }
+
+    // Connection
     async handleConnection(client: Socket) {
         try {
             const token = client.handshake.auth?.token || client.handshake.query?.token;
@@ -41,10 +90,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
             if (!this.activeUsers.has(userId)) this.activeUsers.set(userId, new Set());
             this.activeUsers.get(userId)!.add(client.id);
 
-            // Personal room (friend requests, notifications)
             client.join(`user_${userId}`);
 
-            // Join all conversation rooms
             const memberships = await this.prisma.conversationMember.findMany({
                 where: { userId }, select: { conversationId: true },
             });
@@ -79,9 +126,12 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
     }
 
-    // ── Token update ──────────────────────────────────────────────────────────
+    // Token update
     @SubscribeMessage('updateToken')
-    async handleUpdateToken(@ConnectedSocket() client: Socket, @MessageBody() data: { token: string }) {
+    async handleUpdateToken(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() data: { token: string },
+    ) {
         try {
             const payload = this.jwtService.verify(data.token);
             if (payload.sub !== client.data.userId) return client.disconnect();
@@ -92,7 +142,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
     }
 
-    // ── Send message ──────────────────────────────────────────────────────────
+    // Send message
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('sendMessage')
     async handleMessage(
@@ -100,21 +150,19 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         @MessageBody() data: {
             conversationId: number; content?: string;
             fileUrl?: string; fileName?: string; fileType?: string; fileSize?: number;
-            replyToId?: number;
-            metadata?: string;
+            replyToId?: number; metadata?: string;
         },
     ) {
+        if (!this.rateLimit(client, this.msgLimiter, 'sendMessage')) return;
+
         const userId = client.data.user.id as number;
         if (!data?.conversationId) return;
         if (!data.content?.trim() && !data.fileUrl) return;
 
         try {
             const message = await this.convService.saveMessage(userId, data.conversationId, data);
-
-            // Broadcast to everyone in room (including sender for optimistic replacement)
             this.server.to(`conv_${data.conversationId}`).emit('onMessage', message);
 
-            // Push to offline members
             const members = await this.prisma.conversationMember.findMany({
                 where: { conversationId: data.conversationId, userId: { not: userId } },
                 select: { userId: true },
@@ -137,7 +185,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
     }
 
-    // ── Mark as read ──────────────────────────────────────────────────────────
+    // Mark as read
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('markAsRead')
     async handleMarkAsRead(
@@ -151,13 +199,15 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         });
     }
 
-    // ── Typing ────────────────────────────────────────────────────────────────
+    // Typing
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('typing')
     handleTyping(
         @ConnectedSocket() client: Socket,
         @MessageBody() data: { conversationId: number; isTyping: boolean },
     ) {
+        if (!this.rateLimit(client, this.typingLimiter, 'typing')) return;
+
         client.to(`conv_${data.conversationId}`).emit('onTyping', {
             userId:         client.data.user.id,
             nickname:       client.data.user.nickname,
@@ -166,10 +216,15 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         });
     }
 
-    // ── Delete / Edit / React ─────────────────────────────────────────────────
+    // Delete / Edit / React
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('deleteMessage')
-    async handleDelete(@ConnectedSocket() client: Socket, @MessageBody() data: { messageId: number }) {
+    async handleDelete(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() data: { messageId: number },
+    ) {
+        if (!this.rateLimit(client, this.mutateLimiter, 'deleteMessage')) return;
+
         try {
             const deleted = await this.convService.deleteMessage(data.messageId, client.data.user.id);
             this.server.to(`conv_${deleted.conversationId}`).emit('messageDeleted', {
@@ -186,8 +241,12 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         @ConnectedSocket() client: Socket,
         @MessageBody() data: { messageId: number; content: string },
     ) {
+        if (!this.rateLimit(client, this.mutateLimiter, 'editMessage')) return;
+
         try {
-            const updated = await this.convService.editMessage(data.messageId, client.data.user.id, data.content);
+            const updated = await this.convService.editMessage(
+                data.messageId, client.data.user.id, data.content,
+            );
             this.server.to(`conv_${updated.conversationId}`).emit('messageEdited', {
                 messageId:      updated.id,
                 content:        updated.content,
@@ -205,6 +264,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         @ConnectedSocket() client: Socket,
         @MessageBody() data: { messageId: number; emoji: string },
     ) {
+        if (!this.rateLimit(client, this.reactLimiter, 'toggleReaction')) return;
+
         try {
             const { grouped, conversationId } = await this.convService.toggleReaction(
                 data.messageId, client.data.user.id, data.emoji,
@@ -217,13 +278,15 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
     }
 
-    // ── Friend requests via WS ────────────────────────────────────────────────
+    // Friend requests
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('sendFriendRequest')
     async handleFriendRequest(
         @ConnectedSocket() client: Socket,
         @MessageBody() data: { receiverId: number },
     ) {
+        if (!this.rateLimit(client, this.friendLimiter, 'sendFriendRequest')) return;
+
         try {
             const friendship = await this.friends.sendRequest(client.data.user.id, data.receiverId);
             this.server.to(`user_${data.receiverId}`).emit('friendRequestReceived', { friendship });
@@ -239,8 +302,12 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         @ConnectedSocket() client: Socket,
         @MessageBody() data: { friendshipId: number; action: 'ACCEPTED' | 'DECLINED' },
     ) {
+        if (!this.rateLimit(client, this.friendLimiter, 'respondFriendRequest')) return;
+
         try {
-            const friendship = await this.friends.respond(client.data.user.id, data.friendshipId, data.action);
+            const friendship = await this.friends.respond(
+                client.data.user.id, data.friendshipId, data.action,
+            );
             this.server.to(`user_${friendship.senderId}`).emit('friendRequestResponded', {
                 friendship, action: data.action,
             });
@@ -250,27 +317,27 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
     }
 
-    // ── Join room after being added to conversation ───────────────────────────
+    // Join room
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('joinConversation')
-    handleJoin(@ConnectedSocket() client: Socket, @MessageBody() data: { conversationId: number }) {
+    handleJoin(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() data: { conversationId: number },
+    ) {
         client.join(`conv_${data.conversationId}`);
         client.emit('joinedConversation', { conversationId: data.conversationId });
     }
 
-    // Helper: notify a user's sockets to join a new room
     async notifyUserJoinRoom(userId: number, conversationId: number) {
         const sockets = await this.server.in(`user_${userId}`).fetchSockets();
         for (const s of sockets) s.join(`conv_${conversationId}`);
         this.server.to(`user_${userId}`).emit('addedToConversation', { conversationId });
     }
 
-    // ── Call tracking ──────────────────────────────────────────────────────────────────
+    // Calls
     private activeCalls = new Map<string, {
-        callerId: number;
-        calleeId: number;
-        conversationId: number;
-        callType: string;
+        callerId: number; calleeId: number;
+        conversationId: number; callType: string;
     }>();
 
     @UseGuards(WsJwtGuard)
@@ -278,23 +345,17 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     async handleCallUser(
         @ConnectedSocket() client: Socket,
         @MessageBody() data: {
-            callId: string;
-            conversationId: number;
-            targetUserId: number;
-            callType: 'audio' | 'video';
+            callId: string; conversationId: number;
+            targetUserId: number; callType: 'audio' | 'video';
         },
     ) {
+        if (!this.rateLimit(client, this.callLimiter, 'callUser')) return;
+
         const callerId = client.data.user.id as number;
         const { callId, targetUserId, conversationId, callType } = data;
-
         if (this.activeCalls.has(callId)) return;
 
-        this.activeCalls.set(callId, {
-            callerId,
-            calleeId: targetUserId,
-            conversationId,
-            callType,
-        });
+        this.activeCalls.set(callId, { callerId, calleeId: targetUserId, conversationId, callType });
 
         const caller = await this.prisma.user.findUnique({
             where: { id: callerId },
@@ -302,10 +363,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         });
 
         this.server.to(`user_${targetUserId}`).emit('incomingCall', {
-            callId,
-            conversationId,
-            callerId,
-            callerName: caller?.nickname ?? 'Unknown',
+            callId, conversationId, callerId,
+            callerName:   caller?.nickname  ?? 'Unknown',
             callerAvatar: caller?.avatarUrl ?? null,
             callType,
         });
@@ -321,10 +380,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     ) {
         const call = this.activeCalls.get(data.callId);
         if (!call) return;
-
         this.server.to(`user_${call.callerId}`).emit('callAccepted', {
-        callId: data.callId,
-            callType: data.callType,
+            callId: data.callId, callType: data.callType,
         });
     }
 
@@ -336,7 +393,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     ) {
         const call = this.activeCalls.get(data.callId);
         if (!call) return;
-
         this.activeCalls.delete(data.callId);
         this.server.to(`user_${call.callerId}`).emit('callRejected', { callId: data.callId });
         this.logger.log(`Call ${data.callId} rejected`);
@@ -350,12 +406,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     ) {
         const call = this.activeCalls.get(data.callId);
         if (!call) return;
-
         this.activeCalls.delete(data.callId);
-
-        const userId    = client.data.user.id as number;
-        const remoteId  = userId === call.callerId ? call.calleeId : call.callerId;
-
+        const userId   = client.data.user.id as number;
+        const remoteId = userId === call.callerId ? call.calleeId : call.callerId;
         this.server.to(`user_${remoteId}`).emit('callEnded', { callId: data.callId });
         this.logger.log(`Call ${data.callId} ended by user ${userId}`);
     }
@@ -368,7 +421,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     ) {
         const call = this.activeCalls.get(data.callId);
         if (!call) return;
-
         this.activeCalls.delete(data.callId);
         this.server.to(`user_${call.callerId}`).emit('callBusy', { callId: data.callId });
     }
@@ -381,14 +433,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     ) {
         const call = this.activeCalls.get(data.callId);
         if (!call) return;
-
-        const userId = client.data.user.id as number;
+        const userId   = client.data.user.id as number;
         const remoteId = userId === call.callerId ? call.calleeId : call.callerId;
-
-        this.server.to(`user_${remoteId}`).emit('sdpOffer', {
-            callId: data.callId,
-            offer: data.offer,
-        });
+        this.server.to(`user_${remoteId}`).emit('sdpOffer', { callId: data.callId, offer: data.offer });
     }
 
     @UseGuards(WsJwtGuard)
@@ -397,16 +444,11 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         @ConnectedSocket() client: Socket,
         @MessageBody() data: { callId: string; answer: RTCSessionDescriptionInit },
     ) {
-        const call   = this.activeCalls.get(data.callId);
+        const call = this.activeCalls.get(data.callId);
         if (!call) return;
-
         const userId   = client.data.user.id as number;
         const remoteId = userId === call.callerId ? call.calleeId : call.callerId;
-
-        this.server.to(`user_${remoteId}`).emit('sdpAnswer', {
-            callId: data.callId,
-            answer: data.answer,
-        });
+        this.server.to(`user_${remoteId}`).emit('sdpAnswer', { callId: data.callId, answer: data.answer });
     }
 
     @UseGuards(WsJwtGuard)
@@ -415,30 +457,32 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         @ConnectedSocket() client: Socket,
         @MessageBody() data: { callId: string; candidate: RTCIceCandidateInit },
     ) {
-        const call   = this.activeCalls.get(data.callId);
+        const call = this.activeCalls.get(data.callId);
         if (!call) return;
-
         const userId   = client.data.user.id as number;
         const remoteId = userId === call.callerId ? call.calleeId : call.callerId;
-
         this.server.to(`user_${remoteId}`).emit('iceCandidate', {
-            callId:    data.callId,
-            candidate: data.candidate,
+            callId: data.callId, candidate: data.candidate,
         });
     }
 
+    // Pin / Unpin
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('pinMessage')
     async handlePin(
         @ConnectedSocket() client: Socket,
         @MessageBody() data: { conversationId: number; messageId: number },
     ) {
+        if (!this.rateLimit(client, this.mutateLimiter, 'pinMessage')) return;
+
         try {
-            const result = await this.convService.pinMessage(client.data.user.id, data.conversationId, data.messageId);
+            const result = await this.convService.pinMessage(
+                client.data.user.id, data.conversationId, data.messageId,
+            );
             this.server.to(`conv_${data.conversationId}`).emit('messagePinned', {
-                conversationId: data.conversationId,
+                conversationId:  data.conversationId,
                 pinnedMessageId: result.pinnedMessageId,
-                pinnedMessage: result.message,
+                pinnedMessage:   result.message,
             });
         } catch (e: any) {
             client.emit('pinFailed', { error: e.message });
@@ -451,8 +495,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         @ConnectedSocket() client: Socket,
         @MessageBody() data: { conversationId: number },
     ) {
+        if (!this.rateLimit(client, this.mutateLimiter, 'unpinMessage')) return;
+
         try {
-            await this.convService.unpinMessage(client.data.user.id, data.conversationId)
+            await this.convService.unpinMessage(client.data.user.id, data.conversationId);
             this.server.to(`conv_${data.conversationId}`).emit('messageUnpinned', {
                 conversationId: data.conversationId,
             });
@@ -461,19 +507,19 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
     }
 
+    // Forward
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('forwardMessage')
     async handleForwardMessage(
         @ConnectedSocket() client: Socket,
         @MessageBody() data: { messageId: number; targetConversationId: number },
     ) {
+        if (!this.rateLimit(client, this.forwardLimiter, 'forwardMessage')) return;
+
         try {
             const msg = await this.convService.forwardMessage(
-                client.data.user.id,
-                data.messageId,
-                data.targetConversationId,
+                client.data.user.id, data.messageId, data.targetConversationId,
             );
-
             this.server.to(`conv_${data.targetConversationId}`).emit('onMessage', msg);
         } catch (e: any) {
             client.emit('forwardFailed', { error: e.message });

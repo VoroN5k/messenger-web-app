@@ -3,6 +3,7 @@ import {
     Injectable, NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
+import {validateAndNormalizeMetadata} from "./metadata.validator.js";
 
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
 const ALLOWED_EMOJIS = ['👍','❤️','😂','😮','😢','😡','🔥','👏','🎉','💯'];
@@ -445,7 +446,7 @@ export class ConversationsService {
                 fileType:      dto.fileType,
                 fileSize:      dto.fileSize,
                 replyToId:     dto.replyToId,
-                metadata:      dto.metadata, // ← FIX: persist metadata (waveform, encrypted flag, etc.)
+                metadata:      validateAndNormalizeMetadata(dto.metadata),
             },
             select: MSG_SELECT,
         });
