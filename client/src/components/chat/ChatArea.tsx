@@ -498,6 +498,16 @@ export default function ChatArea({
         } finally { setUploadProgress(null); abortRef.current = null; }
     }, [conversation, sendFileMessage, replyTo, otherUserId, e2e]);
 
+    function mimeToExtension(mimeType: string): string {
+        const m = mimeType.toLowerCase().split(';')[0].trim();
+        if (m === 'audio/webm') return 'webm';
+        if (m === 'audio/ogg')  return 'ogg';
+        if (m === 'audio/mp4')  return 'mp4';
+        if (m === 'audio/mpeg') return 'mp3';
+        if (m === 'audio/wav')  return 'wav';
+        return 'webm';
+    }
+
     // Voice message - encrypts WAV bytes for DIRECT chats before upload
     const sendVoiceMessage = useCallback(async (
         blob: Blob,
@@ -519,15 +529,15 @@ export default function ChatArea({
             if (otherUserId) {
                 const buf    = await blob.arrayBuffer();
                 const encBuf = await e2e.encryptBinary(buf, otherUserId);
-                fileToUpload = new File([encBuf], 'voice.wav', { type: mimeType });
+                fileToUpload = new File([encBuf], `voice.${mimeToExtension(mimeType)}`, { type: mimeType })
                 metaObj      = { ...baseMeta, encrypted: true };
             } else if (conversation?.type === 'GROUP' && conversation?.id) {
                 const buf    = await blob.arrayBuffer();
                 const encBuf = await e2e.encryptBinaryForGroup(buf, conversation.id);
-                fileToUpload = new File([encBuf], 'voice.wav', { type: mimeType });
+                fileToUpload = new File([encBuf], `voice.${mimeToExtension(mimeType)}`, { type: mimeType })
                 metaObj      = { ...baseMeta, encrypted: true };
             } else {
-                fileToUpload = new File([blob], 'voice.wav', { type: mimeType });
+                fileToUpload = new File([blob],   `voice.${mimeToExtension(mimeType)}`, { type: mimeType })
                 metaObj      = baseMeta;
             }
 
