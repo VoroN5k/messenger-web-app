@@ -10,6 +10,7 @@ import {FriendsModule} from "./friends/friends.module.js";
 import {ConversationsModule} from "./conversations/conversations.module.js";
 import {KeysModule} from "./keys/keys.module.js";
 import {OGModule} from "./og/og.module.js";
+import {FilesModule} from "./files/files.module.js";
 
 @Module({
     imports: [
@@ -24,6 +25,7 @@ import {OGModule} from "./og/og.module.js";
         ConversationsModule,
         KeysModule,
         OGModule,
+        FilesModule,
     ],
 })
 export class AppModule {}

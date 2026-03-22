@@ -1,3 +1,4 @@
+// server/src/upload/upload.service.ts
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { ConfigService } from '@nestjs/config';
@@ -22,11 +23,16 @@ const ALLOWED_MIME_TYPES = new Set([
     'audio/webm', 'audio/webm;codecs=opus', 'audio/wav',
 ]);
 
+// Server-side signed URL cache
+interface CacheEntry { url: string; expiresAt: number }
+const SIGNED_CACHE = new Map<string, CacheEntry>();
+const CACHE_BUFFER_MS = 5 * 60 * 1000;
+
 @Injectable()
 export class UploadService {
     private supabase: SupabaseClient;
     private bucket:   string;
-    private baseStorageUrl: string; // e.g. https://xxx.supabase.co/storage/v1/object/public/bucket-name
+    private baseStorageUrl: string;
     private readonly logger = new Logger(UploadService.name);
 
     constructor(private readonly config: ConfigService) {
@@ -37,9 +43,11 @@ export class UploadService {
             supabaseUrl,
             config.getOrThrow<string>('SUPABASE_SERVICE_KEY'),
         );
-        this.bucket        = bucketName;
+        this.bucket         = bucketName;
         this.baseStorageUrl = `${supabaseUrl}/storage/v1/object/public/${bucketName}`;
     }
+
+    // Upload helpers
 
     async uploadFile(file: Express.Multer.File, userId: number) {
         const isAllowed = ALLOWED_MIME_TYPES.has(file.mimetype) || file.mimetype.startsWith('audio/');
@@ -58,10 +66,17 @@ export class UploadService {
             throw new BadRequestException('File upload failed');
         }
 
-        const { data } = this.supabase.storage.from(this.bucket).getPublicUrl(storagePath);
+        // Return a server-relative proxy URL so the real Supabase origin is never
+        // exposed to clients and access always goes through our auth layer.
+        const proxyUrl = `/storage/${this.bucket}/${storagePath}`;
         this.logger.log(`User ${userId} uploaded: ${file.originalname} → ${storagePath}`);
 
-        return { url: data.publicUrl, fileName: file.originalname, fileType: file.mimetype, fileSize: file.size };
+        return {
+            url:      proxyUrl,
+            fileName: file.originalname,
+            fileType: file.mimetype,
+            fileSize: file.size,
+        };
     }
 
     async uploadAvatar(file: Express.Multer.File, userId: number) {
@@ -80,44 +95,84 @@ export class UploadService {
             throw new BadRequestException('Avatar upload failed');
         }
 
-        const { data } = this.supabase.storage.from(this.bucket).getPublicUrl(storagePath);
+        // Avatars are profile pictures - still served via signed URL for consistency.
+        const proxyUrl = `/storage/${this.bucket}/${storagePath}`;
         this.logger.log(`User ${userId} updated avatar → ${storagePath}`);
-        return { url: data.publicUrl };
+        return { url: proxyUrl };
     }
 
+    // Signed URL generation
+
     /**
-     * Deletes a file from Supabase Storage by its public URL.
-     * Extracts the storage path from the URL and calls the Supabase delete API.
-     * Never throws — failures are only logged so callers aren't affected.
+     * Returns a signed URL for `storagePath` valid for `expiresIn` seconds.
+     * Results are cached server-side with a 5-minute safety buffer.
      */
+    async getSignedUrl(storagePath: string, expiresIn = 3_600): Promise<{ url: string; expiresAt: number }> {
+        const cached = SIGNED_CACHE.get(storagePath);
+        if (cached && cached.expiresAt - CACHE_BUFFER_MS > Date.now()) {
+            return cached;
+        }
+
+        const { data, error } = await this.supabase.storage
+            .from(this.bucket)
+            .createSignedUrl(storagePath, expiresIn);
+
+        if (error || !data?.signedUrl) {
+            this.logger.error(`Failed to create signed URL for "${storagePath}": ${error?.message}`);
+            throw new BadRequestException('Cannot generate signed URL');
+        }
+
+        const entry: CacheEntry = {
+            url:       data.signedUrl,
+            expiresAt: Date.now() + expiresIn * 1_000,
+        };
+        SIGNED_CACHE.set(storagePath, entry);
+
+        // Prevent unbounded cache growth - evict stale entries lazily
+        if (SIGNED_CACHE.size > 5_000) this.evictExpired();
+
+        return entry;
+    }
+
+    extractStoragePath(fileUrl: string): string | null {
+        const proxyPrefix = `/storage/${this.bucket}/`;
+        if (fileUrl.startsWith(proxyPrefix)) return fileUrl.slice(proxyPrefix.length);
+
+        const publicPrefix = `${this.baseStorageUrl}/`;
+        if (fileUrl.startsWith(publicPrefix)) return fileUrl.slice(publicPrefix.length);
+
+        return null;
+    }
+
+    // Storage deletion
+
     async deleteFile(fileUrl: string): Promise<void> {
         try {
-            let storagePath: string | null = null;
-
-            if (fileUrl.startsWith(this.baseStorageUrl)) {
-                storagePath = fileUrl.slice(this.baseStorageUrl.length + 1);
-            }
-
-            const proxyPrefix = `/storage/${this.bucket}/`;
-            if (!storagePath && fileUrl.startsWith(proxyPrefix)) {
-                storagePath = fileUrl.slice(proxyPrefix.length);
-            }
-
+            const storagePath = this.extractStoragePath(fileUrl);
             if (!storagePath) {
                 this.logger.warn(`deleteFile: unrecognised URL format, skipping: ${fileUrl}`);
                 return;
             }
 
             const { error } = await this.supabase.storage.from(this.bucket).remove([storagePath]);
-
             if (error) {
-                // Log but don't throw — the message is already soft-deleted
                 this.logger.warn(`deleteFile: Supabase remove failed for "${storagePath}": ${error.message}`);
             } else {
                 this.logger.log(`deleteFile: removed "${storagePath}" from storage`);
             }
+
+            SIGNED_CACHE.delete(storagePath);
         } catch (err: any) {
             this.logger.warn(`deleteFile: unexpected error for "${fileUrl}": ${err.message}`);
+        }
+    }
+
+    // Internals
+
+    private evictExpired() {
+        const now = Date.now();
+        for (const [key, entry] of SIGNED_CACHE.entries()) {
+            if (entry.expiresAt < now) SIGNED_CACHE.delete(key);
         }
     }
 }
