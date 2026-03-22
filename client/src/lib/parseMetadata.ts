@@ -1,47 +1,50 @@
+/**
+ * Safe Metadata Parser (client-side)
+ *
+ * mimeType: приймаємо будь-який audio/* —
+ * MediaRecorder може повертати різні варіанти:
+ *   "audio/webm;codecs=opus"
+ *   "audio/webm; codecs=opus"   (з пробілом)
+ *   'audio/webm;codecs="opus"'  (з лапками)
+ * Жорсткий allowlist ламав відтворення якщо формат не збігався точно.
+ */
+
 export interface MessageMetadata {
-    /** Амплітуди для waveform, значення [0..1] */
-    waveform: number[];
-    /** Тривалість аудіо в секундах */
-    duration: number;
-    /** MIME type аудіо */
-    mimeType: string;
-    /** Чи зашифрований файл E2E */
+    waveform:  number[];
+    duration:  number;
+    mimeType:  string;
     encrypted: boolean;
 }
 
-const ALLOWED_AUDIO_MIMES = new Set([
-    'audio/webm',
-    'audio/webm;codecs=opus',
-    'audio/ogg',
-    'audio/ogg;codecs=opus',
-    'audio/mp4',
-    'audio/mpeg',
-    'audio/wav',
-    'audio/wave',
-    'audio/x-wav',
-]);
-
 const FORBIDDEN_KEYS = new Set([
-    '__proto__',
-    'constructor',
-    'prototype',
-    'toString',
-    'valueOf',
+    '__proto__', 'constructor', 'prototype', 'toString', 'valueOf',
 ]);
 
+// Дефолт — webm, бо саме його використовують браузери
 const DEFAULTS: MessageMetadata = {
     waveform:  [],
     duration:  0,
-    mimeType:  'audio/wav',
+    mimeType:  'audio/webm',
     encrypted: false,
 };
 
 /**
+ * Перевіряє чи MIME type є безпечним audio/* рядком.
+ * Не використовує жорсткий allowlist — MediaRecorder повертає
+ * багато варіантів одного формату.
+ */
+function isSafeAudioMime(mime: string): boolean {
+    const normalized = mime.toLowerCase().trim();
+    if (!normalized.startsWith('audio/')) return false;
+    if (normalized.length > 100) return false;
+    // Блокуємо підозрілі injection-рядки
+    if (/html|javascript|script|<|>/.test(normalized)) return false;
+    return true;
+}
+
+/**
  * Безпечно парсить metadata рядок.
  * Ніколи не кидає помилку — при будь-якій проблемі повертає defaults.
- *
- * @example
- * const { waveform, duration, mimeType, encrypted } = parseMetadata(msg.metadata);
  */
 export function parseMetadata(raw: string | null | undefined): MessageMetadata {
     if (!raw) return { ...DEFAULTS };
@@ -53,12 +56,10 @@ export function parseMetadata(raw: string | null | undefined): MessageMetadata {
         return { ...DEFAULTS };
     }
 
-    // Має бути plain object
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
         return { ...DEFAULTS };
     }
 
-    // Prototype pollution guard
     for (const key of FORBIDDEN_KEYS) {
         if (key in parsed) return { ...DEFAULTS };
     }
@@ -70,11 +71,11 @@ export function parseMetadata(raw: string | null | undefined): MessageMetadata {
     const rawWaveform = obj['waveform'];
     if (Array.isArray(rawWaveform)) {
         waveform = rawWaveform
-            .slice(0, 2_000) // обмеження на кількість точок
+            .slice(0, 2_000)
             .map((v) => {
                 const n = typeof v === 'number' ? v : parseFloat(String(v));
-                if (!isFinite(n)) return 0.05; // дефолтна амплітуда
-                return Math.min(1, Math.max(0, n)); // клампуємо [0, 1]
+                if (!isFinite(n)) return 0.05;
+                return Math.min(1, Math.max(0, n));
             });
     }
 
@@ -85,34 +86,26 @@ export function parseMetadata(raw: string | null | undefined): MessageMetadata {
         const n = typeof rawDuration === 'number'
             ? rawDuration
             : parseFloat(String(rawDuration));
-        if (isFinite(n) && n >= 0 && n <= 10_800) { // max 3 години
+        if (isFinite(n) && n >= 0 && n <= 10_800) {
             duration = n;
         }
     }
 
-    // mimeType
+    // mimeType — приймаємо будь-який audio/*, зберігаємо оригінальний рядок
     let mimeType = DEFAULTS.mimeType;
     const rawMime = obj['mimeType'];
-    if (typeof rawMime === 'string') {
-        const normalized = rawMime.toLowerCase().trim();
-        if (ALLOWED_AUDIO_MIMES.has(normalized)) {
-            mimeType = normalized;
+    if (typeof rawMime === 'string' && rawMime.trim()) {
+        if (isSafeAudioMime(rawMime.trim())) {
+            mimeType = rawMime.trim();
         }
-        // Якщо не з allowlist — залишаємо дефолт (audio/wav)
-        // Не кидаємо помилку — дані могли прийти до оновлення валідатора
     }
 
     // encrypted
-    // Приймаємо тільки справжній boolean true
     const encrypted = obj['encrypted'] === true;
 
     return { waveform, duration, mimeType, encrypted };
 }
 
-/**
- * Перевіряє чи рядок взагалі містить metadata
- * (швидка перевірка без повного парсингу)
- */
 export function hasMetadata(raw: string | null | undefined): boolean {
-    return typeof raw === 'string' && raw.length > 2; // мінімум "{}"
+    return typeof raw === 'string' && raw.length > 2;
 }
