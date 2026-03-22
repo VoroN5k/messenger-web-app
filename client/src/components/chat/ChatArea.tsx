@@ -3,34 +3,25 @@
 import React, {
     useState, useRef, useEffect, UIEvent, useCallback,
 } from 'react';
-import {
-    Send, Loader2, Trash2, Pencil, Check, X,
-    SmilePlus, Paperclip, FileText, Download,
-    ImageOff, Search, ChevronUp, ChevronDown,
-    Reply, Users, Hash, Phone, Video,
-    Mic, Pin, PinOff, Forward, LayoutGrid,
-    WifiOff
-} from 'lucide-react';
+import { Paperclip, Loader2, Pin, PinOff } from 'lucide-react';
+
 import { useMessages }   from '@/src/hooks/useMessages';
 import { useSearch }     from '@/src/hooks/useSearch';
 import { useE2E }        from '@/src/hooks/useE2E';
-import {uploadFile, isImageType, formatFileSize, mimeFromFileName} from '@/src/lib/uploadFile';
-import { Avatar }        from './Avatar';
-import { EmojiPicker }   from './EmojiPicker';
-import { VoiceRecorder } from './VoiceRecorder';
-import { VoiceBubble }   from './VoiceBubble';
-import { ForwardModal }  from './ForwardModal';
-import { LinkPreview, extractUrls } from './LinkPreview';
-import {
-    Conversation, Message, Reaction,
-} from '@/src/types/conversation.types';
-import { User }          from '@/src/types/auth.types';
-import { Socket }        from 'socket.io-client';
-import {ImageModal} from "@/src/components/chat/ImageModal";
-import {MediaPanel} from "@/src/components/chat/MediaPanel";
-import {compressImage} from "@/src/lib/compressImage";
-import {parseMetadata} from "@/src/lib/parseMetadata";
-import {useSignedUrl} from "@/src/hooks/useSignedUrl";
+import { uploadFile, mimeFromFileName }    from '@/src/lib/uploadFile';
+import { compressImage } from '@/src/lib/compressImage';
+
+import { ChatHeader }   from './ChatHeader';
+import { SearchPanel }  from './SearchPanel';
+import { ChatInput }    from './ChatInput';
+import { MessageItem }  from './message/MessageItem';
+import { ForwardModal } from './ForwardModal';
+import { MediaPanel }   from './MediaPanel';
+
+import { Conversation, Message } from '@/src/types/conversation.types';
+import { User }                  from '@/src/types/auth.types';
+import { Socket }                from 'socket.io-client';
+import { EDIT_WINDOW_MS }        from '@/src/lib/chatFormatters';
 
 interface ChatAreaProps {
     currentUser:           User | null;
@@ -39,240 +30,8 @@ interface ChatAreaProps {
     socket:                Socket | null;
     onConversationUpdate?: (updated: any) => void;
     onMarkRead?:           (conversationId: number) => void;
-    onStartCall?: (convId: number, targetUserId: number, type: 'audio' | 'video') => void;
+    onStartCall?:          (convId: number, targetUserId: number, type: 'audio' | 'video') => void;
 }
-
-const EDIT_WINDOW_MS = 15 * 60 * 1000;
-
-const formatTime = (d: string | Date) =>
-    new Date(d).toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
-
-const formatDateSep = (d: string | Date) => {
-    const date = new Date(d);
-    const now  = new Date();
-    const yest = new Date(now); yest.setDate(now.getDate() - 1);
-    if (date.toDateString() === now.toDateString())  return 'Сьогодні';
-    if (date.toDateString() === yest.toDateString()) return 'Вчора';
-    return date.toLocaleDateString('uk-UA', { day: 'numeric', month: 'long' });
-};
-
-function formatLastSeen(lastSeen?: string | Date | null): string {
-    if (!lastSeen) return 'Офлайн';
-    const d    = new Date(lastSeen as string);
-    const now  = new Date();
-    const diff = now.getTime() - d.getTime();
-    if (diff < 60_000)          return 'щойно в мережі';
-    if (diff < 3_600_000)       return `${Math.floor(diff / 60_000)} хв тому`;
-    const time = d.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
-    const yest = new Date(now); yest.setDate(now.getDate() - 1);
-    if (d.toDateString() === now.toDateString())  return `сьогодні о ${time}`;
-    if (d.toDateString() === yest.toDateString()) return `вчора о ${time}`;
-    return `${d.toLocaleDateString('uk-UA', { day: 'numeric', month: 'long' })} о ${time}`;
-}
-
-const escReg = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-const HighlightText = ({ text, query }: { text: string; query: string }) => {
-    if (!query.trim()) return <>{text}</>;
-    const parts = text.split(new RegExp(`(${escReg(query.trim())})`, 'gi'));
-    return (
-        <>
-            {parts.map((p, i) =>
-                p.toLowerCase() === query.trim().toLowerCase()
-                    ? <mark key={i} className="bg-yellow-300 text-yellow-900 rounded-sm px-px">{p}</mark>
-                    : <span key={i}>{p}</span>,
-            )}
-        </>
-    );
-};
-
-const CP = 'M1.5 5L5 8.5L12.5 1';
-const MessageStatus = ({ msg }: { msg: Message }) => {
-    // ── Pending: message is in offline queue ──────────────────────────────────
-    if (msg.isPending) {
-        return (
-            <svg
-                width="14" height="14" viewBox="0 0 24 24" fill="none"
-                className="inline-block shrink-0 opacity-60"
-            >
-                <title>Очікує відправки...</title>
-                <circle cx="12" cy="12" r="9"
-                        stroke="rgba(255,255,255,0.7)" strokeWidth="1.8"/>
-                <path d="M12 7v5l2.5 2.5"
-                      stroke="rgba(255,255,255,0.7)" strokeWidth="1.8"
-                      strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-        );
-    }
-
-    const isRead = msg.isRead === true;
-    const c = isRead ? '#69dafa' : 'rgba(255,255,255,0.5)';
-
-    if (!msg.id)
-        return (
-            <svg width="14" height="10" viewBox="0 0 14 10" fill="none" className="inline-block shrink-0">
-                <path d={CP} stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-        );
-    return (
-        <svg width="19" height="10" viewBox="0 0 19 10" fill="none" className="inline-block shrink-0">
-            <path d={CP}                   stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-            <path d="M5.5 5L9 8.5L16.5 1" stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-    );
-};
-
-const ReactionsRow = ({ reactions, currentUserId, onToggle }: {
-    reactions: Reaction[]; currentUserId: number | string; onToggle: (e: string) => void;
-}) => {
-    if (!reactions?.length) return null;
-    return (
-        <div className="flex flex-wrap gap-1 mt-1">
-            {reactions.map((r) => {
-                const mine = r.userIds.some((id) => String(id) === String(currentUserId));
-                return (
-                    <button key={r.emoji} onClick={() => onToggle(r.emoji)}
-                            className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border transition-all cursor-pointer select-none
-                                ${mine
-                                ? 'bg-indigo-100 dark:bg-indigo-900/40 border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200'
-                                : 'bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600'}`}>
-                        <span className="text-sm leading-none">{r.emoji}</span>
-                        <span>{r.count}</span>
-                    </button>
-                );
-            })}
-        </div>
-    );
-};
-
-const FileBubble = ({
-                        msg, isMe, onDecrypt,
-                    }: {
-    msg: Message;
-    isMe: boolean;
-    onDecrypt?: (data: ArrayBuffer) => Promise<ArrayBuffer>;
-}) => {
-    // Resolve to a short-lived signed URL before any fetch
-    const signedSrc = useSignedUrl(msg.fileUrl);
-
-    const [err,        setErr]        = useState(false);
-    const [blobUrl,    setBlobUrl]    = useState<string | null>(null);
-    const [decrypting, setDecrypting] = useState(false);
-    const [lightbox,   setLightbox]   = useState(false);
-
-    const { encrypted: isEncryptedFlag } = parseMetadata(msg.metadata);
-    const isEncrypted = isEncryptedFlag && !!onDecrypt;
-    const displayMime =
-         (msg.fileType && msg.fileType !== 'application/octet-stream')
-             ? msg.fileType
-             : (mimeFromFileName(msg.fileName ?? '') ?? msg.fileType ?? undefined);
-
-    // Decrypt effect — only runs once we have a valid signed URL
-    useEffect(() => {
-        if (!isEncrypted || !onDecrypt || !signedSrc) return;
-        let objectUrl: string | null = null;
-        setDecrypting(true);
-
-        fetch(signedSrc)                              // ← signed URL
-            .then(r => r.arrayBuffer())
-            .then(buf => onDecrypt(buf))
-            .then(dec => {
-                objectUrl = URL.createObjectURL(new Blob([dec], { type: displayMime }));
-                setBlobUrl(objectUrl);
-            })
-            .catch(() => setErr(true))
-            .finally(() => setDecrypting(false));
-
-        return () => { if (objectUrl) URL.revokeObjectURL(objectUrl); };
-    }, [signedSrc, isEncrypted]);               // ← depends on signedSrc
-
-    if (decrypting || (!signedSrc && !err)) {
-        return (
-            <div className={`flex items-center gap-2 px-3 py-2 text-xs rounded-xl
-                ${isMe ? 'text-indigo-200' : 'text-slate-400'}`}>
-                <Loader2 size={13} className="animate-spin shrink-0" />
-                <span>{decrypting ? 'Розшифровка...' : 'Завантаження...'}</span>
-            </div>
-        );
-    }
-
-    // Effective source: blob URL (decrypted) → signed URL (plain) → fallback
-    const srcUrl = isEncrypted
-        ? (blobUrl ?? signedSrc ?? msg.fileUrl!)
-        : (signedSrc ?? msg.fileUrl!);
-
-    // Image — open in lightbox
-    if (isImageType(displayMime, msg.fileName) && !err) {
-        return (
-            <>
-                <img
-                    src={srcUrl}
-                    alt={msg.fileName ?? 'image'}
-                    onError={() => setErr(true)}
-                    onClick={() => setLightbox(true)}
-                    className="max-w-[260px] max-h-[200px] rounded-xl object-cover cursor-pointer hover:opacity-90 block transition-opacity"
-                />
-                {lightbox && (
-                    <ImageModal
-                        src={srcUrl}
-                        alt={msg.fileName ?? 'image'}
-                        fileName={msg.fileName ?? undefined}
-                        onClose={() => setLightbox(false)}
-                    />
-                )}
-            </>
-        );
-    }
-
-    // Other files — download link using signed URL
-    return (
-        <a href={srcUrl}
-           target={isEncrypted && blobUrl ? '_self' : '_blank'}
-           rel="noopener noreferrer"
-           download={msg.fileName ?? true}
-           className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-colors max-w-[260px]
-            ${isMe
-               ? 'bg-white/15 hover:bg-white/25'
-               : 'bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600'}`}>
-            {err
-                ? <ImageOff size={20} className={isMe ? 'text-indigo-200 shrink-0' : 'text-slate-400 shrink-0'} />
-                : <FileText size={20} className={isMe ? 'text-indigo-200 shrink-0' : 'text-slate-400 shrink-0'} />}
-            <div className="min-w-0 flex-1">
-                <p className={`text-sm font-medium truncate ${isMe ? 'text-white' : 'text-slate-700 dark:text-slate-200'}`}>
-                    {msg.fileName ?? 'Файл'}
-                </p>
-                {msg.fileSize != null && (
-                    <p className={`text-xs ${isMe ? 'text-indigo-200' : 'text-slate-400'}`}>
-                        {formatFileSize(msg.fileSize)}
-                    </p>
-                )}
-            </div>
-            <Download size={14} className={isMe ? 'text-indigo-200 shrink-0' : 'text-slate-400 shrink-0'} />
-        </a>
-    );
-};
-
-const ReplyBubble = ({ reply, isMe }: { reply: NonNullable<Message['replyTo']>; isMe: boolean }) => (
-    <div className={`text-xs rounded-lg px-2.5 py-1.5 mb-1.5 border-l-2 cursor-default
-        ${isMe
-        ? 'bg-white/10 border-white/50 text-indigo-100'
-        : 'bg-slate-100 dark:bg-slate-700 border-slate-300 dark:border-slate-500 text-slate-500 dark:text-slate-400'}`}>
-        <p className="font-semibold mb-0.5">{reply.sender.nickname}</p>
-        <p className="truncate opacity-80">{reply.deletedAt ? 'Повідомлення видалено' : reply.content || '📎 Файл'}</p>
-    </div>
-);
-
-const ForwardBubble = ({ forward, isMe }: { forward: NonNullable<Message['forwardedFrom']>; isMe: boolean }) => (
-    <div className={`text-xs rounded-lg px-2.5 py-1.5 mb-1.5 border-l-2 cursor-default
-        ${isMe
-        ? 'bg-white/10 border-white/30 text-indigo-200'
-        : 'bg-slate-100 dark:bg-slate-700/60 border-indigo-300 dark:border-indigo-600 text-slate-500 dark:text-slate-400'}`}>
-        <p className="font-semibold mb-0.5 flex items-center gap-1">
-            <Forward size={10} className="shrink-0" />
-            Переслано від {forward.sender.nickname}
-        </p>
-    </div>
-);
 
 export default function ChatArea({
                                      currentUser, conversation, conversations, socket,
@@ -280,6 +39,7 @@ export default function ChatArea({
                                  }: ChatAreaProps) {
     const currentUserId = currentUser?.id;
 
+    // UI state
     const [inputValue,     setInputValue]     = useState('');
     const [hoveredKey,     setHoveredKey]     = useState<string | null>(null);
     const [confirmDelId,   setConfirmDelId]   = useState<number | null>(null);
@@ -294,9 +54,10 @@ export default function ChatArea({
     const [uploadError,    setUploadError]    = useState<string | null>(null);
     const [showVoice,      setShowVoice]      = useState(false);
     const [forwardMsg,     setForwardMsg]     = useState<Message | null>(null);
-    const [showMedia,   setShowMedia]   = useState(false);
+    const [showMedia,      setShowMedia]      = useState(false);
 
-    const abortRef = useRef<AbortController | null>(null);
+    // Refs
+    const abortRef       = useRef<AbortController | null>(null);
     const fileInputRef   = useRef<HTMLInputElement>(null);
     const editInputRef   = useRef<HTMLInputElement>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
@@ -305,57 +66,45 @@ export default function ChatArea({
     const lastMsgIdRef   = useRef<string | number | null>(null);
     const msgRefsMap     = useRef<Record<number, HTMLDivElement | null>>({});
 
+    // Conversation helpers
     const otherUserId = conversation?.type === 'DIRECT'
         ? conversation.members.find(m => m.userId !== currentUserId)?.userId
         : undefined;
-
-    const otherMember  = conversation?.type === 'DIRECT'
-        ? conversation.members.find(m => m.userId !== currentUserId)
-        : null;
-
-    const isSelfConv = conversation?.type === 'DIRECT' &&
-        conversation.members.every(m => m.userId === currentUserId);
-
-    const lastSeenText = otherMember && !conversation?.isOnline
-        ? formatLastSeen(otherMember.user?.lastSeen)
-        : null;
-
-    // E2E for binary (file/voice) encryption
-    const e2e = useE2E();
-
-    // Shared decrypt function for the current conversation's peer.
-    // Passed down to FileBubble and VoiceBubble so they can decrypt on load.
-    const decryptFn = otherUserId
-       ? (data: ArrayBuffer) => e2e.decryptBinary(data, otherUserId)
-       : conversation?.type === 'GROUP' && conversation?.id
-           ? (data: ArrayBuffer, senderId: number) => e2e.decryptBinaryFromGroup(data, conversation.id, senderId)
-          : undefined;
 
     const groupMemberIds = conversation?.type === 'GROUP'
         ? conversation.members.map(m => m.userId)
         : undefined;
 
+    const myMember = conversation?.members.find(m => m.userId === currentUserId);
+    const canPost  = conversation?.type !== 'CHANNEL' || myMember?.role !== 'MEMBER';
+    const isGroup  = conversation?.type === 'GROUP';
+    const isChannel= conversation?.type === 'CHANNEL';
+    const canPin   = myMember?.role === 'OWNER' || myMember?.role === 'ADMIN';
+
+    // E2E
+    const e2e = useE2E();
+
+    const decryptFn = otherUserId
+        ? (data: ArrayBuffer, _: number) => e2e.decryptBinary(data, otherUserId)
+        : conversation?.type === 'GROUP' && conversation?.id
+            ? (data: ArrayBuffer, senderId: number) => e2e.decryptBinaryFromGroup(data, conversation.id, senderId)
+            : undefined;
+
+    // Messages hook
     const {
         messages, typingUsers, hasMore, isLoadingMore, jumpTarget,
         sendMessage, sendFileMessage, deleteMessage, editMessage, toggleReaction,
         notifyTyping, loadMoreMessages, jumpToMessage, clearJumpTarget,
-        isOnline, offlineQueueCount
+        isOnline, offlineQueueCount,
     } = useMessages(
-        conversation?.id,
-        currentUserId,
-        socket,
-        otherUserId,
+        conversation?.id, currentUserId, socket, otherUserId,
         (msg) => {
             if (!msg.id) return;
             onConversationUpdate?.({
                 id: msg.conversationId,
                 lastMessage: {
-                    id:        msg.id,
-                    content:   msg.content,
-                    senderId:  Number(msg.senderId),
-                    createdAt: msg.createdAt as string,
-                    fileType:  msg.fileType  ?? null,
-                    fileUrl:   msg.fileUrl   ?? null,
+                    id: msg.id, content: msg.content, senderId: Number(msg.senderId),
+                    createdAt: msg.createdAt as string, fileType: msg.fileType ?? null, fileUrl: msg.fileUrl ?? null,
                 },
             });
         },
@@ -363,9 +112,13 @@ export default function ChatArea({
         groupMemberIds,
     );
 
-    const { query, setQuery, results, isSearching, isOpen, setIsOpen, close: closeSearch, loadedCount } =
-        useSearch(conversation?.id, otherUserId);
+    // Search hook
+    const {
+        query, setQuery, results, isSearching, isOpen: isSearchOpen,
+        setIsOpen: setSearchOpen, close: closeSearch, loadedCount,
+    } = useSearch(conversation?.id, otherUserId);
 
+    // Auto-scroll
     useEffect(() => {
         if (!messages.length) return;
         const last = messages[messages.length - 1];
@@ -396,17 +149,18 @@ export default function ChatArea({
 
     useEffect(() => { setSearchNavIdx(0); }, [results]);
 
+    // Keyboard shortcuts
     useEffect(() => {
         const h = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
-                if (editingId !== null) cancelEdit();
-                else if (replyTo)       setReplyTo(null);
-                else if (isOpen)        closeSearch();
+                if (editingId !== null)  cancelEdit();
+                else if (replyTo)        setReplyTo(null);
+                else if (isSearchOpen)   closeSearch();
             }
         };
         document.addEventListener('keydown', h);
         return () => document.removeEventListener('keydown', h);
-    }, [editingId, replyTo, isOpen]);
+    }, [editingId, replyTo, isSearchOpen]);
 
     useEffect(() => {
         if (editingId !== null) {
@@ -417,9 +171,10 @@ export default function ChatArea({
     }, [editingId]);
 
     useEffect(() => {
-        if (isOpen) setTimeout(() => searchInputRef.current?.focus(), 50);
-    }, [isOpen]);
+        if (isSearchOpen) setTimeout(() => searchInputRef.current?.focus(), 50);
+    }, [isSearchOpen]);
 
+    // Infinite scroll
     const handleScroll = async (e: UIEvent<HTMLDivElement>) => {
         const t = e.currentTarget;
         if (t.scrollTop <= 1 && hasMore && !isLoadingMore) {
@@ -429,59 +184,35 @@ export default function ChatArea({
         }
     };
 
-    // File upload - encrypts bytes for DIRECT chats before upload
+    // File upload
     const handleFileUpload = useCallback(async (file: File) => {
         if (!file || !conversation) return;
         setUploadError(null); setUploadProgress(0);
         const ctrl = new AbortController();
         abortRef.current = ctrl;
         try {
-            // Стиснення зображень перед шифруванням і відправкою
-            // Стискаємо оригінальний файл до шифрування — шифруємо вже менший blob.
-            // Зберігаємо originalFile для відображення
             let fileToProcess = file;
             let displayName   = file.name;
             let displaySize   = file.size;
+            let displayType   = file.type;
 
-
-           let displayType = file.type;
-           if (!displayType || displayType === 'application/octet-stream') {
-               const derived = mimeFromFileName(file.name);
-               if (derived) displayType = derived;
-           }
-
-           if (displayType !== file.type) {
-               fileToProcess = new File([file], file.name, { type: displayType });
-           }
+            if (!displayType || displayType === 'application/octet-stream') {
+                const derived = mimeFromFileName(file.name);
+                if (derived) displayType = derived;
+            }
+            if (displayType !== file.type) {
+                fileToProcess = new File([file], file.name, { type: displayType });
+            }
 
             if (displayType.startsWith('image/')) {
-                const result = await compressImage(file, {
-                    maxWidth:      1920,
-                    maxHeight:     1920,
-                    quality:       0.75,
-                    outputFormat:  'image/jpeg',
-                    skipIfSmaller: 100 * 1024, // не стискаємо файли < 200 KB
-                });
-
-                console.info(
-                    `[compress] ${file.name} (${(file.size / 1024).toFixed(0)} KB)`,
-                    result.wasCompressed
-                        ? `→ ${(result.compressedSize / 1024).toFixed(0)} KB (-${result.savedPercent}%)`
-                        : `→ не стискалось (${
-                            file.size <= 200 * 1024 ? 'файл < 200KB' :
-                                !file.type.startsWith('image/') ? 'не зображення' :
-                                    'стиснутий більший за оригінал'
-                        })`,
-                );
-
+                const result = await compressImage(file, { maxWidth: 1920, maxHeight: 1920, quality: 0.75, outputFormat: 'image/jpeg', skipIfSmaller: 100 * 1024 });
                 if (result.wasCompressed) {
                     fileToProcess = result.file;
-                    displayType   = result.file.type;   // jpeg/webp
-                    displaySize   = result.originalSize; // показуємо оригінальний розмір
+                    displayType   = result.file.type;
+                    displaySize   = result.originalSize;
                 }
             }
 
-            // E2E шифрування (стисненого файлу)
             let fileToUpload = fileToProcess;
             let encMeta: string | undefined;
 
@@ -498,77 +229,53 @@ export default function ChatArea({
             }
 
             const r = await uploadFile(fileToUpload, setUploadProgress, ctrl.signal);
-
-            sendFileMessage({
-                fileUrl:   r.url,
-                fileName:  displayName,  // оригінальне ім'я для відображення
-                fileType:  displayType,  // стиснутий тип (jpeg/webp) або оригінальний
-                fileSize:  displaySize,  // оригінальний розмір для відображення
-                replyToId: replyTo?.id,
-                metadata:  encMeta,
-            });
+            sendFileMessage({ fileUrl: r.url, fileName: displayName, fileType: displayType, fileSize: displaySize, replyToId: replyTo?.id, metadata: encMeta });
             setReplyTo(null);
         } catch (err: any) {
             if (err.message !== 'Upload cancelled') setUploadError(err.message ?? 'Помилка');
         } finally { setUploadProgress(null); abortRef.current = null; }
     }, [conversation, sendFileMessage, replyTo, otherUserId, e2e]);
 
-    function mimeToExtension(mimeType: string): string {
-        const m = mimeType.toLowerCase().split(';')[0].trim();
-        if (m === 'audio/webm') return 'webm';
-        if (m === 'audio/ogg')  return 'ogg';
-        if (m === 'audio/mp4')  return 'mp4';
-        if (m === 'audio/mpeg') return 'mp3';
-        if (m === 'audio/wav')  return 'wav';
-        return 'webm';
-    }
+    // Voice message
+    const mimeToExtension = (m: string) => {
+        if (m === 'audio/webm') return 'webm'; if (m === 'audio/ogg') return 'ogg';
+        if (m === 'audio/mp4')  return 'mp4';  if (m === 'audio/mpeg') return 'mp3';
+        if (m === 'audio/wav')  return 'wav';  return 'webm';
+    };
 
-    // Voice message - encrypts WAV bytes for DIRECT chats before upload
-    const sendVoiceMessage = useCallback(async (
-        blob: Blob,
-        waveform: number[],
-        duration: number,
-        mimeType: string,
-    ) => {
+    const sendVoiceMessage = useCallback(async (blob: Blob, waveform: number[], duration: number, mimeType: string) => {
         if (!conversation) return;
-        setShowVoice(false);
-        setUploadError(null); setUploadProgress(0);
+        setShowVoice(false); setUploadError(null); setUploadProgress(0);
         const ctrl = new AbortController();
         abortRef.current = ctrl;
         try {
             const baseMeta = { waveform, duration, mimeType };
-
             let fileToUpload: File;
             let metaObj: object;
 
             if (otherUserId) {
-                const buf    = await blob.arrayBuffer();
-                const encBuf = await e2e.encryptBinary(buf, otherUserId);
-                fileToUpload = new File([encBuf], `voice.${mimeToExtension(mimeType)}`, { type: mimeType })
-                metaObj      = { ...baseMeta, encrypted: true };
+                const buf = await blob.arrayBuffer();
+                const enc = await e2e.encryptBinary(buf, otherUserId);
+                fileToUpload = new File([enc], `voice.${mimeToExtension(mimeType)}`, { type: mimeType });
+                metaObj = { ...baseMeta, encrypted: true };
             } else if (conversation?.type === 'GROUP' && conversation?.id) {
-                const buf    = await blob.arrayBuffer();
-                const encBuf = await e2e.encryptBinaryForGroup(buf, conversation.id);
-                fileToUpload = new File([encBuf], `voice.${mimeToExtension(mimeType)}`, { type: mimeType })
-                metaObj      = { ...baseMeta, encrypted: true };
+                const buf = await blob.arrayBuffer();
+                const enc = await e2e.encryptBinaryForGroup(buf, conversation.id);
+                fileToUpload = new File([enc], `voice.${mimeToExtension(mimeType)}`, { type: mimeType });
+                metaObj = { ...baseMeta, encrypted: true };
             } else {
-                fileToUpload = new File([blob],   `voice.${mimeToExtension(mimeType)}`, { type: mimeType })
-                metaObj      = baseMeta;
+                fileToUpload = new File([blob], `voice.${mimeToExtension(mimeType)}`, { type: mimeType });
+                metaObj = baseMeta;
             }
 
             const r = await uploadFile(fileToUpload, setUploadProgress, ctrl.signal);
-            sendFileMessage({
-                fileUrl:  r.url,
-                fileName: 'Голосове повідомлення',
-                fileType: mimeType,
-                fileSize: blob.size,
-                metadata: JSON.stringify(metaObj),
-            });
+            sendFileMessage({ fileUrl: r.url, fileName: 'Голосове повідомлення', fileType: mimeType, fileSize: blob.size, metadata: JSON.stringify(metaObj) });
         } catch (err: any) {
             if (err.message !== 'Upload cancelled') setUploadError(err.message ?? 'Помилка');
         } finally { setUploadProgress(null); abortRef.current = null; }
     }, [conversation, sendFileMessage, otherUserId, e2e]);
 
+    // Pin / Forward
     const pinMessage = useCallback((msgId: number) => {
         if (!conversation) return;
         socket?.emit('pinMessage', { conversationId: conversation.id, messageId: msgId });
@@ -580,26 +287,24 @@ export default function ChatArea({
     }, [socket, conversation]);
 
     const forwardMessage = useCallback((msgId: number, targetConvId: number) => {
-        if (!socket) return;
-        socket.emit('forwardMessage', {
-            messageId: msgId,
-            targetConversationId: targetConvId,
-        });
+        socket?.emit('forwardMessage', { messageId: msgId, targetConversationId: targetConvId });
     }, [socket]);
 
+    // Drag & drop
     const onDragEnter = (e: React.DragEvent) => {
-        e.preventDefault(); setDragCounter((c) => c + 1);
+        e.preventDefault(); setDragCounter(c => c + 1);
         if (e.dataTransfer.types.includes('Files')) setIsDragging(true);
     };
     const onDragLeave = (e: React.DragEvent) => {
         e.preventDefault();
-        setDragCounter((c) => { const n = c - 1; if (n <= 0) { setIsDragging(false); return 0; } return n; });
+        setDragCounter(c => { const n = c - 1; if (n <= 0) { setIsDragging(false); return 0; } return n; });
     };
     const onDrop = (e: React.DragEvent) => {
         e.preventDefault(); setIsDragging(false); setDragCounter(0);
         const f = e.dataTransfer.files[0]; if (f) handleFileUpload(f);
     };
 
+    // Edit helpers
     const startEdit = (msg: Message) => {
         if (!msg.id || msg.deletedAt || msg.fileUrl) return;
         if (Date.now() - new Date(msg.createdAt).getTime() > EDIT_WINDOW_MS) return;
@@ -612,6 +317,7 @@ export default function ChatArea({
         cancelEdit();
     };
 
+    // Search navigation
     const navSearch = (dir: 'prev' | 'next') => {
         if (!results.length) return;
         const next = dir === 'next'
@@ -629,12 +335,7 @@ export default function ChatArea({
         setInputValue(''); setReplyTo(null);
     };
 
-    const myMember  = conversation?.members.find((m) => m.userId === currentUserId);
-    const canPost   = conversation?.type !== 'CHANNEL' || myMember?.role !== 'MEMBER';
-    const isChannel = conversation?.type === 'CHANNEL';
-    const isGroup   = conversation?.type === 'GROUP';
-    const canPin    = myMember?.role === 'OWNER' || myMember?.role === 'ADMIN';
-
+    // Empty state
     if (!conversation) {
         return (
             <div className="flex-1 flex items-center justify-center bg-slate-50 dark:bg-slate-900 text-slate-400 font-medium flex-col gap-3 transition-colors duration-200">
@@ -644,11 +345,14 @@ export default function ChatArea({
         );
     }
 
+    // Render
     return (
-        <main className="flex-1 flex flex-col bg-slate-50 dark:bg-slate-900 relative min-w-0 transition-colors duration-200"
-              onDragEnter={onDragEnter} onDragLeave={onDragLeave}
-              onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
-
+        <main
+            className="flex-1 flex flex-col bg-slate-50 dark:bg-slate-900 relative min-w-0 transition-colors duration-200"
+            onDragEnter={onDragEnter} onDragLeave={onDragLeave}
+            onDragOver={(e) => e.preventDefault()} onDrop={onDrop}
+        >
+            {/* Drag overlay */}
             {isDragging && (
                 <div className="absolute inset-0 z-50 bg-indigo-500/10 backdrop-blur-[2px] flex items-center justify-center pointer-events-none">
                     <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl px-10 py-8 flex flex-col items-center gap-3 border-2 border-dashed border-indigo-400">
@@ -659,83 +363,25 @@ export default function ChatArea({
                 </div>
             )}
 
-            {/* ── Header ── */}
-            <header className="px-5 py-3.5 bg-white dark:bg-slate-800 border-b border-gray-100 dark:border-slate-700 flex items-center justify-between shadow-sm z-10">
-                <div className="flex items-center gap-3 min-w-0">
-                    {conversation.avatarUrl || conversation.type === 'DIRECT' ? (
-                        <div className="relative shrink-0">
-                            <Avatar user={{ nickname: conversation.name ?? '?', avatarUrl: conversation.avatarUrl }} size="md" />
-                            {conversation.type === 'DIRECT' && (
-                                <span className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-white dark:border-slate-800
-                                    ${conversation.isOnline ? 'bg-emerald-400' : 'bg-slate-300 dark:bg-slate-600'}`} />
-                            )}
-                        </div>
-                    ) : (
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0
-                            ${isGroup ? 'bg-violet-100 dark:bg-violet-900/40' : 'bg-indigo-100 dark:bg-indigo-900/40'}`}>
-                            {isGroup ? <Users size={18} className="text-violet-500" /> : <Hash size={18} className="text-indigo-500" />}
-                        </div>
-                    )}
-                    <div className="min-w-0">
-                        <h2 className="font-semibold text-gray-800 dark:text-slate-100 text-base leading-tight truncate">
-                            {conversation.name ?? 'Чат'}
-                        </h2>
-                        <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
-                            {conversation.type === 'DIRECT'
-                                ? isSelfConv
-                                    ? 'Збережені повідомлення'
-                                    : (conversation.isOnline ? 'В мережі' : lastSeenText ?? 'Офлайн')
-                                : `${conversation.members.length} учасників`}
-                        </p>
-                    </div>
-                </div>
-                <div className="flex items-center gap-1">
-                    <button onClick={() => setIsOpen((o) => !o)}
-                            className={`p-2 rounded-full transition-all cursor-pointer
-                                ${isOpen ? 'text-indigo-600 bg-indigo-50 dark:bg-indigo-900/40' : 'text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30'}`}
-                            title="Пошук">
-                        <Search size={17} />
-                    </button>
-                    <button
-                        onClick={() => setShowMedia(o => !o)}
-                        className={`p-2 rounded-full transition-all cursor-pointer
-                            ${showMedia
-                                ? 'text-violet-600 bg-violet-50 dark:bg-violet-900/40'
-                                : 'text-slate-400 hover:text-violet-500 hover:bg-violet-50 dark:hover:bg-violet-900/30'}`}
-                        title="Вкладення"
-                    >
-                        <LayoutGrid size={17} />
-                    </button>
-                    {conversation.type === 'DIRECT' && onStartCall && (() => {
-                        const other = conversation.members.find(m => m.userId !== currentUserId);
-                        if (!other) return null;
-                        return (
-                            <>
-                                <button
-                                    onClick={() => onStartCall(conversation.id, other.userId, 'audio')}
-                                    className="p-2 rounded-full text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 cursor-pointer transition-all"
-                                    title="Аудіо дзвінок">
-                                    <Phone size={17} />
-                                </button>
-                                <button
-                                    onClick={() => onStartCall(conversation.id, other.userId, 'video')}
-                                    className="p-2 rounded-full text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 cursor-pointer transition-all"
-                                    title="Відео дзвінок">
-                                    <Video size={17} />
-                                </button>
-                            </>
-                        );
-                    })()}
-                </div>
-            </header>
+            {/* Header */}
+            <ChatHeader
+                conversation={conversation}
+                currentUser={currentUser}
+                isSearchOpen={isSearchOpen}
+                showMedia={showMedia}
+                onToggleSearch={() => setSearchOpen(o => !o)}
+                onToggleMedia={() => setShowMedia(o => !o)}
+                onStartCall={onStartCall}
+            />
 
-            {/* ── Pinned message banner ── */}
+            {/* Pinned message */}
             {conversation.pinnedMessage && (
                 <div className="bg-amber-50 dark:bg-amber-900/20 border-b border-amber-100 dark:border-amber-900/40 px-4 py-2 flex items-center gap-2 z-10">
                     <Pin size={13} className="text-amber-500 shrink-0" />
                     <button
                         onClick={() => conversation.pinnedMessage?.id && jumpToMessage(conversation.pinnedMessage.id)}
-                        className="flex-1 min-w-0 text-left">
+                        className="flex-1 min-w-0 text-left"
+                    >
                         <p className="text-xs font-semibold text-amber-600 dark:text-amber-400 leading-tight">
                             {conversation.pinnedMessage.sender.nickname}
                         </p>
@@ -744,71 +390,31 @@ export default function ChatArea({
                         </p>
                     </button>
                     {canPin && (
-                        <button
-                            onClick={unpinMessage}
-                            className="p-1 text-slate-400 hover:text-red-500 cursor-pointer transition-colors"
-                            title="Відкріпити">
+                        <button onClick={unpinMessage} className="p-1 text-slate-400 hover:text-red-500 cursor-pointer transition-colors" title="Відкріпити">
                             <PinOff size={13} />
                         </button>
                     )}
                 </div>
             )}
 
-            {/* ── Search panel ── */}
-            {isOpen && (
-                <div className="bg-white dark:bg-slate-800 border-b border-gray-100 dark:border-slate-700 px-4 py-3 flex flex-col gap-2 z-10 shadow-sm">
-                    <div className="flex items-center gap-2">
-                        <div className="flex-1 relative">
-                            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                            <input ref={searchInputRef} value={query} onChange={(e) => setQuery(e.target.value)}
-                                   placeholder="Пошук по повідомленнях..."
-                                   className="w-full pl-8 pr-4 py-2 text-sm bg-slate-50 dark:bg-slate-700 dark:text-slate-200 dark:placeholder-slate-400 rounded-xl outline-none focus:bg-white dark:focus:bg-slate-600 focus:ring-2 focus:ring-indigo-200 transition-all" />
-                            {isSearching && (
-                                <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
-                                    <Loader2 size={13} className="animate-spin text-slate-400" />
-                                    {loadedCount > 0 && (
-                                        <span className="text-[11px] text-slate-400">{loadedCount}...</span>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                        {results.length > 0 && (
-                            <div className="flex items-center gap-1">
-                                <span className="text-xs text-slate-400 whitespace-nowrap px-1">{searchNavIdx + 1} / {results.length}</span>
-                                <button onClick={() => navSearch('prev')} className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 cursor-pointer"><ChevronUp size={15}/></button>
-                                <button onClick={() => navSearch('next')} className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 cursor-pointer"><ChevronDown size={15}/></button>
-                            </div>
-                        )}
-                        <button onClick={closeSearch} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"><X size={15}/></button>
-                    </div>
-                    {query.trim().length >= 2 && !isSearching && (
-                        <div className="max-h-52 overflow-y-auto rounded-xl border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-700 divide-y divide-slate-100 dark:divide-slate-600">
-                            {results.length === 0
-                                ? <p className="text-xs text-slate-400 text-center py-4">Нічого не знайдено</p>
-                                : results.map((msg, idx) => {
-                                    const isMe = String(msg.senderId) === String(currentUserId);
-                                    return (
-                                        <button key={msg.id ?? idx}
-                                                onClick={() => { setSearchNavIdx(idx); if (msg.id) jumpToMessage(msg.id); }}
-                                                className={`w-full text-left px-3 py-2.5 hover:bg-white dark:hover:bg-slate-600 transition-colors
-                                                    ${idx === searchNavIdx ? 'bg-indigo-50 dark:bg-indigo-900/30 border-l-2 border-l-indigo-400' : ''}`}>
-                                            <div className="flex items-center justify-between mb-0.5">
-                                                <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400">{isMe ? 'Ви' : (msg.sender?.nickname ?? '?')}</span>
-                                                <span className="text-[10px] text-slate-400">{formatTime(msg.createdAt)}</span>
-                                            </div>
-                                            <p className="text-sm text-slate-600 dark:text-slate-300 truncate">
-                                                <HighlightText text={msg.content} query={query} />
-                                            </p>
-                                        </button>
-                                    );
-                                })
-                            }
-                        </div>
-                    )}
-                </div>
+            {/* Search panel */}
+            {isSearchOpen && (
+                <SearchPanel
+                    query={query}
+                    setQuery={setQuery}
+                    results={results}
+                    isSearching={isSearching}
+                    loadedCount={loadedCount}
+                    navIdx={searchNavIdx}
+                    currentUserId={currentUserId}
+                    searchInputRef={searchInputRef}
+                    onNavSearch={navSearch}
+                    onClose={closeSearch}
+                    onJumpTo={(msgId, idx) => { setSearchNavIdx(idx); jumpToMessage(msgId); }}
+                />
             )}
 
-            {/* ── Messages ── */}
+            {/* Messages list */}
             <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-5 py-5 space-y-1">
                 {isLoadingMore && (
                     <div className="flex justify-center py-2">
@@ -816,311 +422,72 @@ export default function ChatArea({
                     </div>
                 )}
 
-                {messages.map((msg: Message, idx: number) => {
-                    const isMe       = String(msg.senderId) === String(currentUserId);
-                    const isDeleted  = !!msg.deletedAt;
-                    const isEdited   = !!msg.editedAt && !isDeleted;
-                    const isVoice    = !!msg.fileUrl && !!msg.fileType?.startsWith('audio/') &&
-                        !!(msg.metadata || msg.fileName === 'Голосове повідомлення');
-                    const hasFile    = !!msg.fileUrl && !isDeleted && !isVoice;
-                    const isImage    = hasFile && isImageType(msg.fileType, msg.fileName);
-                    const msgKey     = msg.id ? `msg-${msg.id}` : `tmp-${idx}`;
-                    const isHovered  = hoveredKey === msgKey;
-                    const isConfirm  = msg.id != null && confirmDelId === msg.id;
-                    const isEditing  = msg.id != null && editingId    === msg.id;
-                    const isPickerOn = pickerKey === msgKey;
-                    const isJump     = msg.id != null && jumpTarget === msg.id;
-                    const age        = Date.now() - new Date(msg.createdAt).getTime();
-                    const canEdit    = isMe && !isDeleted && !!msg.id && !msg.fileUrl && age <= EDIT_WINDOW_MS;
-                    const showAct    = isHovered || isConfirm || isPickerOn;
-                    const showSep    = idx === 0 ||
-                        new Date(msg.createdAt).toDateString() !== new Date(messages[idx - 1].createdAt).toDateString();
-                    const showSender = !isMe && (isGroup || isChannel);
-
-                    const msgUrls = (!isDeleted && msg.content && !isVoice && !msg.fileUrl)
-                        ? extractUrls(msg.content).slice(0, 1)
-                        : [];
-
-                    return (
-                        <React.Fragment key={msgKey}>
-                            {showSep && (
-                                <div className="flex justify-center my-4">
-                                    <span className="bg-violet-100/50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400 font-medium text-xs px-4 py-1.5 rounded-full">
-                                        {formatDateSep(msg.createdAt)}
-                                    </span>
-                                </div>
-                            )}
-
-                            <div
-                                ref={(el) => { if (msg.id) msgRefsMap.current[msg.id] = el; }}
-                                className={`flex flex-col mb-1 ${isMe ? 'items-end' : 'items-start'}`}
-                                onMouseEnter={() => setHoveredKey(msgKey)}
-                                onMouseLeave={() => setHoveredKey(null)}
-                            >
-                                {showSender && !isDeleted && (
-                                    <div className="flex items-center gap-2 mb-1 ml-1">
-                                        {msg.sender && <Avatar user={msg.sender} size="sm" />}
-                                        <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400">{msg.sender?.nickname ?? ''}</span>
-                                    </div>
-                                )}
-
-                                <div className={`flex items-end gap-2 ${isMe ? 'flex-row' : 'flex-row-reverse'}`}>
-                                    {!isDeleted && msg.id && !isEditing && (
-                                        <div className={`flex items-center gap-1 transition-opacity duration-150 ${showAct ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-                                            <button onClick={() => setReplyTo(msg)}
-                                                    className="p-1.5 rounded-full text-slate-400 hover:text-violet-500 hover:bg-violet-50 dark:hover:bg-violet-900/30 cursor-pointer transition-all">
-                                                <Reply size={13} />
-                                            </button>
-                                            <button onClick={() => setForwardMsg(msg)}
-                                                    className="p-1.5 rounded-full text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 cursor-pointer transition-all">
-                                                <Forward size={13} />
-                                            </button>
-                                            {canPin && (isGroup || isChannel) && (
-                                                <button onClick={() => pinMessage(msg.id!)}
-                                                        className="p-1.5 rounded-full text-slate-400 hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/30 cursor-pointer transition-all"
-                                                        title="Закріпити">
-                                                    <Pin size={13} />
-                                                </button>
-                                            )}
-                                            <div className="relative">
-                                                <button onClick={() => setPickerKey((p) => p === msgKey ? null : msgKey)}
-                                                        className={`p-1.5 rounded-full transition-all cursor-pointer
-                                                            ${isPickerOn ? 'text-indigo-500 bg-indigo-50 dark:bg-indigo-900/40' : 'text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30'}`}>
-                                                    <SmilePlus size={13} />
-                                                </button>
-                                                {isPickerOn && (
-                                                    <EmojiPicker align={isMe ? 'right' : 'left'}
-                                                                 onSelect={(e) => { toggleReaction(msg.id!, e); }}
-                                                                 onClose={() => setPickerKey(null)} />
-                                                )}
-                                            </div>
-                                            {isMe && (
-                                                <>
-                                                    {isConfirm ? (
-                                                        <div className="flex items-center gap-1.5 bg-white dark:bg-slate-800 border border-red-100 dark:border-red-900 rounded-xl px-2.5 py-1.5 shadow-md"
-                                                             onClick={(e) => e.stopPropagation()}>
-                                                            <span className="text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap">Видалити?</span>
-                                                            <button onClick={(e) => { e.stopPropagation(); deleteMessage(msg.id!); setConfirmDelId(null); }}
-                                                                    className="text-xs font-semibold text-red-500 hover:text-red-700 px-1.5 py-0.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/30 cursor-pointer">Так</button>
-                                                            <button onClick={(e) => { e.stopPropagation(); setConfirmDelId(null); }}
-                                                                    className="text-xs font-semibold text-slate-400 hover:text-slate-600 px-1.5 py-0.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer">Ні</button>
-                                                        </div>
-                                                    ) : (
-                                                        <>
-                                                            {canEdit && (
-                                                                <button onClick={() => startEdit(msg)}
-                                                                        className="p-1.5 rounded-full text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 cursor-pointer transition-all">
-                                                                    <Pencil size={13} />
-                                                                </button>
-                                                            )}
-                                                            <button onClick={(e) => { e.stopPropagation(); setConfirmDelId(msg.id!); }}
-                                                                    className="p-1.5 rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 cursor-pointer transition-all">
-                                                                <Trash2 size={13} />
-                                                            </button>
-                                                        </>
-                                                    )}
-                                                </>
-                                            )}
-                                        </div>
-                                    )}
-
-                                    <div className={`
-                                        ${isImage ? 'p-1.5' : isVoice ? 'px-3 py-2.5' : 'px-4 py-2.5'}
-                                        max-w-md break-words flex flex-col shadow-sm transition-all duration-300
-                                        ${isMe
-                                        ? 'bg-indigo-500 text-white rounded-2xl rounded-br-sm'
-                                        : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-2xl rounded-bl-sm'}
-                                        ${isDeleted ? 'opacity-60' : ''}
-                                        ${isEditing ? 'ring-2 ring-indigo-300 ring-offset-1' : ''}
-                                        ${isJump    ? 'ring-2 ring-yellow-400 ring-offset-2 scale-[1.02]' : ''}
-                                    `}
-                                         onDoubleClick={() => canEdit && !isEditing && startEdit(msg)}
-                                    >
-                                        {isDeleted ? (
-                                            <span className={`text-sm italic ${isMe ? 'text-indigo-200' : 'text-slate-400 dark:text-slate-500'}`}>
-                                                Повідомлення видалено
-                                            </span>
-                                        ) : isEditing ? (
-                                            <div className="flex items-center gap-2 min-w-[200px]">
-                                                <input ref={editInputRef} value={editingContent}
-                                                       onChange={(e) => setEditingContent(e.target.value)}
-                                                       onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submitEdit(msg.id!); }}}
-                                                       maxLength={4000}
-                                                       className="flex-1 bg-transparent text-white placeholder-indigo-300 outline-none text-sm leading-relaxed min-w-0" />
-                                                <div className="flex gap-1 shrink-0">
-                                                    <button onClick={() => submitEdit(msg.id!)} className="p-1 rounded-full bg-white/20 hover:bg-white/30 text-white cursor-pointer"><Check size={12}/></button>
-                                                    <button onClick={cancelEdit}               className="p-1 rounded-full bg-white/20 hover:bg-white/30 text-white cursor-pointer"><X    size={12}/></button>
-                                                </div>
-                                            </div>
-                                        ) : (
-                                            <>
-                                                {msg.forwardedFrom && (
-                                                    <ForwardBubble forward={msg.forwardedFrom} isMe={isMe} />
-                                                )}
-                                                {msg.replyTo && <ReplyBubble reply={msg.replyTo} isMe={isMe} />}
-
-                                                {/* Voice message — pass decryptFn for E2E voice */}
-                                                {isVoice && (
-                                                    <VoiceBubble
-                                                        fileUrl={msg.fileUrl!}
-                                                        metadata={msg.metadata}
-                                                        isMe={isMe}
-                                                        onDecrypt={decryptFn ? (d) => decryptFn(d, Number(msg.senderId)) : undefined}
-                                                    />
-                                                )}
-
-                                                {/* File / image — pass decryptFn for E2E files */}
-                                                {hasFile && (
-                                                    <FileBubble
-                                                        msg={msg}
-                                                        isMe={isMe}
-                                                        onDecrypt={decryptFn ? (d) => decryptFn(d, Number(msg.senderId)) : undefined}
-                                                    />
-                                                )}
-
-                                                {msg.content && !isVoice && (
-                                                    <span className={`leading-relaxed ${hasFile ? (isImage ? 'px-2 pt-1' : 'mt-1.5') : ''}`}>
-                                                        {isOpen && query.trim().length >= 2
-                                                            ? <HighlightText text={msg.content} query={query} />
-                                                            : msg.content}
-                                                    </span>
-                                                )}
-                                                {msgUrls.map(url => (
-                                                    <LinkPreview key={url} url={url} isMe={isMe} />
-                                                ))}
-                                            </>
-                                        )}
-
-                                        {!isEditing && (
-                                            <div className={`flex items-center gap-1 self-end mt-1 ${isImage ? 'px-2 pb-1' : ''}`}>
-                                                {isEdited && (
-                                                    <span className={`text-[10px] italic select-none ${isMe ? 'text-indigo-200' : 'text-slate-400 dark:text-slate-500'}`}>ред.</span>
-                                                )}
-                                                <span className={`text-[10px] font-medium select-none ${isMe ? 'text-indigo-200' : 'text-slate-400 dark:text-slate-500'}`}>
-                                                    {formatTime(msg.createdAt)}
-                                                </span>
-                                                {isMe && !isDeleted && <MessageStatus msg={msg} />}
-                                                {isMe && !isDeleted && (isGroup || isChannel) && msg.readBy && msg.readBy.length > 0 && (
-                                                    <span
-                                                        className="text-[10px] text-indigo-200 cursor-default ml-0.5"
-                                                        title={msg.readBy.map(r => r.nickname).join(', ')}>
-                                                        👁 {msg.readBy.length}
-                                                    </span>
-                                                )}
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-
-                                <ReactionsRow reactions={msg.reactions ?? []} currentUserId={currentUserId!}
-                                              onToggle={(e) => msg.id && toggleReaction(msg.id, e)} />
-                            </div>
-                        </React.Fragment>
-                    );
-                })}
+                {messages.map((msg: Message, idx: number) => (
+                    <MessageItem
+                        key={msg.id ? `msg-${msg.id}` : `tmp-${idx}`}
+                        msg={msg}
+                        prevMsg={idx > 0 ? messages[idx - 1] : null}
+                        currentUserId={currentUserId}
+                        isGroup={!!isGroup}
+                        isChannel={!!isChannel}
+                        canPin={!!canPin}
+                        isSearchOpen={isSearchOpen}
+                        searchQuery={query}
+                        jumpTarget={jumpTarget}
+                        hoveredKey={hoveredKey}
+                        editingId={editingId}
+                        editingContent={editingContent}
+                        confirmDelId={confirmDelId}
+                        pickerKey={pickerKey}
+                        decryptFn={decryptFn}
+                        msgRefsMap={msgRefsMap}
+                        editInputRef={editInputRef}
+                        onHover={setHoveredKey}
+                        onSetReplyTo={setReplyTo}
+                        onForwardMsg={setForwardMsg}
+                        onPinMessage={pinMessage}
+                        onPickerKey={setPickerKey}
+                        onToggleReaction={toggleReaction}
+                        onConfirmDelete={setConfirmDelId}
+                        onStartEdit={startEdit}
+                        onSubmitEdit={submitEdit}
+                        onCancelEdit={cancelEdit}
+                        onEditContent={setEditingContent}
+                        onDeleteMessage={deleteMessage}
+                    />
+                ))}
                 <div ref={messagesEndRef} />
             </div>
 
-            {(!isOnline || !socket?.connected) && (
-                <div className="px-4 py-2 bg-amber-50 dark:bg-amber-900/20 border-t border-amber-100 dark:border-amber-800/50 flex items-center gap-2">
-                    <WifiOff size={13} className="text-amber-500 shrink-0" />
-                    <span className="text-xs text-amber-700 dark:text-amber-400 flex-1">
-            Немає з'єднання — повідомлення надішлються автоматично
-        </span>
-                    {offlineQueueCount > 0 && (
-                        <span className="text-xs font-semibold text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/50 px-2 py-0.5 rounded-full shrink-0">
-                {offlineQueueCount}
-            </span>
-                    )}
-                </div>
-            )}
+            {/* Input + banners */}
+            <ChatInput
+                canPost={!!canPost}
+                inputValue={inputValue}
+                replyTo={replyTo}
+                typingUsers={typingUsers}
+                showVoice={showVoice}
+                uploadProgress={uploadProgress}
+                uploadError={uploadError}
+                isOnline={isOnline}
+                socketConnected={!!socket?.connected}
+                offlineQueueCount={offlineQueueCount}
+                fileInputRef={fileInputRef}
+                onInputChange={setInputValue}
+                onSubmit={handleSubmit}
+                onFileSelect={handleFileUpload}
+                onSendVoice={sendVoiceMessage}
+                onCancelUpload={() => { abortRef.current?.abort(); setUploadProgress(null); }}
+                onClearError={() => setUploadError(null)}
+                onSetReplyTo={setReplyTo}
+                onSetShowVoice={setShowVoice}
+                notifyTyping={notifyTyping}
+            />
 
-            {/* Typing indicator */}
-            {typingUsers.length > 0 && (
-                <div className="px-5 py-1.5 bg-slate-50 dark:bg-slate-900 border-t border-gray-100/50 dark:border-slate-800">
-                    <div className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl rounded-bl-sm bg-white dark:bg-slate-800 border border-gray-100 dark:border-slate-700 text-violet-400 text-sm italic shadow-sm animate-pulse">
-                        <span className="font-medium">{typingUsers.map((t) => t.nickname).join(', ')}</span>
-                        {typingUsers.length === 1 ? ' друкує...' : ' друкують...'}
-                    </div>
-                </div>
-            )}
-
-            {uploadProgress !== null && (
-                <div className="px-4 py-2.5 bg-white dark:bg-slate-800 border-t border-gray-100 dark:border-slate-700">
-                    <div className="flex items-center gap-3">
-                        <div className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-full h-1.5 overflow-hidden">
-                            <div className="h-full bg-indigo-500 transition-all duration-200 rounded-full" style={{ width: `${uploadProgress}%` }} />
-                        </div>
-                        <span className="text-xs text-slate-500 w-9 text-right shrink-0">{uploadProgress}%</span>
-                        <button onClick={() => { abortRef.current?.abort(); setUploadProgress(null); }}
-                                className="text-slate-400 hover:text-red-500 cursor-pointer"><X size={13}/></button>
-                    </div>
-                </div>
-            )}
-
-            {uploadError && (
-                <div className="px-4 py-2 bg-red-50 dark:bg-red-900/20 border-t border-red-100 dark:border-red-900 flex items-center justify-between">
-                    <span className="text-xs text-red-500">{uploadError}</span>
-                    <button onClick={() => setUploadError(null)} className="text-red-400 hover:text-red-600 cursor-pointer ml-3 shrink-0"><X size={13}/></button>
-                </div>
-            )}
-
-            {replyTo && (
-                <div className="px-4 py-2 bg-indigo-50 dark:bg-indigo-900/20 border-t border-indigo-100 dark:border-indigo-900 flex items-center gap-3">
-                    <div className="flex-1 min-w-0">
-                        <p className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 mb-0.5">
-                            Відповідь на: {replyTo.sender?.nickname ?? 'повідомлення'}
-                        </p>
-                        <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                            {replyTo.deletedAt ? 'Видалено' : replyTo.content || '📎 Файл'}
-                        </p>
-                    </div>
-                    <button onClick={() => setReplyTo(null)} className="text-slate-400 hover:text-slate-600 cursor-pointer shrink-0"><X size={14} /></button>
-                </div>
-            )}
-
-            {showVoice ? (
-                <VoiceRecorder
-                    onSend={sendVoiceMessage}
-                    onCancel={() => setShowVoice(false)}
-                />
-            ) : canPost ? (
-                <form onSubmit={handleSubmit} className="p-4 bg-white dark:bg-slate-800 border-t border-gray-100 dark:border-slate-700 flex gap-3 items-end">
-                    <input ref={fileInputRef} type="file" className="hidden"
-                           onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f); e.target.value = ''; }} />
-                    <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploadProgress !== null}
-                            className="p-3 h-[48px] w-[48px] rounded-full text-slate-400 hover:text-violet-500 hover:bg-violet-50 dark:hover:bg-violet-900/30 flex items-center justify-center transition-all disabled:opacity-40 cursor-pointer shrink-0">
-                        {uploadProgress !== null ? <Loader2 size={17} className="animate-spin" /> : <Paperclip size={17} />}
-                    </button>
-                    <input value={inputValue}
-                           onChange={(e) => { setInputValue(e.target.value); notifyTyping(); }}
-                           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(e as any); } }}
-                           className="flex-1 bg-slate-50 dark:bg-slate-700 dark:text-slate-200 dark:placeholder-slate-400 border-transparent rounded-2xl px-5 py-3 text-gray-700 outline-none focus:bg-white dark:focus:bg-slate-600 focus:ring-4 focus:ring-violet-50 dark:focus:ring-violet-900/30 transition-all text-sm"
-                           placeholder="Напишіть повідомлення..." />
-                    {inputValue.trim() ? (
-                        <button type="submit"
-                                className="bg-violet-500 hover:bg-violet-600 text-white p-3 h-[48px] w-[48px] rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95 shrink-0 cursor-pointer">
-                            <Send size={17} className="ml-0.5" />
-                        </button>
-                    ) : (
-                        <button type="button" onClick={() => setShowVoice(true)} disabled={uploadProgress !== null}
-                                className="p-3 h-[48px] w-[48px] rounded-full text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/30 flex items-center justify-center transition-all disabled:opacity-40 cursor-pointer shrink-0">
-                            <Mic size={17} />
-                        </button>
-                    )}
-                </form>
-            ) : (
-                <div className="p-4 bg-white dark:bg-slate-800 border-t border-gray-100 dark:border-slate-700 text-center text-sm text-slate-400 italic">
-                    Тільки адміни можуть писати в цьому каналі
-                </div>
-            )}
-
+            {/* Modals */}
             {forwardMsg && (
                 <ForwardModal
                     conversations={conversations}
-                    onForward={(targetId) => {
-                        if (forwardMsg.id) forwardMessage(forwardMsg.id, targetId);
-                    }}
+                    onForward={(targetId) => { if (forwardMsg.id) forwardMessage(forwardMsg.id, targetId); }}
                     onClose={() => setForwardMsg(null)}
                 />
             )}
