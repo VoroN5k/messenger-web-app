@@ -4,6 +4,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import {validateAndNormalizeMetadata} from "./metadata.validator.js";
+import {UploadService} from "../upload/upload.service.js";
 
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
 const ALLOWED_EMOJIS = ['👍','❤️','😂','😮','😢','😡','🔥','👏','🎉','💯'];
@@ -39,7 +40,10 @@ const MEMBER_USER_SELECT = {
 
 @Injectable()
 export class ConversationsService {
-    constructor(private readonly prisma: PrismaService) {}
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly upload: UploadService,
+    ) {}
 
     // Helpers
     private groupReactions(reactions: { emoji: string; userId: number }[]) {
@@ -472,6 +476,7 @@ export class ConversationsService {
         const msg = await this.prisma.message.findUnique({ where: { id: messageId } });
         if (!msg) throw new NotFoundException('Message not found');
 
+        // Permission check: only sender or admin can delete
         if (msg.senderId !== userId) {
             const m = await this.prisma.conversationMember.findUnique({
                 where: { conversationId_userId: { conversationId: msg.conversationId, userId } },
@@ -479,12 +484,31 @@ export class ConversationsService {
             if (!m || m.role === 'MEMBER') throw new ForbiddenException('Cannot delete this message');
         }
 
+        // Already soft-deleted — nothing to do
         if (msg.deletedAt) return msg;
 
-        return this.prisma.message.update({
+        // Soft-delete the message in DB first
+        const deleted = await this.prisma.message.update({
             where: { id: messageId },
             data:  { deletedAt: new Date() },
         });
+
+        if (msg.fileUrl) {
+            const otherRefs = await this.prisma.message.count({
+                where: {
+                    fileUrl:   msg.fileUrl,
+                    deletedAt: null,
+                    id:        { not: messageId },
+                },
+            });
+
+            if (otherRefs === 0) {
+                // Fire-and-forget — failure is logged inside deleteFile, never throws
+                this.upload.deleteFile(msg.fileUrl).catch(() => {});
+            }
+        }
+
+        return deleted;
     }
 
     async editMessage(messageId: number, userId: number, content: string) {

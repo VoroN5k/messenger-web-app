@@ -20,19 +20,19 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     //Per-event rate limiters
     // sendMessage: 60 messages/min — prevents message flood
-    private readonly msgLimiter      = new WsRateLimiter(60, 60);
+    private readonly msgLimiter= new WsRateLimiter(60, 60);
     // typing: 20/min — client debounces at 2.5s so this is very generous
-    private readonly typingLimiter   = new WsRateLimiter(20, 60);
+    private readonly typingLimiter= new WsRateLimiter(20, 60);
     // reactions: 30/min
-    private readonly reactLimiter    = new WsRateLimiter(30, 60);
+    private readonly reactLimiter= new WsRateLimiter(30, 60);
     // delete/edit: 30/min
-    private readonly mutateLimiter   = new WsRateLimiter(30, 60);
+    private readonly mutateLimiter= new WsRateLimiter(30, 60);
     // friend requests: 10/min
-    private readonly friendLimiter   = new WsRateLimiter(10, 60);
+    private readonly friendLimiter= new WsRateLimiter(10, 60);
     // calls: 10/min — prevents call spam
-    private readonly callLimiter     = new WsRateLimiter(10, 60);
+    private readonly callLimiter= new WsRateLimiter(10, 60);
     // forward: 20/min
-    private readonly forwardLimiter  = new WsRateLimiter(20, 60);
+    private readonly forwardLimiter= new WsRateLimiter(20, 60);
 
     constructor(
         private readonly prisma:      PrismaService,

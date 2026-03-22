@@ -1,11 +1,11 @@
-import {BadRequestException, Injectable, Logger} from "@nestjs/common";
-import {createClient, SupabaseClient} from "@supabase/supabase-js";
-import {ConfigService} from "@nestjs/config";
-import * as path from "path";
-import {randomUUID} from "crypto";
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { ConfigService } from '@nestjs/config';
+import * as path from 'path';
+import { randomUUID } from 'crypto';
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-const MAX_AVATAR_SIZE = 5 * 1024 * 1024;
+const MAX_FILE_SIZE   = 10 * 1024 * 1024;
+const MAX_AVATAR_SIZE =  5 * 1024 * 1024;
 const AVATAR_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 const ALLOWED_MIME_TYPES = new Set([
@@ -19,23 +19,26 @@ const ALLOWED_MIME_TYPES = new Set([
     'application/zip',
     'video/mp4', 'video/webm',
     'audio/mpeg', 'audio/ogg', 'audio/wav',
-    'audio/webm',
-    'audio/webm;codecs=opus',
-    'audio/wav'
+    'audio/webm', 'audio/webm;codecs=opus', 'audio/wav',
 ]);
 
 @Injectable()
 export class UploadService {
     private supabase: SupabaseClient;
-    private bucket: string;
+    private bucket:   string;
+    private baseStorageUrl: string; // e.g. https://xxx.supabase.co/storage/v1/object/public/bucket-name
     private readonly logger = new Logger(UploadService.name);
 
     constructor(private readonly config: ConfigService) {
+        const supabaseUrl = config.getOrThrow<string>('SUPABASE_URL');
+        const bucketName  = config.getOrThrow<string>('SUPABASE_STORAGE_BUCKET');
+
         this.supabase = createClient(
-            config.getOrThrow<string>('SUPABASE_URL'),
+            supabaseUrl,
             config.getOrThrow<string>('SUPABASE_SERVICE_KEY'),
         );
-        this.bucket = config.getOrThrow<string>('SUPABASE_STORAGE_BUCKET');
+        this.bucket        = bucketName;
+        this.baseStorageUrl = `${supabaseUrl}/storage/v1/object/public/${bucketName}`;
     }
 
     async uploadFile(file: Express.Multer.File, userId: number) {
@@ -43,56 +46,78 @@ export class UploadService {
         if (file.size > MAX_FILE_SIZE) throw new BadRequestException('File is too large (max 10 MB)');
         if (!isAllowed) throw new BadRequestException(`File type "${file.mimetype}" is not allowed`);
 
-        const ext = path.extname(file.originalname).toLowerCase();
-        const storagePath = `${userId}/${randomUUID()}${ext}`
+        const ext         = path.extname(file.originalname).toLowerCase();
+        const storagePath = `${userId}/${randomUUID()}${ext}`;
 
         const { error } = await this.supabase.storage
             .from(this.bucket)
-            .upload(storagePath, file.buffer, {
-                contentType: file.mimetype,
-                upsert: false,
-            });
+            .upload(storagePath, file.buffer, { contentType: file.mimetype, upsert: false });
 
         if (error) {
-            this.logger.error(`Supabase upload error: ${error.message}`)
+            this.logger.error(`Supabase upload error: ${error.message}`);
             throw new BadRequestException('File upload failed');
         }
 
-        const { data } = this.supabase.storage
-            .from(this.bucket)
-            .getPublicUrl(storagePath);
+        const { data } = this.supabase.storage.from(this.bucket).getPublicUrl(storagePath);
+        this.logger.log(`User ${userId} uploaded: ${file.originalname} → ${storagePath}`);
 
-        this.logger.log(`User ${userId} uploaded: ${file.originalname} → ${storagePath}`)
-
-        return {
-            url: data.publicUrl,
-            fileName: file.originalname,
-            fileType: file.mimetype,
-            fileSize: file.size,
-        }
+        return { url: data.publicUrl, fileName: file.originalname, fileType: file.mimetype, fileSize: file.size };
     }
 
     async uploadAvatar(file: Express.Multer.File, userId: number) {
-        if (file.size > MAX_AVATAR_SIZE)            throw new BadRequestException('Avatar too large (max 5 MB)');
-        if (!AVATAR_MIME_TYPES.has(file.mimetype))  throw new BadRequestException('Invalid avatar type (only JPEG, PNG, WEBP allowed)');
+        if (file.size > MAX_AVATAR_SIZE)           throw new BadRequestException('Avatar too large (max 5 MB)');
+        if (!AVATAR_MIME_TYPES.has(file.mimetype)) throw new BadRequestException('Invalid avatar type (only JPEG, PNG, WEBP allowed)');
 
-        const ext       = file.mimetype === 'image/webp' ? '.webp'
-                                            : file.mimetype === 'image.png' ? '.png' : '.jpg';
+        const ext         = file.mimetype === 'image/webp' ? '.webp' : file.mimetype === 'image/png' ? '.png' : '.jpg';
         const storagePath = `avatars/${userId}/${randomUUID()}${ext}`;
 
-        // upsert false
         const { error } = await this.supabase.storage
             .from(this.bucket)
-            .upload(storagePath, file.buffer, { contentType: file.mimetype, upsert: false})
+            .upload(storagePath, file.buffer, { contentType: file.mimetype, upsert: false });
 
-        if ( error ) {
+        if (error) {
             this.logger.error(`Avatar upload error: ${error.message}`);
             throw new BadRequestException('Avatar upload failed');
         }
 
         const { data } = this.supabase.storage.from(this.bucket).getPublicUrl(storagePath);
         this.logger.log(`User ${userId} updated avatar → ${storagePath}`);
-
         return { url: data.publicUrl };
+    }
+
+    /**
+     * Deletes a file from Supabase Storage by its public URL.
+     * Extracts the storage path from the URL and calls the Supabase delete API.
+     * Never throws — failures are only logged so callers aren't affected.
+     */
+    async deleteFile(fileUrl: string): Promise<void> {
+        try {
+            let storagePath: string | null = null;
+
+            if (fileUrl.startsWith(this.baseStorageUrl)) {
+                storagePath = fileUrl.slice(this.baseStorageUrl.length + 1);
+            }
+
+            const proxyPrefix = `/storage/${this.bucket}/`;
+            if (!storagePath && fileUrl.startsWith(proxyPrefix)) {
+                storagePath = fileUrl.slice(proxyPrefix.length);
+            }
+
+            if (!storagePath) {
+                this.logger.warn(`deleteFile: unrecognised URL format, skipping: ${fileUrl}`);
+                return;
+            }
+
+            const { error } = await this.supabase.storage.from(this.bucket).remove([storagePath]);
+
+            if (error) {
+                // Log but don't throw — the message is already soft-deleted
+                this.logger.warn(`deleteFile: Supabase remove failed for "${storagePath}": ${error.message}`);
+            } else {
+                this.logger.log(`deleteFile: removed "${storagePath}" from storage`);
+            }
+        } catch (err: any) {
+            this.logger.warn(`deleteFile: unexpected error for "${fileUrl}": ${err.message}`);
+        }
     }
 }
