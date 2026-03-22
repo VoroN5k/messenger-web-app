@@ -2,15 +2,17 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations, useLocale } from 'next-intl';
 import { useAuthStore } from '@/src/store/useAuthStore';
 import { useTheme } from '@/src/context/ThemeProvider';
 import { Avatar } from '@/src/components/chat/Avatar';
+import { LanguageSwitcher } from '@/src/components/ui/LanguageSwitcher';
 import api from '@/src/lib/axios';
 import {
     ArrowLeft, Moon, Sun,
     Bell, Lock, UserCircle, Palette,
     ChevronRight, Check, Eye, EyeOff,
-    Loader2, KeyRound,
+    Loader2, KeyRound, Languages,
 } from 'lucide-react';
 
 type ThemeOption = 'light' | 'dark';
@@ -19,11 +21,12 @@ export default function SettingsPage() {
     const router   = useRouter();
     const { user } = useAuthStore();
     const { theme, setTheme } = useTheme();
+    const locale = useLocale();
 
     return (
         <div className="min-h-screen bg-slate-50 dark:bg-slate-900 transition-colors duration-200">
 
-            {/* ── Header ── */}
+            {/* - Header - */}
             <header className="sticky top-0 z-10 bg-white dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700 shadow-sm">
                 <div className="max-w-2xl mx-auto px-4 py-4 flex items-center gap-3">
                     <button
@@ -40,7 +43,7 @@ export default function SettingsPage() {
 
             <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
 
-                {/* ── Profile card ── */}
+                {/* - Profile card - */}
                 {user && (
                     <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 flex items-center gap-4 shadow-sm border border-slate-100 dark:border-slate-700">
                         <Avatar user={user} size="xl" />
@@ -55,7 +58,25 @@ export default function SettingsPage() {
                     </div>
                 )}
 
-                {/* ── Appearance ── */}
+                {/* - Language - */}
+                <Section title="Мова інтерфейсу" icon={<Languages size={15} />}>
+                    <div className="p-5 flex items-center justify-between">
+                        <div>
+                            <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                                Мова / Language
+                            </p>
+                            <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                                {locale === 'uk' ? 'Зараз: Українська' : 'Current: English'}
+                            </p>
+                        </div>
+                        <LanguageSwitcher
+                            currentLocale={locale}
+                            className="px-4 py-2 text-sm border border-slate-200 dark:border-slate-600 rounded-xl"
+                        />
+                    </div>
+                </Section>
+
+                {/* - Appearance - */}
                 <Section title="Зовнішній вигляд" icon={<Palette size={15} />}>
                     <div className="p-5">
                         <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-4">
@@ -68,12 +89,12 @@ export default function SettingsPage() {
                     </div>
                 </Section>
 
-                {/* ── Password ── */}
+                {/* - Password - */}
                 <Section title="Безпека" icon={<Lock size={15} />}>
                     <ChangePasswordForm />
                 </Section>
 
-                {/* ── Coming soon ── */}
+                {/* - Coming soon - */}
                 <Section title="Акаунт" icon={<UserCircle size={15} />}>
                     <ComingSoonItem label="Змінити нікнейм" />
                     <ComingSoonItem label="Email та підтвердження" last />
@@ -96,7 +117,9 @@ export default function SettingsPage() {
     );
 }
 
-// ── Change Password Form ──────────────────────────────────────────────────────
+// =============================================================================
+// ChangePasswordForm
+// =============================================================================
 function ChangePasswordForm() {
     const [currentPassword, setCurrentPassword] = useState('');
     const [newPassword,     setNewPassword]     = useState('');
@@ -111,8 +134,8 @@ function ChangePasswordForm() {
     const [error,   setError]   = useState('');
 
     const validate = () => {
-        if (!currentPassword)           return 'Введіть поточний пароль';
-        if (newPassword.length < 6)     return 'Новий пароль — мінімум 6 символів';
+        if (!currentPassword)                return 'Введіть поточний пароль';
+        if (newPassword.length < 6)          return 'Новий пароль — мінімум 6 символів';
         if (newPassword !== confirmPassword) return 'Паролі не збігаються';
         if (newPassword === currentPassword) return 'Новий пароль має відрізнятись від поточного';
         return '';
@@ -146,62 +169,19 @@ function ChangePasswordForm() {
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
             <div className="flex items-center gap-2 mb-1">
                 <KeyRound size={15} className="text-slate-400" />
-                <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                    Змінити пароль
-                </p>
+                <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Змінити пароль</p>
             </div>
+            <PasswordInput label="Поточний пароль"     value={currentPassword} onChange={setCurrentPassword} show={showCurrent} onToggle={() => setShowCurrent(s => !s)} placeholder="••••••••"             autoComplete="current-password" />
+            <PasswordInput label="Новий пароль"         value={newPassword}     onChange={setNewPassword}     show={showNew}     onToggle={() => setShowNew(s => !s)}     placeholder="мінімум 6 символів" autoComplete="new-password" />
+            {newPassword && <PasswordStrength password={newPassword} />}
+            <PasswordInput label="Підтвердження пароля" value={confirmPassword} onChange={setConfirmPassword} show={showConfirm} onToggle={() => setShowConfirm(s => !s)} placeholder="повторіть новий пароль" autoComplete="new-password" isError={!!confirmPassword && confirmPassword !== newPassword} />
 
-            {/* Current password */}
-            <PasswordInput
-                label="Поточний пароль"
-                value={currentPassword}
-                onChange={setCurrentPassword}
-                show={showCurrent}
-                onToggle={() => setShowCurrent(s => !s)}
-                placeholder="••••••••"
-                autoComplete="current-password"
-            />
-
-            {/* New password */}
-            <PasswordInput
-                label="Новий пароль"
-                value={newPassword}
-                onChange={setNewPassword}
-                show={showNew}
-                onToggle={() => setShowNew(s => !s)}
-                placeholder="мінімум 6 символів"
-                autoComplete="new-password"
-            />
-
-            {/* Strength bar */}
-            {newPassword && (
-                <PasswordStrength password={newPassword} />
-            )}
-
-            {/* Confirm */}
-            <PasswordInput
-                label="Підтвердження пароля"
-                value={confirmPassword}
-                onChange={setConfirmPassword}
-                show={showConfirm}
-                onToggle={() => setShowConfirm(s => !s)}
-                placeholder="повторіть новий пароль"
-                autoComplete="new-password"
-                isError={!!confirmPassword && confirmPassword !== newPassword}
-            />
-
-            {/* Error */}
             {error && (
-                <p className="text-sm text-red-500 bg-red-50 dark:bg-red-900/20 px-3 py-2 rounded-xl">
-                    {error}
-                </p>
+                <p className="text-sm text-red-500 bg-red-50 dark:bg-red-900/20 px-3 py-2 rounded-xl">{error}</p>
             )}
-
-            {/* Success */}
             {success && (
                 <div className="flex items-center gap-2 text-sm text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 px-3 py-2 rounded-xl">
-                    <Check size={14} />
-                    Пароль успішно змінено
+                    <Check size={14} />Пароль успішно змінено
                 </div>
             )}
 
@@ -219,25 +199,17 @@ function ChangePasswordForm() {
     );
 }
 
-// ── Password Input ────────────────────────────────────────────────────────────
-function PasswordInput({
-                           label, value, onChange, show, onToggle,
-                           placeholder, autoComplete, isError,
-                       }: {
-    label:        string;
-    value:        string;
-    onChange:     (v: string) => void;
-    show:         boolean;
-    onToggle:     () => void;
-    placeholder?: string;
-    autoComplete?: string;
-    isError?:     boolean;
+// =============================================================================
+// PasswordInput
+// =============================================================================
+function PasswordInput({ label, value, onChange, show, onToggle, placeholder, autoComplete, isError }: {
+    label: string; value: string; onChange: (v: string) => void;
+    show: boolean; onToggle: () => void; placeholder?: string;
+    autoComplete?: string; isError?: boolean;
 }) {
     return (
         <div>
-            <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">
-                {label}
-            </label>
+            <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">{label}</label>
             <div className="relative">
                 <input
                     type={show ? 'text' : 'password'}
@@ -252,22 +224,19 @@ function PasswordInput({
                         : 'border-slate-200 dark:border-slate-600 focus:ring-2 focus:ring-violet-200 dark:focus:ring-violet-800 focus:border-violet-400'
                     }`}
                 />
-                <button
-                    type="button"
-                    onClick={onToggle}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 cursor-pointer transition-colors"
-                >
+                <button type="button" onClick={onToggle}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 cursor-pointer transition-colors">
                     {show ? <EyeOff size={15} /> : <Eye size={15} />}
                 </button>
             </div>
-            {isError && (
-                <p className="text-xs text-red-500 mt-1">Паролі не збігаються</p>
-            )}
+            {isError && <p className="text-xs text-red-500 mt-1">Паролі не збігаються</p>}
         </div>
     );
 }
 
-// ── Password Strength ─────────────────────────────────────────────────────────
+// =============================================================================
+// PasswordStrength
+// =============================================================================
 function PasswordStrength({ password }: { password: string }) {
     const score = [
         password.length >= 8,
@@ -283,23 +252,18 @@ function PasswordStrength({ password }: { password: string }) {
         { label: 'Сильний',      color: 'bg-emerald-400' },
         { label: 'Дуже сильний', color: 'bg-emerald-500' },
     ];
-
     const level = levels[score] ?? levels[0];
 
     return (
         <div className="space-y-1.5">
             <div className="flex gap-1">
                 {[0,1,2,3].map((i) => (
-                    <div key={i}
-                         className={`h-1 flex-1 rounded-full transition-all duration-300
-                            ${i < score ? level.color : 'bg-slate-200 dark:bg-slate-600'}`}
-                    />
+                    <div key={i} className={`h-1 flex-1 rounded-full transition-all duration-300
+                        ${i < score ? level.color : 'bg-slate-200 dark:bg-slate-600'}`} />
                 ))}
             </div>
             <p className={`text-xs font-medium
-                ${score <= 1 ? 'text-red-500'
-                : score === 2 ? 'text-yellow-500'
-                    : 'text-emerald-500'}`}>
+                ${score <= 1 ? 'text-red-500' : score === 2 ? 'text-yellow-500' : 'text-emerald-500'}`}>
                 {level.label}
                 {score < 3 && (
                     <span className="text-slate-400 dark:text-slate-500 font-normal ml-2">
@@ -311,7 +275,9 @@ function PasswordStrength({ password }: { password: string }) {
     );
 }
 
-// ── Section wrapper ───────────────────────────────────────────────────────────
+// =============================================================================
+// Section
+// =============================================================================
 function Section({ title, icon, children }: {
     title: string; icon: React.ReactNode; children: React.ReactNode;
 }) {
@@ -328,7 +294,9 @@ function Section({ title, icon, children }: {
     );
 }
 
-// ── Theme card ────────────────────────────────────────────────────────────────
+// =============================================================================
+// ThemeCard
+// =============================================================================
 function ThemeCard({ value, current, label, icon, preview, onSelect }: {
     value: ThemeOption; current: ThemeOption; label: string;
     icon: React.ReactNode; preview: React.ReactNode; onSelect: (t: ThemeOption) => void;
@@ -393,6 +361,9 @@ function DarkPreview() {
     );
 }
 
+// =============================================================================
+// EmojiStatusForm
+// =============================================================================
 function EmojiStatusForm() {
     const { user, accessToken } = useAuthStore();
     const setAuth = useAuthStore(s => s.setAuth);
@@ -418,8 +389,7 @@ function EmojiStatusForm() {
             </p>
             <div className="grid grid-cols-8 gap-1.5">
                 {EMOJIS.map(e => (
-                    <button key={e || 'none'} onClick={() => save(e)}
-                            disabled={saving}
+                    <button key={e || 'none'} onClick={() => save(e)} disabled={saving}
                             className={`w-9 h-9 flex items-center justify-center rounded-xl text-lg transition-all cursor-pointer
                                 ${selected === e
                                 ? 'bg-violet-100 dark:bg-violet-900/40 ring-2 ring-violet-400'
@@ -433,6 +403,9 @@ function EmojiStatusForm() {
     );
 }
 
+//
+// ComingSoonItem
+//
 function ComingSoonItem({ label, last }: { label: string; last?: boolean }) {
     return (
         <div className={`flex items-center justify-between px-5 py-3.5

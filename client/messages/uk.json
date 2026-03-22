@@ -1,0 +1,157 @@
+{
+  "chat": {
+    "empty": "Оберіть чат або знайдіть друзів",
+    "drag_drop": "Відпустіть, щоб надіслати файл",
+    "drag_max": "Максимум 10 МБ",
+    "back_to_latest": "Перейти до останніх",
+    "saved_messages": "Збережені повідомлення",
+    "default_name": "Чат",
+    "members_count": "{count} учасників"
+  },
+  "status": {
+    "online": "В мережі",
+    "offline": "Офлайн",
+    "just_now": "щойно в мережі",
+    "minutes_ago": "{count} хв тому",
+    "today_at": "сьогодні о {time}",
+    "yesterday_at": "вчора о {time}"
+  },
+  "input": {
+    "placeholder": "Напишіть повідомлення...",
+    "channel_readonly": "Тільки адміни можуть писати в цьому каналі",
+    "offline_banner": "Немає з'єднання — повідомлення надішлються автоматично",
+    "reply_to": "Відповідь на: {name}",
+    "typing_one": "друкує...",
+    "typing_many": "друкують..."
+  },
+  "message": {
+    "deleted": "Повідомлення видалено",
+    "edited": "ред.",
+    "file": "📎 Файл",
+    "photo": "🖼 Фото",
+    "confirm_delete": "Видалити?",
+    "yes": "Так",
+    "no": "Ні",
+    "pin_title": "Закріпити",
+    "forwarded_from": "Переслано від {name}",
+    "no_messages": "Немає повідомлень",
+    "me": "Ви",
+    "decrypting": "Розшифровка...",
+    "loading": "Завантаження..."
+  },
+  "search": {
+    "placeholder": "Пошук по повідомленнях...",
+    "not_found": "Нічого не знайдено"
+  },
+  "sidebar": {
+    "tab_chats": "Чати",
+    "tab_friends": "Друзі",
+    "search_chats": "Пошук чатів...",
+    "search_people": "Знайти людей...",
+    "saved": "Збережені",
+    "new_group": "Група",
+    "new_channel": "Канал",
+    "no_chats": "Немає чатів. Додайте друзів!",
+    "no_results": "Нічого не знайдено",
+    "write": "Написати",
+    "sent": "Надіслано",
+    "incoming_requests": "Вхідні запити",
+    "search_results": "Результати пошуку",
+    "no_people": "Нікого не знайдено",
+    "no_friends": "Немає друзів. Знайдіть людей вгорі!",
+    "friends_count": "Друзі · {count}"
+  },
+  "group_modal": {
+    "title": "Нова група",
+    "name_placeholder": "Назва групи *",
+    "name_error_empty": "Введіть назву групи",
+    "name_error_short": "Мінімум 2 символи",
+    "no_friends_note": "Немає друзів. Групу буде створено лише з вами.",
+    "select_members": "Оберіть учасників (необов'язково):",
+    "selected": "Вибрано: {count} учасник(ів)",
+    "cancel": "Скасувати",
+    "create": "Створити",
+    "creating": "Створення...",
+    "error": "Помилка створення"
+  },
+  "channel_modal": {
+    "title": "Новий канал",
+    "name_placeholder": "Назва каналу *",
+    "name_error": "Введіть назву каналу",
+    "desc_placeholder": "Опис (необов'язково)",
+    "cancel": "Скасувати",
+    "create": "Створити",
+    "creating": "Створення...",
+    "error": "Помилка створення"
+  },
+  "forward_modal": {
+    "title": "Переслати в...",
+    "search_placeholder": "Пошук чатів...",
+    "not_found": "Нічого не знайдено"
+  },
+  "media_panel": {
+    "title": "Вкладення",
+    "tab_media": "Медіа",
+    "tab_voice": "Голосові",
+    "tab_files": "Файли",
+    "empty_media": "Фото і відео відсутні",
+    "empty_voice": "Голосових повідомлень немає",
+    "empty_files": "Файлів немає",
+    "download": "Завантажити",
+    "today": "Сьогодні",
+    "yesterday": "Вчора",
+    "me": "Ви"
+  },
+  "voice": {
+    "error": "Не вдалося відтворити",
+    "download": "Завантажити",
+    "no_mic": "Немає доступу до мікрофону"
+  },
+  "notifications": {
+    "banner": "Увімкніть сповіщення, щоб не пропускати нові повідомлення",
+    "enable": "Увімкнути"
+  },
+  "call": {
+    "calling": "Виклик...",
+    "incoming": "Вхідний...",
+    "connecting": "З'єднання...",
+    "rejected": "Відхилено",
+    "no_answer": "Немає відповіді",
+    "busy": "Зайнято",
+    "error": "Помилка",
+    "ended": "Дзвінок завершено",
+    "muted": "Звук вимк.",
+    "unmuted": "Звук",
+    "camera_off": "Камера вимк.",
+    "camera_on": "Камера",
+    "volume": "Гучність",
+    "video_call": "Відео дзвінок",
+    "audio_call": "Аудіо дзвінок",
+    "reject": "Відхилити",
+    "audio": "Аудіо",
+    "video": "Відео",
+    "unknown": "Невідомий"
+  },
+  "dates": {
+    "today": "Сьогодні",
+    "yesterday": "Вчора"
+  },
+  "avatar_crop": {
+    "title": "Оновити аватар",
+    "drag_hint": "Перетягніть фото або",
+    "choose_file": "оберіть файл",
+    "file_hint": "JPEG, PNG, WebP · до 5 МБ",
+    "zoom_hint": "Перетягуйте та масштабуйте фото",
+    "choose_other": "Обрати інше фото",
+    "cancel": "Скасувати",
+    "save": "Зберегти"
+  },
+  "image_modal": {
+    "zoom_hint": "Подвійний клік або скрол для масштабування",
+    "zoom_in": "Збільшити",
+    "zoom_out": "Зменшити",
+    "download": "Завантажити",
+    "close": "Закрити (Esc)",
+    "alt": "Фото"
+  }
+}

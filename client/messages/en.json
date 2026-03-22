@@ -1,0 +1,157 @@
+{
+  "chat": {
+    "empty": "Select a chat or find friends",
+    "drag_drop": "Drop to send file",
+    "drag_max": "Maximum 10 MB",
+    "back_to_latest": "Jump to latest",
+    "saved_messages": "Saved Messages",
+    "default_name": "Chat",
+    "members_count": "{count} members"
+  },
+  "status": {
+    "online": "Online",
+    "offline": "Offline",
+    "just_now": "just now",
+    "minutes_ago": "{count} min ago",
+    "today_at": "today at {time}",
+    "yesterday_at": "yesterday at {time}"
+  },
+  "input": {
+    "placeholder": "Write a message...",
+    "channel_readonly": "Only admins can post in this channel",
+    "offline_banner": "No connection — messages will be sent automatically",
+    "reply_to": "Reply to: {name}",
+    "typing_one": "is typing...",
+    "typing_many": "are typing..."
+  },
+  "message": {
+    "deleted": "Message deleted",
+    "edited": "edited",
+    "file": "📎 File",
+    "photo": "🖼 Photo",
+    "confirm_delete": "Delete?",
+    "yes": "Yes",
+    "no": "No",
+    "pin_title": "Pin",
+    "forwarded_from": "Forwarded from {name}",
+    "no_messages": "No messages",
+    "me": "You",
+    "decrypting": "Decrypting...",
+    "loading": "Loading..."
+  },
+  "search": {
+    "placeholder": "Search messages...",
+    "not_found": "Nothing found"
+  },
+  "sidebar": {
+    "tab_chats": "Chats",
+    "tab_friends": "Friends",
+    "search_chats": "Search chats...",
+    "search_people": "Find people...",
+    "saved": "Saved",
+    "new_group": "Group",
+    "new_channel": "Channel",
+    "no_chats": "No chats. Add some friends!",
+    "no_results": "Nothing found",
+    "write": "Message",
+    "sent": "Sent",
+    "incoming_requests": "Incoming requests",
+    "search_results": "Search results",
+    "no_people": "Nobody found",
+    "no_friends": "No friends yet. Search above!",
+    "friends_count": "Friends · {count}"
+  },
+  "group_modal": {
+    "title": "New Group",
+    "name_placeholder": "Group name *",
+    "name_error_empty": "Enter group name",
+    "name_error_short": "Minimum 2 characters",
+    "no_friends_note": "No friends. The group will be created with just you.",
+    "select_members": "Select members (optional):",
+    "selected": "Selected: {count} member(s)",
+    "cancel": "Cancel",
+    "create": "Create",
+    "creating": "Creating...",
+    "error": "Creation failed"
+  },
+  "channel_modal": {
+    "title": "New Channel",
+    "name_placeholder": "Channel name *",
+    "name_error": "Enter channel name",
+    "desc_placeholder": "Description (optional)",
+    "cancel": "Cancel",
+    "create": "Create",
+    "creating": "Creating...",
+    "error": "Creation failed"
+  },
+  "forward_modal": {
+    "title": "Forward to...",
+    "search_placeholder": "Search chats...",
+    "not_found": "Nothing found"
+  },
+  "media_panel": {
+    "title": "Attachments",
+    "tab_media": "Media",
+    "tab_voice": "Voice",
+    "tab_files": "Files",
+    "empty_media": "No photos or videos",
+    "empty_voice": "No voice messages",
+    "empty_files": "No files",
+    "download": "Download",
+    "today": "Today",
+    "yesterday": "Yesterday",
+    "me": "You"
+  },
+  "voice": {
+    "error": "Could not play",
+    "download": "Download",
+    "no_mic": "Microphone access denied"
+  },
+  "notifications": {
+    "banner": "Enable notifications to never miss a message",
+    "enable": "Enable"
+  },
+  "call": {
+    "calling": "Calling...",
+    "incoming": "Incoming...",
+    "connecting": "Connecting...",
+    "rejected": "Rejected",
+    "no_answer": "No answer",
+    "busy": "Busy",
+    "error": "Error",
+    "ended": "Call ended",
+    "muted": "Muted",
+    "unmuted": "Sound",
+    "camera_off": "Camera off",
+    "camera_on": "Camera",
+    "volume": "Volume",
+    "video_call": "Video call",
+    "audio_call": "Audio call",
+    "reject": "Decline",
+    "audio": "Audio",
+    "video": "Video",
+    "unknown": "Unknown"
+  },
+  "dates": {
+    "today": "Today",
+    "yesterday": "Yesterday"
+  },
+  "avatar_crop": {
+    "title": "Update avatar",
+    "drag_hint": "Drag a photo or",
+    "choose_file": "choose file",
+    "file_hint": "JPEG, PNG, WebP · up to 5 MB",
+    "zoom_hint": "Drag and scale the photo",
+    "choose_other": "Choose another photo",
+    "cancel": "Cancel",
+    "save": "Save"
+  },
+  "image_modal": {
+    "zoom_hint": "Double-click or scroll to zoom",
+    "zoom_in": "Zoom in",
+    "zoom_out": "Zoom out",
+    "download": "Download",
+    "close": "Close (Esc)",
+    "alt": "Photo"
+  }
+}
