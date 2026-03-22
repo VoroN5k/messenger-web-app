@@ -1,8 +1,6 @@
 import * as dns from 'dns/promises'
 import * as net from 'net'
 
-const IPV4_PRIVATE_RANGES: Array<[number, number, number]> = [];
-
 function ipv4ToInt(ip: string): number {
     return ip.split('.').reduce((acc, octet) => (acc << 8) | parseInt(octet, 10), 0) >>> 0;
 }
@@ -16,19 +14,19 @@ function cidrToRange(cidr: string): { base: number; mask: number } {
 }
 
 const BLOCKED_IPV4_CIDRS = [
-    '0.0.0.0/8',         // "This" network
-    '10.0.0.0/8',        // Private-Use (RFC 1918)
-    '100.64.0.0/10',     // Shared Address Space / CGNAT (RFC 6598)
-    '127.0.0.0/8',       // Loopback
-    '169.254.0.0/16',    // Link-Local — AWS/GCP instance metadata!
-    '172.16.0.0/12',     // Private-Use (RFC 1918)
-    '192.0.0.0/24',      // IETF Protocol Assignments
-    '192.0.2.0/24',      // TEST-NET-1 (RFC 5737)
-    '192.168.0.0/16',    // Private-Use (RFC 1918)
-    '198.18.0.0/15',     // Benchmarking (RFC 2544)
-    '198.51.100.0/24',   // TEST-NET-2 (RFC 5737)
-    '203.0.113.0/24',    // TEST-NET-3 (RFC 5737)
-    '240.0.0.0/4',       // Reserved (включає 255.255.255.255)
+    '0.0.0.0/8',
+    '10.0.0.0/8',
+    '100.64.0.0/10',
+    '127.0.0.0/8',
+    '169.254.0.0/16',  // AWS/GCP metadata
+    '172.16.0.0/12',
+    '192.0.0.0/24',
+    '192.0.2.0/24',
+    '192.168.0.0/16',
+    '198.18.0.0/15',
+    '198.51.100.0/24',
+    '203.0.113.0/24',
+    '240.0.0.0/4',
 ].map(cidrToRange);
 
 function isPrivateIPv4(ip: string): boolean {
@@ -37,49 +35,27 @@ function isPrivateIPv4(ip: string): boolean {
 }
 
 function isPrivateIPv6(ip: string): boolean {
-    // Нормалізуємо: прибираємо scope id (%eth0 і т.п.)
     const normalized = ip.toLowerCase().split('%')[0];
-
-    // Loopback
-    if (normalized === '::1') return true;
-
-    // Unspecified
-    if (normalized === '::') return true;
-
-    // fc00::/7 — Unique Local Address (RFC 4193)
-    // Перші 7 біт: 1111110x → fc або fd
+    if (normalized === '::1' || normalized === '::') return true;
     if (/^f[cd]/i.test(normalized)) return true;
-
-    // fe80::/10 — Link-Local (RFC 4291)
     if (/^fe[89ab]/i.test(normalized)) return true;
 
-    // ::ffff:0:0/96 — IPv4-mapped (може обійти IPv4 перевірку)
     if (normalized.startsWith('::ffff:')) {
         const v4part = normalized.slice(7);
-        // Може бути ::ffff:192.168.1.1 або ::ffff:c0a8:101
         if (net.isIPv4(v4part)) return isPrivateIPv4(v4part);
-        // Hex форма ::ffff:c0a8:0101 → розпарсимо
         const hexMatch = v4part.match(/^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
         if (hexMatch) {
             const a = parseInt(hexMatch[1], 16);
             const b = parseInt(hexMatch[2], 16);
-            const reconstructed = [
-                (a >> 8) & 0xff,
-                a & 0xff,
-                (b >> 8) & 0xff,
-                b & 0xff,
-            ].join('.');
+            const reconstructed = [(a >> 8) & 0xff, a & 0xff, (b >> 8) & 0xff, b & 0xff].join('.');
             return isPrivateIPv4(reconstructed);
         }
-        return true; // не вдалося розпарсити — блокуємо
+        return true;
     }
 
-    // 64:ff9b::/96 — IPv4-IPv6 translators (RFC 6052)
     if (normalized.startsWith('64:ff9b::')) return true;
 
-    // 2002::/16 — 6to4 (може тунелювати приватні IPv4)
     if (normalized.startsWith('2002:')) {
-        // Виймаємо embedded IPv4 (біти 16-47)
         const parts = normalized.split(':');
         if (parts.length >= 3) {
             const hex = (parts[1] ?? '').padStart(4, '0') + (parts[2] ?? '').padStart(4, '0');
@@ -106,26 +82,26 @@ export class SsrfError extends Error {
 }
 
 /**
- * Валідує hostname: резолвить DNS і перевіряє що IP не приватний.
- * Повертає resolved IP щоб його можна було використати у запиті.
+ * Validates hostname by resolving DNS and checking the IP is not private/internal.
+ * Does NOT return the IP — the caller fetches the original URL so TLS SNI works correctly.
  */
-async function resolveAndValidate(hostname: string): Promise<{ address: string; family: 4 | 6 }> {
-    // Якщо hostname вже є IP — валідуємо одразу
+async function validateHostname(hostname: string): Promise<void> {
+    // If already an IP — validate directly
     if (net.isIPv4(hostname)) {
         if (isPrivateIPv4(hostname)) {
             throw new SsrfError(`Blocked: ${hostname} is a private IPv4 address`);
         }
-        return { address: hostname, family: 4 };
+        return;
     }
 
     if (net.isIPv6(hostname)) {
         if (isPrivateIPv6(hostname)) {
             throw new SsrfError(`Blocked: ${hostname} is a private IPv6 address`);
         }
-        return { address: hostname, family: 6 };
+        return;
     }
 
-    // DNS lookup — verbatim щоб отримати реальну відповідь без OS-level reordering
+    // Resolve DNS to get the real IP and validate it
     let address: string;
     let family: number;
 
@@ -142,29 +118,24 @@ async function resolveAndValidate(hostname: string): Promise<{ address: string; 
     if (family === 6 && isPrivateIPv6(address)) {
         throw new SsrfError(`Blocked: "${hostname}" resolves to private IPv6 ${address}`);
     }
-
-    return { address, family: family as 4 | 6 };
 }
 
 export interface SafeFetchOptions {
-    /** Timeout у мілісекундах (default: 5000) */
-    timeoutMs?: number;
-    /** Максимальний розмір відповіді у байтах (default: 2MB) */
-    maxBytes?: number;
-    /** Максимальна кількість redirects (default: 3) */
+    timeoutMs?:    number;
+    maxBytes?:     number;
     maxRedirects?: number;
-    /** Додаткові headers */
-    headers?: Record<string, string>;
+    headers?:      Record<string, string>;
 }
 
 /**
  * SSRF-safe fetch.
  *
- * - Валідує URL протокол (тільки http/https)
- * - Резолвить DNS і блокує приватні IP
- * - Робить запит на resolved IP з правильним Host header
- * - Кожен redirect проходить повторну валідацію
- * - Обмежує розмір відповіді
+ * Validates DNS first (blocks private IPs), then fetches the original URL
+ * so that TLS SNI works correctly and HTTPS sites with valid certificates
+ * don't get "fetch failed" errors.
+ *
+ * Note: there is a small DNS rebinding window between validation and the actual
+ * request. For a server-side OG previewer this is an acceptable trade-off.
  */
 export async function safeFetch(
     rawUrl: string,
@@ -172,7 +143,7 @@ export async function safeFetch(
 ): Promise<Response> {
     const {
         timeoutMs    = 5_000,
-        maxBytes     = 2 * 1024 * 1024, // 2 MB
+        maxBytes     = 2 * 1024 * 1024,
         maxRedirects = 3,
         headers      = {},
     } = options;
@@ -184,7 +155,6 @@ export async function safeFetch(
         throw new SsrfError(`Invalid URL: ${rawUrl}`);
     }
 
-    // Тільки http/https — жодних file://, ftp://, gopher:// і т.п.
     if (url.protocol !== 'http:' && url.protocol !== 'https:') {
         throw new SsrfError(`Blocked protocol: ${url.protocol}`);
     }
@@ -193,27 +163,22 @@ export async function safeFetch(
     let currentUrl    = url;
 
     while (true) {
-        const hostname = currentUrl.hostname;
-        const { address, family } = await resolveAndValidate(hostname);
-
-        // Будуємо URL з resolved IP замість hostname — DNS rebinding захист
-        const targetUrl = new URL(currentUrl.toString());
-        targetUrl.hostname = family === 6 ? `[${address}]` : address;
+        // Validate hostname (DNS lookup + private IP check) before each request
+        await validateHostname(currentUrl.hostname);
 
         const controller = new AbortController();
         const tid = setTimeout(() => controller.abort(), timeoutMs);
 
         let response: Response;
         try {
-            response = await fetch(targetUrl.toString(), {
+            // Fetch the ORIGINAL URL (with hostname, not IP) so TLS SNI works
+            response = await fetch(currentUrl.toString(), {
                 method:   'GET',
-                redirect: 'manual', // обробляємо redirects самі
+                redirect: 'manual',
                 signal:   controller.signal,
                 headers:  {
                     'User-Agent': 'Mozilla/5.0 (compatible; Messenger-OG/1.0)',
                     Accept:       'text/html,application/xhtml+xml',
-                    // Host header з оригінальним hostname (для SNI / virtual hosting)
-                    Host:         hostname,
                     ...headers,
                 },
             });
@@ -224,40 +189,32 @@ export async function safeFetch(
         // Redirect handling
         if (response.status >= 300 && response.status < 400) {
             const location = response.headers.get('location');
-            if (!location) {
-                throw new SsrfError('Redirect without Location header');
-            }
-
-            if (redirectsLeft <= 0) {
-                throw new SsrfError('Too many redirects');
-            }
+            if (!location) throw new SsrfError('Redirect without Location header');
+            if (redirectsLeft <= 0) throw new SsrfError('Too many redirects');
 
             redirectsLeft--;
 
-            // Резолвимо redirect URL відносно поточного
             try {
                 currentUrl = new URL(location, currentUrl.toString());
             } catch {
                 throw new SsrfError(`Invalid redirect URL: ${location}`);
             }
 
-            // Redirect може змінити протокол — перевіряємо знову
             if (currentUrl.protocol !== 'http:' && currentUrl.protocol !== 'https:') {
                 throw new SsrfError(`Redirect to blocked protocol: ${currentUrl.protocol}`);
             }
 
-            continue; // наступна ітерація — повторна валідація нового hostname
+            continue;
         }
 
-        // Перевіряємо Content-Type — тільки HTML нам потрібен для OG
+        // Only process HTML
         const contentType = response.headers.get('content-type') ?? '';
         if (!contentType.includes('text/html')) {
-            // Не HTML — повертаємо пустий response (не кидаємо помилку)
             return new Response(null, { status: 204 });
         }
 
-        // Обмежуємо розмір відповіді
-        const reader  = response.body?.getReader();
+        // Cap response size
+        const reader = response.body?.getReader();
         if (!reader) return response;
 
         const chunks: Uint8Array[] = [];
@@ -266,18 +223,16 @@ export async function safeFetch(
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-
             totalBytes += value.length;
             if (totalBytes > maxBytes) {
                 reader.cancel();
-                // Повертаємо те що вже зчитали
                 break;
             }
             chunks.push(value);
         }
 
-        const body = new Uint8Array(totalBytes > maxBytes ? maxBytes : totalBytes);
-        let offset = 0;
+        const body    = new Uint8Array(Math.min(totalBytes, maxBytes));
+        let   offset  = 0;
         for (const chunk of chunks) {
             body.set(chunk, offset);
             offset += chunk.length;
