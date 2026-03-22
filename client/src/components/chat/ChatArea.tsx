@@ -29,6 +29,7 @@ import { Socket }        from 'socket.io-client';
 import {ImageModal} from "@/src/components/chat/ImageModal";
 import {MediaPanel} from "@/src/components/chat/MediaPanel";
 import {compressImage} from "@/src/lib/compressImage";
+import {parseMetadata} from "@/src/lib/parseMetadata";
 
 interface ChatAreaProps {
     currentUser:           User | null;
@@ -163,8 +164,8 @@ const FileBubble = ({
     const [decrypting, setDecrypting] = useState(false);
     const [lightbox,   setLightbox]   = useState(false);   // ← NEW
 
-    const parsed      = msg.metadata ? (() => { try { return JSON.parse(msg.metadata!); } catch { return null; } })() : null;
-    const isEncrypted = !!parsed?.encrypted && !!onDecrypt;
+    const { encrypted: isEncryptedFlag } = parseMetadata(msg.metadata);
+    const isEncrypted = isEncryptedFlag && !!onDecrypt;
     const displayMime = msg.fileType ?? undefined;
 
     useEffect(() => {

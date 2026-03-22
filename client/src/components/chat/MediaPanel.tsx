@@ -6,6 +6,7 @@ import api from '@/src/lib/axios';
 import { ImageModal } from './ImageModal';
 import { VoiceBubble } from './VoiceBubble';
 import { formatFileSize, isImageType } from '@/src/lib/uploadFile';
+import {parseMetadata} from "@/src/lib/parseMetadata";
 
 interface MediaFile {
     id:        number;
@@ -29,15 +30,11 @@ interface Props {
     decryptFn?:     (data: ArrayBuffer, senderId: number) => Promise<ArrayBuffer>;
 }
 
-function parseMeta(raw: string | null): Record<string, any> | null {
-    if (!raw) return null;
-    try { return JSON.parse(raw); } catch { return null; }
+function isVoice(m: MediaFile): boolean {
+    const { waveform, duration } = parseMetadata(m.metadata);
+    return waveform.length > 0 || duration > 0;
 }
 
-function isVoice(m: MediaFile): boolean {
-    const p = parseMeta(m.metadata);
-    return !!(p && ('waveform' in p || 'duration' in p));
-}
 
 function categorize(msgs: MediaFile[]) {
     const media: MediaFile[] = [];
@@ -251,8 +248,8 @@ function MediaGrid({
                     </p>
                     <div className="grid grid-cols-3 gap-0.5 px-1">
                         {g.items.map(m => {
-                            const meta      = parseMeta(m.metadata);
-                            const encrypted = !!meta?.encrypted && !!decryptFn;
+                            const { encrypted: isEncryptedFlag } = parseMetadata(m.metadata);
+                            const encrypted = isEncryptedFlag && !!decryptFn;
 
                             return (
                                 <div key={m.id} className="aspect-square overflow-hidden rounded-sm bg-slate-100 dark:bg-slate-700">
@@ -351,8 +348,8 @@ function FileList({
                     </p>
                     <div className="divide-y divide-slate-50 dark:divide-slate-700/50">
                         {g.items.map(m => {
-                            const meta      = parseMeta(m.metadata);
-                            const encrypted = !!meta?.encrypted && !!decryptFn;
+                            const { encrypted: isEncryptedFlag } = parseMetadata(m.metadata);
+                            const encrypted = isEncryptedFlag && !!decryptFn;
 
                             return (
                                 <FileRow

@@ -2,12 +2,12 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Loader2 } from 'lucide-react';
+import { parseMetadata } from '@/src/lib/parseMetadata';
 
 interface Props {
     fileUrl:   string;
     metadata:  string | null | undefined;
     isMe:      boolean;
-    /** Passed for DIRECT chats — decrypts the raw encrypted bytes fetched from storage */
     onDecrypt?: (data: ArrayBuffer) => Promise<ArrayBuffer>;
 }
 
@@ -20,12 +20,15 @@ export function VoiceBubble({ fileUrl, metadata, isMe, onDecrypt }: Props) {
     const blobUrlRef = useRef<string | null>(null);
     const loadIdRef  = useRef(0);
 
-    const parsed         = metadata ? (() => { try { return JSON.parse(metadata); } catch { return null; } })() : null;
-    const waveform: number[] = parsed?.waveform ?? [];
-    const storedDuration: number = parsed?.duration ?? 0;
-    // originalMimeType is stored in metadata when the voice message is encrypted
-    const originalMime: string = parsed?.mimeType ?? 'audio/wav';
-    const isEncrypted: boolean = !!parsed?.encrypted && !!onDecrypt;
+    // Safe metadata parsing
+    const {
+        waveform:        rawWaveform,
+        duration:        storedDuration,
+        mimeType:        originalMime,
+        encrypted:       isEncryptedFlag,
+    } = parseMetadata(metadata);
+
+    const isEncrypted = isEncryptedFlag && !!onDecrypt;
 
     useEffect(() => {
         const myId = ++loadIdRef.current;
@@ -36,12 +39,6 @@ export function VoiceBubble({ fileUrl, metadata, isMe, onDecrypt }: Props) {
                 const res = await fetch(fileUrl);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-                // ── Build blob ────────────────────────────────────────────────
-                // For encrypted voice: decrypt raw bytes, wrap in Blob with the
-                // original MIME type stored in metadata (Supabase may return
-                // application/octet-stream which browsers refuse to decode).
-                // For plain voice: use res.blob() directly — this is the path
-                // that was already working before encryption was added.
                 let blob: Blob;
                 if (isEncrypted && onDecrypt) {
                     const raw = await res.arrayBuffer();
@@ -52,17 +49,16 @@ export function VoiceBubble({ fileUrl, metadata, isMe, onDecrypt }: Props) {
                 } else {
                     blob = await res.blob();
                     // If Supabase returned a generic content-type, override it
-                    // with the value stored in metadata so the browser can decode.
                     if (!blob.type || blob.type === 'application/octet-stream') {
                         blob = new Blob([await blob.arrayBuffer()], { type: originalMime });
                     }
                 }
                 if (myId !== loadIdRef.current) return;
-                const blobUrl  = URL.createObjectURL(blob);
+                const blobUrl      = URL.createObjectURL(blob);
                 blobUrlRef.current = blobUrl;
 
-                const audio = new Audio();
-                let settled = false;
+                const audio   = new Audio();
+                let   settled = false;
 
                 const ok = await new Promise<boolean>((resolve) => {
                     const finish = (result: boolean) => {
@@ -76,7 +72,7 @@ export function VoiceBubble({ fileUrl, metadata, isMe, onDecrypt }: Props) {
                             audio.currentTime = 1e101;
                             audio.ontimeupdate = () => {
                                 audio.ontimeupdate = null;
-                                audio.currentTime = 0;
+                                audio.currentTime  = 0;
                                 finish(true);
                             };
                         } else {
@@ -103,7 +99,8 @@ export function VoiceBubble({ fileUrl, metadata, isMe, onDecrypt }: Props) {
                 audio.ontimeupdate = () => {
                     if (myId !== loadIdRef.current) return;
                     const dur = isFinite(audio.duration) && audio.duration > 0
-                        ? audio.duration : storedDuration || 1;
+                        ? audio.duration
+                        : storedDuration || 1;
                     setProgress(audio.currentTime / dur);
                 };
                 audio.onended = () => {
@@ -133,9 +130,12 @@ export function VoiceBubble({ fileUrl, metadata, isMe, onDecrypt }: Props) {
                 audioRef.current.onerror      = null;
                 audioRef.current.pause();
                 audioRef.current.src = '';
-                audioRef.current = null;
+                audioRef.current     = null;
             }
-            if (blobUrlRef.current) { URL.revokeObjectURL(blobUrlRef.current); blobUrlRef.current = null; }
+            if (blobUrlRef.current) {
+                URL.revokeObjectURL(blobUrlRef.current);
+                blobUrlRef.current = null;
+            }
         };
     }, [fileUrl, storedDuration, isEncrypted]);
 
@@ -155,13 +155,16 @@ export function VoiceBubble({ fileUrl, metadata, isMe, onDecrypt }: Props) {
         setProgress(idx / total);
     }, [status, storedDuration]);
 
+    // Waveform bars
     const barCount = 40;
     const bars: number[] = [];
-    if (waveform.length === 0) {
+    if (rawWaveform.length === 0) {
         for (let i = 0; i < barCount; i++) bars.push(0.15 + Math.sin(i * 0.5) * 0.1);
     } else {
-        const step = waveform.length / barCount;
-        for (let i = 0; i < barCount; i++) bars.push(Math.max(0.05, waveform[Math.floor(i * step)] ?? 0.05));
+        const step = rawWaveform.length / barCount;
+        for (let i = 0; i < barCount; i++) {
+            bars.push(Math.max(0.05, rawWaveform[Math.floor(i * step)] ?? 0.05));
+        }
     }
     const playedBars = Math.floor(progress * barCount);
 
@@ -171,7 +174,7 @@ export function VoiceBubble({ fileUrl, metadata, isMe, onDecrypt }: Props) {
         return (d && isFinite(d) && d > 0) ? d : storedDuration;
     };
     const fmt = (s: number) =>
-        `${String(Math.floor(Math.max(0,s)/60)).padStart(2,'0')}:${String(Math.floor(Math.max(0,s)%60)).padStart(2,'0')}`;
+        `${String(Math.floor(Math.max(0, s) / 60)).padStart(2, '0')}:${String(Math.floor(Math.max(0, s) % 60)).padStart(2, '0')}`;
 
     if (status === 'error') {
         return (
