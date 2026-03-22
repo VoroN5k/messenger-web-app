@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Loader2 } from 'lucide-react';
 import { parseMetadata } from '@/src/lib/parseMetadata';
+import {useSignedUrl} from "@/src/hooks/useSignedUrl";
 
 interface Props {
     fileUrl:   string;
@@ -137,6 +138,8 @@ export function VoiceBubble({ fileUrl, metadata, isMe, onDecrypt }: Props) {
     const blobUrlRef = useRef<string | null>(null);
     const loadIdRef  = useRef(0);
 
+    const signedSrc = useSignedUrl(fileUrl);
+
     const {
         waveform:  rawWaveform,
         duration:  storedDuration,
@@ -147,12 +150,15 @@ export function VoiceBubble({ fileUrl, metadata, isMe, onDecrypt }: Props) {
     const isEncrypted = isEncryptedFlag && !!onDecrypt;
 
     useEffect(() => {
+
+        if (!signedSrc) return;
+
         const myId = ++loadIdRef.current;
         setStatus('loading'); setPlaying(false); setProgress(0);
 
         const load = async () => {
             try {
-                const res = await fetch(fileUrl);
+                const res = await fetch(signedSrc);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
                 // ── Decrypt or read raw bytes ──────────────────────────────────
@@ -252,7 +258,7 @@ export function VoiceBubble({ fileUrl, metadata, isMe, onDecrypt }: Props) {
                 blobUrlRef.current = null;
             }
         };
-    }, [fileUrl, storedDuration, isEncrypted]);
+    }, [signedSrc, storedDuration, isEncrypted]);
 
     const toggle = useCallback(async () => {
         const a = audioRef.current;

@@ -1,12 +1,18 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { X, FileText, Download, Loader2, ImageOff, Image, Mic, Paperclip } from 'lucide-react';
+import {
+    X, FileText, Download, Loader2, ImageOff,
+    Image, Mic, Paperclip,
+} from 'lucide-react';
 import api from '@/src/lib/axios';
-import { ImageModal } from './ImageModal';
-import { VoiceBubble } from './VoiceBubble';
+import { ImageModal }   from './ImageModal';
+import { VoiceBubble }  from './VoiceBubble';
 import { formatFileSize, isImageType } from '@/src/lib/uploadFile';
-import {parseMetadata} from "@/src/lib/parseMetadata";
+import { parseMetadata } from '@/src/lib/parseMetadata';
+import { useSignedUrl, resolveSignedUrl } from '@/src/hooks/useSignedUrl';
+
+// Types
 
 interface MediaFile {
     id:        number;
@@ -26,15 +32,15 @@ interface Props {
     conversationId: number;
     currentUserId:  number | string;
     onClose:        () => void;
-    // senderId передається щоб знати чий ключ використати для розшифровки
     decryptFn?:     (data: ArrayBuffer, senderId: number) => Promise<ArrayBuffer>;
 }
+
+// Helpers
 
 function isVoice(m: MediaFile): boolean {
     const { waveform, duration } = parseMetadata(m.metadata);
     return waveform.length > 0 || duration > 0;
 }
-
 
 function categorize(msgs: MediaFile[]) {
     const media: MediaFile[] = [];
@@ -42,8 +48,8 @@ function categorize(msgs: MediaFile[]) {
     const files: MediaFile[] = [];
     for (const m of msgs) {
         if (!m.fileUrl) continue;
-        if (isImageType(m.fileType))    { media.push(m); continue; }
-        if (isVoice(m))                 { voice.push(m); continue; }
+        if (isImageType(m.fileType))  { media.push(m); continue; }
+        if (isVoice(m))               { voice.push(m); continue; }
         files.push(m);
     }
     return { media, voice, files };
@@ -52,36 +58,89 @@ function categorize(msgs: MediaFile[]) {
 function formatDay(dateStr: string): string {
     const d   = new Date(dateStr);
     const now = new Date();
-    const y   = new Date(now); y.setDate(now.getDate() - 1);
+    const y   = new Date(now);
+    y.setDate(now.getDate() - 1);
     if (d.toDateString() === now.toDateString()) return 'Сьогодні';
     if (d.toDateString() === y.toDateString())   return 'Вчора';
-    return d.toLocaleDateString('uk-UA', { day: 'numeric', month: 'long', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
+    return d.toLocaleDateString('uk-UA', {
+        day: 'numeric', month: 'long',
+        year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
+    });
 }
 
-// Компонент для зашифрованих зображень — розшифровує при монтуванні
-// передаємо senderId щоб useE2E знав чий ключ використати
-function EncryptedImageTile({
-                                m, decryptFn, onClick,
-                            }: {
-    m: MediaFile;
-    decryptFn: (data: ArrayBuffer, senderId: number) => Promise<ArrayBuffer>;
-    onClick: (url: string) => void;
+function groupByDay(items: MediaFile[]): { label: string; items: MediaFile[] }[] {
+    const groups: { label: string; items: MediaFile[] }[] = [];
+    for (const m of items) {
+        const label = formatDay(m.createdAt);
+        const last  = groups[groups.length - 1];
+        if (last?.label === label) last.items.push(m);
+        else groups.push({ label, items: [m] });
+    }
+    return groups;
+}
+
+// Image tile - plain (no E2E)
+
+function PlainImageTile({
+                            m, onLightbox,
+                        }: {
+    m:          MediaFile;
+    onLightbox: (s: { src: string; name?: string }) => void;
 }) {
+    const signedSrc = useSignedUrl(m.fileUrl);
+    const [errored, setErrored] = useState(false);
+
+    if (!signedSrc) return (
+        <div className="w-full h-full flex items-center justify-center bg-slate-100 dark:bg-slate-700">
+            <Loader2 size={14} className="animate-spin text-slate-400" />
+        </div>
+    );
+
+    if (errored) return (
+        <div className="w-full h-full flex items-center justify-center bg-slate-100 dark:bg-slate-700">
+            <ImageOff size={16} className="text-slate-400" />
+        </div>
+    );
+
+    return (
+        <img
+            src={signedSrc}
+            alt={m.fileName ?? 'image'}
+            className="w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity"
+            onError={() => setErrored(true)}
+            onClick={() => onLightbox({ src: signedSrc, name: m.fileName ?? undefined })}
+        />
+    );
+}
+
+// Image tile — E2E encrypted
+
+function EncryptedImageTile({
+                                m, decryptFn, onLightbox,
+                            }: {
+    m:          MediaFile;
+    decryptFn:  (data: ArrayBuffer, senderId: number) => Promise<ArrayBuffer>;
+    onLightbox: (s: { src: string; name?: string }) => void;
+}) {
+    const signedSrc            = useSignedUrl(m.fileUrl);
     const [blobUrl, setBlobUrl] = useState<string | null>(null);
     const [err,     setErr]     = useState(false);
 
     useEffect(() => {
+        if (!signedSrc) return;
         let url: string | null = null;
-        fetch(m.fileUrl)
+        fetch(signedSrc)
             .then(r => r.arrayBuffer())
             .then(buf => decryptFn(buf, m.senderId))
             .then(dec => {
-                url = URL.createObjectURL(new Blob([dec], { type: m.fileType ?? 'image/jpeg' }));
+                url = URL.createObjectURL(
+                    new Blob([dec], { type: m.fileType ?? 'image/jpeg' }),
+                );
                 setBlobUrl(url);
             })
             .catch(() => setErr(true));
         return () => { if (url) URL.revokeObjectURL(url); };
-    }, [m.fileUrl]);
+    }, [signedSrc]); // eslint-disable-line react-hooks/exhaustive-deps
 
     if (err) return (
         <div className="w-full h-full flex items-center justify-center bg-slate-100 dark:bg-slate-800">
@@ -98,141 +157,16 @@ function EncryptedImageTile({
             src={blobUrl}
             alt={m.fileName ?? 'image'}
             className="w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity"
-            onClick={() => onClick(blobUrl)}
+            onClick={() => onLightbox({ src: blobUrl, name: m.fileName ?? undefined })}
         />
     );
 }
 
-export function MediaPanel({ conversationId, currentUserId, onClose, decryptFn }: Props) {
-    const [tab,      setTab]      = useState<Tab>('media');
-    const [all,      setAll]      = useState<MediaFile[]>([]);
-    const [loading,  setLoading]  = useState(true);
-    const [lightbox, setLightbox] = useState<{ src: string; name?: string } | null>(null);
-    const panelRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        setLoading(true);
-        api.get<MediaFile[]>(`/conversations/${conversationId}/media`)
-            .then(r => setAll(r.data))
-            .catch(() => {})
-            .finally(() => setLoading(false));
-    }, [conversationId]);
-
-    useEffect(() => {
-        const h = (e: MouseEvent) => {
-            if (panelRef.current && !panelRef.current.contains(e.target as Node)) onClose();
-        };
-        const t = setTimeout(() => document.addEventListener('mousedown', h), 80);
-        return () => { clearTimeout(t); document.removeEventListener('mousedown', h); };
-    }, [onClose]);
-
-    useEffect(() => {
-        const h = (e: KeyboardEvent) => { if (e.key === 'Escape' && !lightbox) onClose(); };
-        document.addEventListener('keydown', h);
-        return () => document.removeEventListener('keydown', h);
-    }, [onClose, lightbox]);
-
-    const { media, voice, files } = categorize(all);
-
-    function groupByDay(items: MediaFile[]) {
-        const groups: { label: string; items: MediaFile[] }[] = [];
-        for (const m of items) {
-            const label = formatDay(m.createdAt);
-            const last  = groups[groups.length - 1];
-            if (last?.label === label) last.items.push(m);
-            else groups.push({ label, items: [m] });
-        }
-        return groups;
-    }
-
-    const TAB_DATA: { id: Tab; label: string; icon: React.ReactNode; count: number }[] = [
-        { id: 'media', label: 'Медіа',    icon: <Image    size={14} />, count: media.length },
-        { id: 'voice', label: 'Голосові', icon: <Mic      size={14} />, count: voice.length },
-        { id: 'files', label: 'Файли',    icon: <Paperclip size={14}/>, count: files.length },
-    ];
-
-    return (
-        <>
-            <div
-                ref={panelRef}
-                className="absolute top-0 right-0 h-full w-[320px] bg-white dark:bg-slate-800
-                           border-l border-slate-100 dark:border-slate-700 flex flex-col z-20
-                           shadow-xl animate-in slide-in-from-right-4 duration-200"
-            >
-                <div className="flex items-center justify-between px-4 py-3.5 border-b border-slate-100 dark:border-slate-700 shrink-0">
-                    <h3 className="font-semibold text-slate-800 dark:text-slate-100 text-sm">Вкладення</h3>
-                    <button onClick={onClose}
-                            className="p-1.5 rounded-full text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer transition-all">
-                        <X size={15} />
-                    </button>
-                </div>
-
-                <div className="flex border-b border-slate-100 dark:border-slate-700 shrink-0">
-                    {TAB_DATA.map(t => (
-                        <button
-                            key={t.id}
-                            onClick={() => setTab(t.id)}
-                            className={`flex-1 py-2.5 flex flex-col items-center gap-0.5 text-[10px] font-semibold transition-colors cursor-pointer
-                                ${tab === t.id
-                                ? 'text-violet-600 dark:text-violet-400 border-b-2 border-violet-500 -mb-px'
-                                : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
-                        >
-                            <span>{t.icon}</span>
-                            <span>{t.label}</span>
-                            {t.count > 0 && (
-                                <span className={`text-[9px] font-bold ${tab === t.id ? 'text-violet-500' : 'text-slate-300 dark:text-slate-600'}`}>
-                                    {t.count}
-                                </span>
-                            )}
-                        </button>
-                    ))}
-                </div>
-
-                <div className="flex-1 overflow-y-auto">
-                    {loading ? (
-                        <div className="flex items-center justify-center h-full">
-                            <Loader2 size={22} className="animate-spin text-violet-400" />
-                        </div>
-                    ) : tab === 'media' ? (
-                        <MediaGrid
-                            items={media}
-                            groups={groupByDay(media)}
-                            decryptFn={decryptFn}
-                            onLightbox={setLightbox}
-                        />
-                    ) : tab === 'voice' ? (
-                        <VoiceList
-                            items={voice}
-                            groups={groupByDay(voice)}
-                            currentUserId={currentUserId}
-                            decryptFn={decryptFn}
-                        />
-                    ) : (
-                        <FileList
-                            items={files}
-                            groups={groupByDay(files)}
-                            decryptFn={decryptFn}
-                        />
-                    )}
-                </div>
-            </div>
-
-            {lightbox && (
-                <ImageModal
-                    src={lightbox.src}
-                    alt={lightbox.name ?? 'image'}
-                    fileName={lightbox.name}
-                    onClose={() => setLightbox(null)}
-                />
-            )}
-        </>
-    );
-}
+// Media grid
 
 function MediaGrid({
                        groups, decryptFn, onLightbox,
                    }: {
-    items:      MediaFile[];
     groups:     { label: string; items: MediaFile[] }[];
     decryptFn?: (data: ArrayBuffer, senderId: number) => Promise<ArrayBuffer>;
     onLightbox: (s: { src: string; name?: string }) => void;
@@ -250,24 +184,20 @@ function MediaGrid({
                         {g.items.map(m => {
                             const { encrypted: isEncryptedFlag } = parseMetadata(m.metadata);
                             const encrypted = isEncryptedFlag && !!decryptFn;
-
                             return (
-                                <div key={m.id} className="aspect-square overflow-hidden rounded-sm bg-slate-100 dark:bg-slate-700">
-                                    {encrypted && decryptFn ? (
-                                        <EncryptedImageTile
+                                <div key={m.id}
+                                     className="aspect-square overflow-hidden rounded-sm bg-slate-100 dark:bg-slate-700">
+                                    {encrypted && decryptFn
+                                        ? <EncryptedImageTile
                                             m={m}
                                             decryptFn={decryptFn}
-                                            onClick={(url) => onLightbox({ src: url, name: m.fileName ?? undefined })}
+                                            onLightbox={onLightbox}
                                         />
-                                    ) : (
-                                        <img
-                                            src={m.fileUrl}
-                                            alt={m.fileName ?? 'image'}
-                                            className="w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity"
-                                            onClick={() => onLightbox({ src: m.fileUrl, name: m.fileName ?? undefined })}
-                                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                                        : <PlainImageTile
+                                            m={m}
+                                            onLightbox={onLightbox}
                                         />
-                                    )}
+                                    }
                                 </div>
                             );
                         })}
@@ -278,13 +208,13 @@ function MediaGrid({
     );
 }
 
+// Voice list
+
 function VoiceList({
                        groups, currentUserId, decryptFn,
                    }: {
-    items:         MediaFile[];
     groups:        { label: string; items: MediaFile[] }[];
     currentUserId: number | string;
-    // senderId передається щоб VoiceBubble знав чий ключ використати
     decryptFn?:    (data: ArrayBuffer, senderId: number) => Promise<ArrayBuffer>;
 }) {
     if (!groups.length) return <Empty label="Голосових повідомлень немає" />;
@@ -307,7 +237,9 @@ function VoiceList({
                                                 {isMe ? 'Ви' : m.sender.nickname}
                                             </span>
                                             <span className="text-[10px] text-slate-400 dark:text-slate-500 shrink-0 ml-2">
-                                                {new Date(m.createdAt).toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' })}
+                                                {new Date(m.createdAt).toLocaleTimeString('uk-UA', {
+                                                    hour: '2-digit', minute: '2-digit',
+                                                })}
                                             </span>
                                         </div>
                                         <div className="bg-slate-50 dark:bg-slate-700/50 rounded-xl px-2 py-1.5">
@@ -315,8 +247,11 @@ function VoiceList({
                                                 fileUrl={m.fileUrl}
                                                 metadata={m.metadata}
                                                 isMe={false}
-                                                // передаємо senderId конкретного повідомлення
-                                                onDecrypt={decryptFn ? (d) => decryptFn(d, m.senderId) : undefined}
+                                                onDecrypt={
+                                                    decryptFn
+                                                        ? (d) => decryptFn(d, m.senderId)
+                                                        : undefined
+                                                }
                                             />
                                         </div>
                                     </div>
@@ -330,71 +265,53 @@ function VoiceList({
     );
 }
 
-function FileList({
-                      groups, decryptFn,
-                  }: {
-    items:      MediaFile[];
-    groups:     { label: string; items: MediaFile[] }[];
-    decryptFn?: (data: ArrayBuffer, senderId: number) => Promise<ArrayBuffer>;
-}) {
-    if (!groups.length) return <Empty label="Файлів немає" />;
+// ── File row ──────────────────────────────────────────────────────────────────
 
-    return (
-        <div className="py-2">
-            {groups.map(g => (
-                <div key={g.label} className="mb-4">
-                    <p className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wide px-4 py-1.5">
-                        {g.label}
-                    </p>
-                    <div className="divide-y divide-slate-50 dark:divide-slate-700/50">
-                        {g.items.map(m => {
-                            const { encrypted: isEncryptedFlag } = parseMetadata(m.metadata);
-                            const encrypted = isEncryptedFlag && !!decryptFn;
-
-                            return (
-                                <FileRow
-                                    key={m.id}
-                                    m={m}
-                                    encrypted={encrypted}
-                                    decryptFn={decryptFn}
-                                />
-                            );
-                        })}
-                    </div>
-                </div>
-            ))}
-        </div>
-    );
-}
-
-function FileRow({ m, encrypted, decryptFn }: {
+function FileRow({
+                     m, encrypted, decryptFn,
+                 }: {
     m:          MediaFile;
     encrypted:  boolean;
-    // senderId передається щоб знати чий ключ використати при завантаженні
     decryptFn?: (data: ArrayBuffer, senderId: number) => Promise<ArrayBuffer>;
 }) {
     const [blobUrl,    setBlobUrl]    = useState<string | null>(null);
     const [decrypting, setDecrypting] = useState(false);
 
     const handleDownload = useCallback(async () => {
-        if (encrypted && decryptFn && !blobUrl) {
+        if (encrypted && decryptFn) {
+            // Decrypt path: resolve signed URL → fetch → decrypt → download
+            if (blobUrl) {
+                const a = document.createElement('a');
+                a.href = blobUrl; a.download = m.fileName ?? 'file'; a.click();
+                return;
+            }
             setDecrypting(true);
             try {
-                const buf = await fetch(m.fileUrl).then(r => r.arrayBuffer());
-                // передаємо senderId конкретного файлу
+                const src = await resolveSignedUrl(m.fileUrl);
+                const buf = await fetch(src).then(r => r.arrayBuffer());
                 const dec = await decryptFn(buf, m.senderId);
-                const url = URL.createObjectURL(new Blob([dec], { type: m.fileType ?? 'application/octet-stream' }));
+                const url = URL.createObjectURL(
+                    new Blob([dec], { type: m.fileType ?? 'application/octet-stream' }),
+                );
                 setBlobUrl(url);
                 const a = document.createElement('a');
                 a.href = url; a.download = m.fileName ?? 'file'; a.click();
-            } catch {} finally { setDecrypting(false); }
-        } else if (blobUrl) {
-            const a = document.createElement('a');
-            a.href = blobUrl; a.download = m.fileName ?? 'file'; a.click();
+            } catch {
+                // fallback — open raw (may be encrypted bytes, but better than nothing)
+                window.open(m.fileUrl, '_blank');
+            } finally {
+                setDecrypting(false);
+            }
         } else {
-            const a = document.createElement('a');
-            a.href = m.fileUrl; a.download = m.fileName ?? 'file';
-            a.target = '_blank'; a.click();
+            // Plain path: resolve signed URL → download
+            try {
+                const src = await resolveSignedUrl(m.fileUrl);
+                const a   = document.createElement('a');
+                a.href = src; a.download = m.fileName ?? 'file';
+                a.target = '_blank'; a.click();
+            } catch {
+                window.open(m.fileUrl, '_blank');
+            }
         }
     }, [m, encrypted, decryptFn, blobUrl]);
 
@@ -413,7 +330,9 @@ function FileRow({ m, encrypted, decryptFn }: {
                     )}
                     <span className="text-[10px] text-slate-300 dark:text-slate-600">·</span>
                     <span className="text-[10px] text-slate-400">
-                        {new Date(m.createdAt).toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' })}
+                        {new Date(m.createdAt).toLocaleTimeString('uk-UA', {
+                            hour: '2-digit', minute: '2-digit',
+                        })}
                     </span>
                     {encrypted && (
                         <>
@@ -426,7 +345,9 @@ function FileRow({ m, encrypted, decryptFn }: {
             <button
                 onClick={handleDownload}
                 disabled={decrypting}
-                className="p-1.5 rounded-full text-slate-300 group-hover:text-slate-500 dark:group-hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer transition-all disabled:opacity-50 shrink-0"
+                className="p-1.5 rounded-full text-slate-300 group-hover:text-slate-500 dark:group-hover:text-slate-300
+                           hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer transition-all
+                           disabled:opacity-50 shrink-0"
                 title="Завантажити"
             >
                 {decrypting
@@ -438,11 +359,176 @@ function FileRow({ m, encrypted, decryptFn }: {
     );
 }
 
-function Empty({ label }: { label: string }) {
+// ── File list ─────────────────────────────────────────────────────────────────
+
+function FileList({
+                      groups, decryptFn,
+                  }: Readonly<{
+    groups: { label: string; items: MediaFile[] }[];
+    decryptFn?: (data: ArrayBuffer, senderId: number) => Promise<ArrayBuffer>;
+}>) {
+    if (!groups.length) return <Empty label="Файлів немає" />;
+
+    return (
+        <div className="py-2">
+            {groups.map(g => (
+                <div key={g.label} className="mb-4">
+                    <p className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wide px-4 py-1.5">
+                        {g.label}
+                    </p>
+                    <div className="divide-y divide-slate-50 dark:divide-slate-700/50">
+                        {g.items.map(m => {
+                            const { encrypted: isEncryptedFlag } = parseMetadata(m.metadata);
+                            return (
+                                <FileRow
+                                    key={m.id}
+                                    m={m}
+                                    encrypted={isEncryptedFlag && !!decryptFn}
+                                    decryptFn={decryptFn}
+                                />
+                            );
+                        })}
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
+}
+
+// Empty state
+
+function Empty({ label }: Readonly<{ label: string }>) {
     return (
         <div className="flex flex-col items-center justify-center h-full gap-2 text-slate-300 dark:text-slate-600 py-16">
             <Paperclip size={32} className="opacity-50" />
             <p className="text-xs font-medium">{label}</p>
         </div>
+    );
+}
+
+// Main panel
+
+export function MediaPanel({
+                               conversationId, currentUserId, onClose, decryptFn,
+                           }: Readonly<Props>) {
+    const [tab,      setTab]      = useState<Tab>('media');
+    const [all,      setAll]      = useState<MediaFile[]>([]);
+    const [loading,  setLoading]  = useState(true);
+    const [lightbox, setLightbox] = useState<{ src: string; name?: string } | null>(null);
+    const panelRef = useRef<HTMLDivElement>(null);
+
+    // Fetch attachment list
+    useEffect(() => {
+        setLoading(true);
+        api.get<MediaFile[]>(`/conversations/${conversationId}/media`)
+            .then(r => setAll(r.data))
+            .catch(() => {})
+            .finally(() => setLoading(false));
+    }, [conversationId]);
+
+    // Close on outside click
+    useEffect(() => {
+        const h = (e: MouseEvent) => {
+            if (panelRef.current && !panelRef.current.contains(e.target as Node)) onClose();
+        };
+        const t = setTimeout(() => document.addEventListener('mousedown', h), 80);
+        return () => { clearTimeout(t); document.removeEventListener('mousedown', h); };
+    }, [onClose]);
+
+    // Close on Escape (but not when lightbox is open)
+    useEffect(() => {
+        const h = (e: KeyboardEvent) => { if (e.key === 'Escape' && !lightbox) onClose(); };
+        document.addEventListener('keydown', h);
+        return () => document.removeEventListener('keydown', h);
+    }, [onClose, lightbox]);
+
+    const { media, voice, files } = categorize(all);
+
+    const TAB_DATA: { id: Tab; label: string; icon: React.ReactNode; count: number }[] = [
+        { id: 'media', label: 'Медіа',    icon: <Image     size={14} />, count: media.length },
+        { id: 'voice', label: 'Голосові', icon: <Mic       size={14} />, count: voice.length },
+        { id: 'files', label: 'Файли',    icon: <Paperclip size={14} />, count: files.length },
+    ];
+
+    return (
+        <>
+            <div
+                ref={panelRef}
+                className="absolute top-0 right-0 h-full w-[320px] bg-white dark:bg-slate-800
+                           border-l border-slate-100 dark:border-slate-700 flex flex-col z-20
+                           shadow-xl animate-in slide-in-from-right-4 duration-200"
+            >
+                {/* Header */}
+                <div className="flex items-center justify-between px-4 py-3.5 border-b border-slate-100 dark:border-slate-700 shrink-0">
+                    <h3 className="font-semibold text-slate-800 dark:text-slate-100 text-sm">Вкладення</h3>
+                    <button
+                        onClick={onClose}
+                        className="p-1.5 rounded-full text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer transition-all"
+                    >
+                        <X size={15} />
+                    </button>
+                </div>
+
+                {/* Tabs */}
+                <div className="flex border-b border-slate-100 dark:border-slate-700 shrink-0">
+                    {TAB_DATA.map(t => (
+                        <button
+                            key={t.id}
+                            onClick={() => setTab(t.id)}
+                            className={`flex-1 py-2.5 flex flex-col items-center gap-0.5 text-[10px] font-semibold transition-colors cursor-pointer
+                                ${tab === t.id
+                                ? 'text-violet-600 dark:text-violet-400 border-b-2 border-violet-500 -mb-px'
+                                : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
+                        >
+                            <span>{t.icon}</span>
+                            <span>{t.label}</span>
+                            {t.count > 0 && (
+                                <span className={`text-[9px] font-bold
+                                    ${tab === t.id
+                                    ? 'text-violet-500'
+                                    : 'text-slate-300 dark:text-slate-600'}`}>
+                                    {t.count}
+                                </span>
+                            )}
+                        </button>
+                    ))}
+                </div>
+
+                {/* Content */}
+                <div className="flex-1 overflow-y-auto">
+                    {loading ? (
+                        <div className="flex items-center justify-center h-full">
+                            <Loader2 size={22} className="animate-spin text-violet-400" />
+                        </div>
+                    ) : tab === 'media' ? (
+                        <MediaGrid
+                            groups={groupByDay(media)}
+                            decryptFn={decryptFn}
+                            onLightbox={setLightbox}
+                        />
+                    ) : tab === 'voice' ? (
+                        <VoiceList
+                            groups={groupByDay(voice)}
+                            currentUserId={currentUserId}
+                            decryptFn={decryptFn}
+                        />
+                    ) : (
+                        <FileList
+                            groups={groupByDay(files)}
+                            decryptFn={decryptFn}
+                        />
+                    )}
+                </div>
+            </div>
+
+            {lightbox && (
+                <ImageModal
+                    src={lightbox.src}
+                    alt={lightbox.name ?? 'image'}
+                    fileName={lightbox.name}
+                    onClose={() => setLightbox(null)}
+                />
+            )}
+        </>
     );
 }

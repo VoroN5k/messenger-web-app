@@ -30,6 +30,7 @@ import {ImageModal} from "@/src/components/chat/ImageModal";
 import {MediaPanel} from "@/src/components/chat/MediaPanel";
 import {compressImage} from "@/src/lib/compressImage";
 import {parseMetadata} from "@/src/lib/parseMetadata";
+import {useSignedUrl} from "@/src/hooks/useSignedUrl";
 
 interface ChatAreaProps {
     currentUser:           User | null;
@@ -144,14 +145,6 @@ const ReactionsRow = ({ reactions, currentUserId, onToggle }: {
     );
 };
 
-// ── PATCH для ChatArea.tsx ────────────────────────────────────────────────────
-// 1. Додати імпорт ImageModal вверху файлу поряд з іншими імпортами:
-//
-//    import { ImageModal } from './ImageModal';
-//
-//
-// 2. В компоненті FileBubble замінити весь код на наступний:
-
 const FileBubble = ({
                         msg, isMe, onDecrypt,
                     }: {
@@ -159,21 +152,25 @@ const FileBubble = ({
     isMe: boolean;
     onDecrypt?: (data: ArrayBuffer) => Promise<ArrayBuffer>;
 }) => {
+    // Resolve to a short-lived signed URL before any fetch
+    const signedSrc = useSignedUrl(msg.fileUrl);
+
     const [err,        setErr]        = useState(false);
     const [blobUrl,    setBlobUrl]    = useState<string | null>(null);
     const [decrypting, setDecrypting] = useState(false);
-    const [lightbox,   setLightbox]   = useState(false);   // ← NEW
+    const [lightbox,   setLightbox]   = useState(false);
 
     const { encrypted: isEncryptedFlag } = parseMetadata(msg.metadata);
     const isEncrypted = isEncryptedFlag && !!onDecrypt;
     const displayMime = msg.fileType ?? undefined;
 
+    // Decrypt effect — only runs once we have a valid signed URL
     useEffect(() => {
-        if (!isEncrypted || !onDecrypt) return;
+        if (!isEncrypted || !onDecrypt || !signedSrc) return;
         let objectUrl: string | null = null;
         setDecrypting(true);
 
-        fetch(msg.fileUrl!)
+        fetch(signedSrc)                              // ← signed URL
             .then(r => r.arrayBuffer())
             .then(buf => onDecrypt(buf))
             .then(dec => {
@@ -184,21 +181,24 @@ const FileBubble = ({
             .finally(() => setDecrypting(false));
 
         return () => { if (objectUrl) URL.revokeObjectURL(objectUrl); };
-    }, [msg.fileUrl, isEncrypted]);
+    }, [signedSrc, isEncrypted]);               // ← depends on signedSrc
 
-    if (decrypting) {
+    if (decrypting || (!signedSrc && !err)) {
         return (
             <div className={`flex items-center gap-2 px-3 py-2 text-xs rounded-xl
                 ${isMe ? 'text-indigo-200' : 'text-slate-400'}`}>
                 <Loader2 size={13} className="animate-spin shrink-0" />
-                <span>Розшифровка...</span>
+                <span>{decrypting ? 'Розшифровка...' : 'Завантаження...'}</span>
             </div>
         );
     }
 
-    const srcUrl = isEncrypted ? (blobUrl ?? msg.fileUrl!) : msg.fileUrl!;
+    // Effective source: blob URL (decrypted) → signed URL (plain) → fallback
+    const srcUrl = isEncrypted
+        ? (blobUrl ?? signedSrc ?? msg.fileUrl!)
+        : (signedSrc ?? msg.fileUrl!);
 
-    // ── Image — open in lightbox ──────────────────────────────────────────────
+    // Image — open in lightbox
     if (isImageType(displayMime) && !err) {
         return (
             <>
@@ -221,14 +221,16 @@ const FileBubble = ({
         );
     }
 
-    // ── Other files — download link ───────────────────────────────────────────
+    // Other files — download link using signed URL
     return (
         <a href={srcUrl}
            target={isEncrypted && blobUrl ? '_self' : '_blank'}
            rel="noopener noreferrer"
            download={msg.fileName ?? true}
            className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-colors max-w-[260px]
-            ${isMe ? 'bg-white/15 hover:bg-white/25' : 'bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600'}`}>
+            ${isMe
+               ? 'bg-white/15 hover:bg-white/25'
+               : 'bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600'}`}>
             {err
                 ? <ImageOff size={20} className={isMe ? 'text-indigo-200 shrink-0' : 'text-slate-400 shrink-0'} />
                 : <FileText size={20} className={isMe ? 'text-indigo-200 shrink-0' : 'text-slate-400 shrink-0'} />}
