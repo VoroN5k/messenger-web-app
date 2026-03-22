@@ -60,8 +60,11 @@ export function parseMetadata(raw: string | null | undefined): MessageMetadata {
         return { ...DEFAULTS };
     }
 
+    // FIX: use hasOwnProperty instead of `in` operator.
+    // `'constructor' in {}` is always true (inherited via prototype chain),
+    // which caused this function to always return DEFAULTS — breaking encrypted audio.
     for (const key of FORBIDDEN_KEYS) {
-        if (key in parsed) return { ...DEFAULTS };
+        if (Object.prototype.hasOwnProperty.call(parsed, key)) return { ...DEFAULTS };
     }
 
     const obj = parsed as Record<string, unknown>;
