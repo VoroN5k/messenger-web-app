@@ -28,7 +28,15 @@ export const uploadFile = (
 
         xhr.onload = () => {
             if (xhr.status === 201) {
-                resolve(JSON.parse(xhr.responseText) as UploadResult);
+                const result = JSON.parse(xhr.responseText) as UploadResult;
+
+                const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
+                if (supabaseUrl && result.url.startsWith(supabaseUrl)) {
+                    result.url = result.url
+                        .replace(supabaseUrl + '/storage/v1/object/public', '/storage');
+                }
+
+                resolve(result);
             } else {
                 try { reject(new Error(JSON.parse(xhr.responseText).message || 'Upload failed')); }
                 catch { reject(new Error('Upload failed')); }
