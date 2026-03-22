@@ -465,7 +465,7 @@ export default function ChatArea({
                 }
             }
 
-            // ── E2E шифрування (стисненого файлу) ────────────────────────────────
+            // E2E шифрування (стисненого файлу)
             let fileToUpload = fileToProcess;
             let encMeta: string | undefined;
 
@@ -497,7 +497,7 @@ export default function ChatArea({
         } finally { setUploadProgress(null); abortRef.current = null; }
     }, [conversation, sendFileMessage, replyTo, otherUserId, e2e]);
 
-    // ── Voice message — encrypts WAV bytes for DIRECT chats before upload ─────
+    // Voice message - encrypts WAV bytes for DIRECT chats before upload
     const sendVoiceMessage = useCallback(async (
         blob: Blob,
         waveform: number[],

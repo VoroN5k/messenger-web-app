@@ -52,6 +52,17 @@ export const useMessages = (
     const looksEncrypted = (s?: string | null) =>
         !!s && s.length > 20 && /^[A-Za-z0-9_\-]+$/.test(s);
 
+    // Deduplication helper
+    const isDuplicate = useCallback((
+        prev: Message[],
+        incoming: Message,
+    ): boolean => {
+        if (incoming.id) {
+            return prev.some(m => m.id === incoming.id);
+        }
+        return false;
+    }, []);
+
     //Fetch initial messages
     useEffect(() => {
         if (!conversationId) {
@@ -159,12 +170,16 @@ export const useMessages = (
             onDecryptedMessage?.(decryptedMsg);
 
             setMessages((prev) => {
+                if (decryptedMsg.id && prev.some(m => m.id === decryptedMsg.id)) return prev;
+
                 const idx = prev.findIndex(
                     (m) =>
                         !m.id &&
-                        m.content === decryptedMsg.content &&
-                        String(m.senderId) === String(msg.senderId) &&
-                        (m.fileUrl ?? null) === (msg.fileUrl ?? null),
+                        String(m.senderId) === String(decryptedMsg.senderId) &&
+                        (m.fileUrl ?? null) === (decryptedMsg.fileUrl ?? null) &&
+                        (decryptedMsg.fileUrl
+                            ? true
+                            : m.content === decryptedMsg.content),
                 );
                 if (idx !== -1) {
                     const next = [...prev];
@@ -311,7 +326,8 @@ export const useMessages = (
             setMessages((prev) => [
                 ...prev,
                 {
-                    content, senderId: currentUserId, conversationId,
+                    content,
+                    senderId: currentUserId, conversationId,
                     createdAt: new Date().toISOString(),
                     deletedAt: null, editedAt: null, reactions: [],
                     replyToId: replyToId ?? null, isRead: false,
@@ -321,18 +337,32 @@ export const useMessages = (
             return;
         }
 
-        const payload = await encryptContent(content);
-        socket.emit('sendMessage', { conversationId, content: payload, replyToId });
+        const tmpId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
         setMessages((prev) => [
             ...prev,
             {
-                content, senderId: currentUserId, conversationId,
-                createdAt: new Date().toISOString(),
-                deletedAt: null, editedAt: null, reactions: [],
-                replyToId: replyToId ?? null, isRead: false,
+                content,
+                senderId:      currentUserId,
+                conversationId,
+                createdAt:     new Date().toISOString(),
+                deletedAt:     null,
+                editedAt:      null,
+                reactions:     [],
+                replyToId:     replyToId ?? null,
+                isRead:        false,
+                _queueId:      tmpId,
             },
         ]);
+
+        try {
+            const payload = await encryptContent(content);
+            socket.emit('sendMessage', { conversationId, content: payload, replyToId });
+        } catch (err) {
+            // Якщо шифрування впало - видаляємо оптимістичне повідомлення
+            console.error('[sendMessage] encrypt failed:', err);
+            setMessages((prev) => prev.filter(m => m._queueId !== tmpId));
+        }
 
         socket.emit('typing', { conversationId, isTyping: false });
     }, [conversationId, currentUserId, socket, isOnline, enqueue, encryptContent]);
