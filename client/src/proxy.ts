@@ -14,7 +14,8 @@ export function proxy(request: NextRequest) {
         pathname.startsWith("/auth/login") ||
         pathname.startsWith("/auth/register") ||
         pathname.startsWith("/auth/forgot-password") ||
-        pathname.startsWith("/auth/reset-password");
+        pathname.startsWith("/auth/reset-password") ||
+        pathname.startsWith("/auth/verify-pending");
 
     const isProtectedRoute =
         pathname.startsWith("/chat") ||

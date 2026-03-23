@@ -3,7 +3,7 @@ import {
     ConflictException,
     Injectable,
     UnauthorizedException,
-    Logger,
+    Logger, ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { JwtService } from '@nestjs/jwt';
@@ -204,6 +204,32 @@ export class AuthService {
         return { message: 'Email verified' };
     }
 
+    async resendVerificationEmail(email: string): Promise<void> {
+        // Fixed delay to prevent email enumeration (timing attack)
+        const FIXED_DELAY_MS = 500;
+        const start = Date.now();
+
+        try {
+            const user = await this.prisma.user.findUnique({ where: { email } });
+
+            // Only resend if the account exists AND is NOT yet verified
+            if (!user || user.isEmailVerified) return;
+
+            const verifyToken = generateToken();
+
+            await this.prisma.user.update({
+                where: { id: user.id },
+                data:  { emailVerifyToken: hashToken(verifyToken) },
+            });
+
+            await this.emailService.sendVerificationEmail(email, verifyToken);
+            this.logger.log(`Verification email resent to ${email}`);
+        } finally {
+            const elapsed = Date.now() - start;
+            if (elapsed < FIXED_DELAY_MS) await sleep(FIXED_DELAY_MS - elapsed);
+        }
+    }
+
     // LOGOUT
     async logout(rawRefreshToken: string) {
         await this.prisma.session.deleteMany({
@@ -213,6 +239,35 @@ export class AuthService {
 
     async logoutAll(userId: number) {
         await this.prisma.session.deleteMany({ where: { userId } });
+    }
+
+    async terminateSession(userId: number, sessionId: number): Promise<{ message: string }> {
+        const session = await this.prisma.session.findUnique({
+            where: { id: sessionId },
+        });
+
+        if(!session) return { message: 'Session not found or already terminated' };
+
+        if (session.userId !== userId) {
+            throw new ForbiddenException('Cannot terminate another user\'s session');
+        }
+
+        await this.prisma.session.delete({ where: { id: sessionId } });
+        this.logger.log(`User ${userId} terminated session ${sessionId}`);
+        return { message: 'Session terminated' };
+    }
+
+    async deleteAccount(userId: number, password: string): Promise<void> {
+        const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+
+        const passwordValid = await bcrypt.compare(password, user.password);
+        if (!passwordValid) {
+            throw new UnauthorizedException('Password incorrect');
+        }
+
+        await this.prisma.user.delete({ where: { id: userId } });
+
+        this.logger.log(`User ${userId} (${user.email}) deleted their account`);
     }
 
     // SESSIONS

@@ -7,7 +7,7 @@ import {
     UseGuards,
     Get,
     Query,
-    UnauthorizedException, Patch,
+    UnauthorizedException, Patch, Delete, Param, ParseIntPipe,
 } from '@nestjs/common';
 import { AuthService } from './auth.service.js';
 import { RegisterDto } from './dto/register.dto.js';
@@ -18,6 +18,8 @@ import { CurrentUser } from './decorators/current-user.decorator.js';
 import { Throttle, SkipThrottle } from '@nestjs/throttler';
 import {ChangePasswordDto} from "./dto/changePassword.dto.js";
 import {ForgotPasswordDto, ResetPasswordDto} from "./dto/passwordReset.dto.js";
+import {ResendVerificationDto} from "./dto/resendVerification.dto.js";
+import {DeleteAccountDto} from "./dto/deleteAccount.dto.js";
 
 @Controller('auth')
 export class AuthController {
@@ -92,10 +94,38 @@ export class AuthController {
         return this.authService.verifyEmail(token);
     }
 
+    @Throttle({ default: { ttl: 60000, limit: 3 } })
+    @Post('resend-verification')
+    async resendVerification(@Body() dto: ResendVerificationDto) {
+        await this.authService.resendVerificationEmail(dto.email);
+        return { message: 'If an unverified account with that email exists, a new verification link has been sent' };
+    }
+
     @UseGuards(JwtAuthGuard)
     @Post('logout-all')
     async logoutAll(@CurrentUser('sub') userId: number) {
         return this.authService.logoutAll(userId);
+    }
+
+    @UseGuards(JwtAuthGuard)
+    @Delete('sessions/:id')
+    async terminateSession(
+        @CurrentUser('sub') userId: number,
+        @Param('id', ParseIntPipe) sessionId: number,
+    ) {
+        return this.authService.terminateSession(userId, sessionId);
+    }
+
+    @UseGuards(JwtAuthGuard)
+    @Delete('account')
+    async deleteAccount(
+        @CurrentUser('sub') userId: number,
+        @Body() dto: DeleteAccountDto,
+        @Res({ passthrough: true }) res: Response,
+    ) {
+        await this.authService.deleteAccount(userId, dto.password);
+        res.clearCookie('refreshToken', { path: '/' });
+        return { message: 'Account deleted successfully' };
     }
 
     @UseGuards(JwtAuthGuard)

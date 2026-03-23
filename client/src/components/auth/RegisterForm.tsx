@@ -22,7 +22,6 @@ export const RegisterForm = () => {
     const onSubmit = async (data: any) => {
         setIsLoading(true);
         try {
-            // FIX 2: Не передаємо зайвий meta — бекенд сам витягне IP та userAgent
             await api.post("/auth/register", {
                 email:           data.email,
                 password:        data.password,
@@ -30,10 +29,8 @@ export const RegisterForm = () => {
                 nickname:        data.nickname,
             });
 
-            // FIX 2: Після реєстрації завжди перекидаємо на login (не на /chat)
-            // Бо потрібно підтвердити email, а потім залогінитись щоб отримати правильний токен
-            alert("Реєстрація успішна! Перевірте email для підтвердження, потім увійдіть.");
-            router.push("/auth/login");
+            // Redirect to "check your email" page instead of showing an alert
+            router.push(`/auth/verify-pending?email=${encodeURIComponent(data.email)}`);
         } catch (e: any) {
             const errorMsg = e.response?.data?.message || "Помилка при реєстрації";
             alert(Array.isArray(errorMsg) ? errorMsg[0] : errorMsg);
@@ -120,8 +117,8 @@ export const RegisterForm = () => {
                 </div>
                 {(errors.password || errors.confirmPassword) && (
                     <span className="text-red-500 text-xs mt-1">
-            {(errors.password?.message || errors.confirmPassword?.message) as string}
-          </span>
+                        {(errors.password?.message || errors.confirmPassword?.message) as string}
+                    </span>
                 )}
 
                 <button
