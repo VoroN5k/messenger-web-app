@@ -243,6 +243,10 @@ export default function ChatArea({
                 }
             }
 
+            // Create a local preview URL from the ORIGINAL file (before encryption).
+            // This lets the sender see the image/file immediately — no decrypt needed.
+            const localBlobUrl = URL.createObjectURL(fileToProcess);
+
             let fileToUpload = fileToProcess;
             let encMeta: string | undefined;
 
@@ -260,12 +264,13 @@ export default function ChatArea({
 
             const r = await uploadFile(fileToUpload, setUploadProgress, ctrl.signal);
             sendFileMessage({
-                fileUrl:   r.url,
-                fileName:  displayName,
-                fileType:  displayType,
-                fileSize:  displaySize,
-                replyToId: replyTo?.id,
-                metadata:  encMeta,
+                fileUrl:       r.url,
+                fileName:      displayName,
+                fileType:      displayType,
+                fileSize:      displaySize,
+                replyToId:     replyTo?.id,
+                metadata:      encMeta,
+                _localBlobUrl: localBlobUrl, // ← sender sees this instantly
             });
             setReplyTo(null);
         } catch (err: any) {

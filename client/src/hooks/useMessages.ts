@@ -198,6 +198,10 @@ export const useMessages = (
                 );
                 if (idx !== -1) {
                     const next = [...prev];
+                    const optimistic = next[idx];
+                    if (optimistic._localBlobUrl) {
+                        URL.revokeObjectURL(optimistic._localBlobUrl);
+                    }
                     next[idx] = { ...decryptedMsg, isPending: false, _queueId: undefined };
                     return next;
                 }
@@ -380,10 +384,12 @@ export const useMessages = (
 
     const sendFileMessage = useCallback((payload: {
         fileUrl: string; fileName: string; fileType: string; fileSize: number;
-        content?: string; metadata?: string; replyToId?: number;
+        content?: string; metadata?: string; replyToId?: number; _localBlobUrl?: string;
     }) => {
         if (!conversationId || !socket || !currentUserId) return;
-        socket.emit('sendMessage', { conversationId, ...payload });
+
+        const { _localBlobUrl, ...serverPayload } = payload;
+        socket.emit('sendMessage', { conversationId, ...serverPayload });
         setMessages((prev) => [
             ...prev,
             {
@@ -391,7 +397,8 @@ export const useMessages = (
                 createdAt: new Date().toISOString(),
                 deletedAt: null, editedAt: null, reactions: [],
                 replyToId: payload.replyToId ?? null, isRead: false,
-                ...payload,
+                ...serverPayload,
+                _localBlobUrl,
             },
         ]);
     }, [conversationId, currentUserId, socket]);

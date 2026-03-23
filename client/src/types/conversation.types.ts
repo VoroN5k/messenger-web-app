@@ -89,6 +89,7 @@ export interface Message {
     readBy?: { userId: number; nickname: string }[];
     isPending?: boolean;
     _queueId?: string; // for client-side tracking of unsent messages
+    _localBlobUrl?: string;
 }
 
 export interface Friendship {
