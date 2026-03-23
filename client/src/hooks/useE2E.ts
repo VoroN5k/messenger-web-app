@@ -19,6 +19,10 @@ import api from "@/src/lib/axios";
 const sessionKeys  = new Map<number, CryptoKey>();
 const pendingEcdh  = new Map<number, Promise<CryptoKey | null>>();
 
+const sessionKeyTimes = new Map<number, number>();
+const sessionKeyPubHash = new Map<number, string>();
+const SESSION_KEY_TTL_MS = 5 * 60 * 1000;
+
 // Sender Key (GROUP)
 // mySenderKeys:   convId → my own AES key for that group
 // peerSenderKeys: `${convId}:${senderId}` → peer's AES key (already decrypted for us)
@@ -116,6 +120,8 @@ export function useE2E() {
                 initialized = true;
                 sessionKeys.clear();
                 pendingEcdh.clear();
+                sessionKeyTimes.clear();
+                sessionKeyPubHash.clear();
                 mySenderKeys.clear();
                 peerSenderKeys.clear();
                 pendingSender.clear();
@@ -136,6 +142,8 @@ export function useE2E() {
           initPromise = null;
           sessionKeys.clear();
           pendingEcdh.clear();
+          sessionKeyTimes.clear();
+          sessionKeyPubHash.clear();
           mySenderKeys.clear();
           peerSenderKeys.clear();
           pendingSender.clear();
@@ -146,12 +154,24 @@ export function useE2E() {
     }, [user?.id]);
 
     // ECDH session key (DIRECT)
-    const getSessionKey = useCallback(async (targetUserId: number): Promise<CryptoKey | null> => {
+    const getSessionKey = useCallback(async (
+        targetUserId: number,
+        forceRefresh = false,   // ← NEW parameter
+    ): Promise<CryptoKey | null> => {
         if (!privateKey || !initialized) return null;
         if (!useAuthStore.getState().accessToken) return null;
 
-        const cached = sessionKeys.get(targetUserId);
-        if (cached) return cached;
+        if (!forceRefresh) {
+            const cached = sessionKeys.get(targetUserId);
+            const ts     = sessionKeyTimes.get(targetUserId) ?? 0;
+            // Повертаємо кеш тільки якщо він свіжий
+            if (cached && Date.now() - ts < SESSION_KEY_TTL_MS) return cached;
+        }
+
+        // Застарілий або примусовий рефреш — видаляємо
+        sessionKeys.delete(targetUserId);
+        sessionKeyTimes.delete(targetUserId);
+
         const inflight = pendingEcdh.get(targetUserId);
         if (inflight) return inflight;
 
@@ -160,8 +180,22 @@ export function useE2E() {
                 const { data } = await api.get(`/keys/${targetUserId}`, {
                     headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' },
                 });
-                const aesKey = await deriveSharedKey(privateKey!, data.publicKey);
+
+                // Виявляємо ротацію ключа: якщо publicKey змінився — чистимо
+                // зашифровані sender-ключі груп (вони тепер нечитабельні)
+                const prevHash = sessionKeyPubHash.get(targetUserId);
+                const newHash  = data.publicKey as string;
+                if (prevHash && prevHash !== newHash) {
+                    for (const k of peerSenderKeys.keys()) {
+                        if (k.endsWith(`:${targetUserId}`)) peerSenderKeys.delete(k);
+                    }
+                    prefetchedConvs.clear(); // перечитати sender-ключі груп
+                }
+
+                const aesKey = await deriveSharedKey(privateKey!, newHash);
                 sessionKeys.set(targetUserId, aesKey);
+                sessionKeyTimes.set(targetUserId, Date.now());
+                sessionKeyPubHash.set(targetUserId, newHash);
                 return aesKey;
             } catch {
                 return null;
@@ -184,8 +218,18 @@ export function useE2E() {
     const decrypt = useCallback(async (ciphertext: string, senderUserId: number): Promise<string> => {
         const key = await getSessionKey(senderUserId);
         if (!key) return ciphertext;
-        try { return await decryptMessage(key, ciphertext); }
-        catch { return '[🔒 Не вдалося розшифрувати]'; }
+        try {
+            return await decryptMessage(key, ciphertext);
+        } catch {
+
+            try {
+                const freshKey = await getSessionKey(senderUserId, true /* forceRefresh */);
+                if (!freshKey) return '[🔒 Не вдалося розшифрувати]';
+                return await decryptMessage(freshKey, ciphertext);
+            } catch {
+                return '[🔒 Не вдалося розшифрувати]';
+            }
+        }
     }, [getSessionKey]);
 
     const encryptBinary = useCallback(async (data: ArrayBuffer, targetUserId: number): Promise<ArrayBuffer> => {
@@ -197,8 +241,17 @@ export function useE2E() {
     const decryptBinary = useCallback(async (data: ArrayBuffer, peerUserId: number): Promise<ArrayBuffer> => {
         const key = await getSessionKey(peerUserId);
         if (!key) return data;
-        try { return await decryptFile(key, data); }
-        catch { return data; }
+        try {
+            return await decryptFile(key, data);
+        } catch {
+            try {
+                const freshKey = await getSessionKey(peerUserId, true);
+                if (!freshKey) return data;
+                return await decryptFile(freshKey, data);
+            } catch {
+                return data;
+            }
+        }
     }, [getSessionKey]);
 
     // GROUP: отримати/закешувати peer sender key
@@ -206,11 +259,19 @@ export function useE2E() {
     const getPeerSenderKey = useCallback(async (
         conversationId: number,
         senderId: number,
+        forceRefresh = false,
     ): Promise<CryptoKey | null> => {
         const cacheKey = `${conversationId}:${senderId}`;
 
-        const cached = peerSenderKeys.get(cacheKey);
-        if (cached) return cached;
+        if(!forceRefresh) {
+            const cached = peerSenderKeys.get(cacheKey);
+            if (cached) return cached;
+        } else {
+            peerSenderKeys.delete(cacheKey);
+            pendingSender.delete(cacheKey);
+            prefetchedConvs.delete(conversationId);
+        }
+
         const inflight = pendingSender.get(cacheKey);
         if (inflight) return inflight;
 
@@ -378,6 +439,32 @@ export function useE2E() {
                 }),
             );
 
+            let decryptFailCount = 0;
+
+            if (decryptFailCount > 0) {
+                await Promise.all(
+                    data.map(async ({ senderId, encryptedKey }) => {
+                        const cacheKey = `${conversationId}:${senderId}`;
+                        if (peerSenderKeys.has(cacheKey)) return;
+                        try {
+                            const freshKey = await getSessionKey(senderId, true /* forceRefresh */);
+                            if (!freshKey) return;
+                            const rawKey = await aesDecryptRaw(freshKey, encryptedKey);
+                            const aesKey = await crypto.subtle.importKey(
+                                'raw',
+                                rawKey.buffer.slice(rawKey.byteOffset, rawKey.byteOffset + rawKey.byteLength) as ArrayBuffer,
+                                { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'],
+                            );
+                            peerSenderKeys.set(cacheKey, aesKey);
+                            if (senderId === myUserId) {
+                                mySenderKeys.set(conversationId, aesKey);
+                                hasMySenderKey = true;
+                            }
+                        } catch {}
+                    }),
+                );
+            }
+
             // Якщо мого ключа немає на сервері — генеруємо і розповсюджуємо
             if (!hasMySenderKey) {
                 await distributeMySenderKey(conversationId, memberUserIds);
@@ -419,9 +506,24 @@ export function useE2E() {
 
         // Чуже повідомлення — беремо ключ відправника
         const key = await getPeerSenderKey(conversationId, senderId);
-        if (!key) return ciphertext;
+        if (!key) {
+            // Sender key не знайдено — спробуємо force-refresh
+            const freshKey = await getPeerSenderKey(conversationId, senderId, true);
+            if (!freshKey) return ciphertext; // тримаємо ciphertext (не вічне повідомлення про помилку)
+            try { return await decryptMessage(freshKey, ciphertext); }
+            catch { return '[🔒 Не вдалося розшифрувати]'; }
+        }
+
         try { return await decryptMessage(key, ciphertext); }
-        catch { return '[🔒 Не вдалося розшифрувати]'; }
+        catch {
+            try {
+                const freshKey = await getPeerSenderKey(conversationId, senderId, true);
+                if (!freshKey) return '[🔒 Не вдалося розшифрувати]';
+                return await decryptMessage(freshKey, ciphertext);
+            } catch {
+                return '[🔒 Не вдалося розшифрувати]';
+            }
+        }
     }, [getPeerSenderKey]);
 
     // GROUP encrypt / decrypt (binary files / voice)
