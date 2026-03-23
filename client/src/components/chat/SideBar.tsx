@@ -39,6 +39,22 @@ interface SidebarProps {
     onTogglePush?:         () => void;
 }
 
+// ── Skeleton for a single conversation row ────────────────────────────────────
+function ConversationSkeleton() {
+    return (
+        <div className="px-3 py-3 flex items-center gap-3 animate-pulse border-l-[3px] border-l-transparent">
+            <div className="w-12 h-12 rounded-full bg-slate-200 dark:bg-slate-700 shrink-0" />
+            <div className="flex-1 space-y-2 min-w-0">
+                <div className="flex items-center justify-between gap-2">
+                    <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded-full w-2/5" />
+                    <div className="h-2.5 bg-slate-100 dark:bg-slate-700/60 rounded-full w-10 shrink-0" />
+                </div>
+                <div className="h-2.5 bg-slate-100 dark:bg-slate-700/60 rounded-full w-3/5" />
+            </div>
+        </div>
+    );
+}
+
 function lastMsgText(conv: Conversation, t: (k: string) => string): string {
     const m = conv.lastMessage;
     if (!m) return t('sidebar.no_results');
@@ -267,10 +283,13 @@ export default function Sidebar({
                             </button>
                         </div>
 
+                        {/* Skeleton placeholders while loading */}
                         {convsLoading ? (
-                            <div className="flex justify-center py-8">
-                                <div className="w-5 h-5 border-2 border-violet-400 border-t-transparent rounded-full animate-spin" />
-                            </div>
+                            <>
+                                {Array.from({ length: 7 }).map((_, i) => (
+                                    <ConversationSkeleton key={i} />
+                                ))}
+                            </>
                         ) : filteredConvs.length === 0 ? (
                             <p className="text-center text-slate-400 dark:text-slate-500 text-sm py-10">
                                 {searchQuery ? t('sidebar.no_results') : t('sidebar.no_chats')}
@@ -347,7 +366,6 @@ export default function Sidebar({
                 {/* ===== FRIENDS TAB ===== */}
                 {tab === 'friends' && (
                     <>
-                        {/* Incoming requests */}
                         {pendingRequests.length > 0 && (
                             <div className="px-3 py-2">
                                 <p className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-2">
@@ -373,16 +391,24 @@ export default function Sidebar({
                             </div>
                         )}
 
-                        {/* Search results */}
                         {searchQuery.trim().length >= 2 && (
                             <div className="px-3 py-2">
                                 <p className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-2">
                                     {t('sidebar.search_results')}
                                 </p>
                                 {isSearching ? (
-                                    <div className="flex justify-center py-4">
-                                        <div className="w-4 h-4 border-2 border-violet-400 border-t-transparent rounded-full animate-spin" />
-                                    </div>
+                                    /* Skeleton for search results */
+                                    <>
+                                        {Array.from({ length: 3 }).map((_, i) => (
+                                            <div key={i} className="flex items-center gap-2 py-2 animate-pulse">
+                                                <div className="w-9 h-9 rounded-full bg-slate-200 dark:bg-slate-700 shrink-0" />
+                                                <div className="flex-1 space-y-1.5">
+                                                    <div className="h-2.5 bg-slate-200 dark:bg-slate-700 rounded-full w-2/5" />
+                                                    <div className="h-2 bg-slate-100 dark:bg-slate-700/60 rounded-full w-1/4" />
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </>
                                 ) : searchResults.length === 0 ? (
                                     <p className="text-xs text-slate-400 dark:text-slate-500 text-center py-3">
                                         {t('sidebar.no_people')}
@@ -428,7 +454,6 @@ export default function Sidebar({
                             </div>
                         )}
 
-                        {/* Friends list */}
                         {friends.length === 0 && searchQuery.trim().length < 2 ? (
                             <p className="text-center text-slate-400 dark:text-slate-500 text-sm py-10">
                                 {t('sidebar.no_friends')}

@@ -8,15 +8,16 @@ import { Paperclip, Loader2, Pin, PinOff, ArrowDown } from 'lucide-react';
 import { useMessages }              from '@/src/hooks/useMessages';
 import { useSearch }                from '@/src/hooks/useSearch';
 import { useE2E }                   from '@/src/hooks/useE2E';
-import { uploadFile, mimeFromFileName } from '@/src/lib/uploadFile';
+import { uploadFile, mimeFromFileName, isImageType } from '@/src/lib/uploadFile';
 import { compressImage }            from '@/src/lib/compressImage';
 
-import { ChatHeader }   from './ChatHeader';
-import { SearchPanel }  from './SearchPanel';
-import { ChatInput }    from './ChatInput';
-import { MessageItem }  from './message/MessageItem';
-import { ForwardModal } from './ForwardModal';
-import { MediaPanel }   from './MediaPanel';
+import { ChatHeader }        from './ChatHeader';
+import { SearchPanel }       from './SearchPanel';
+import { ChatInput }         from './ChatInput';
+import { MessageItem }       from './message/MessageItem';
+import { ForwardModal }      from './ForwardModal';
+import { MediaPanel }        from './MediaPanel';
+import { ImageSendPreview }  from './ImageSendPreview';
 
 import { Conversation, Message } from '@/src/types/conversation.types';
 import { User }                  from '@/src/types/auth.types';
@@ -36,7 +37,7 @@ interface ChatAreaProps {
 export default function ChatArea({
                                      currentUser, conversation, conversations, socket,
                                      onConversationUpdate, onMarkRead, onStartCall,
-                                 }: ChatAreaProps) {
+                                 }: Readonly<ChatAreaProps>) {
     const currentUserId = currentUser?.id;
 
     // UI state
@@ -55,6 +56,9 @@ export default function ChatArea({
     const [showVoice,      setShowVoice]      = useState(false);
     const [forwardMsg,     setForwardMsg]     = useState<Message | null>(null);
     const [showMedia,      setShowMedia]      = useState(false);
+
+    // Image preview before sending
+    const [imagePreview, setImagePreview] = useState<{ file: File; url: string } | null>(null);
 
     // Refs
     const abortRef       = useRef<AbortController | null>(null);
@@ -161,17 +165,18 @@ export default function ChatArea({
     // Reset search navigation when results change
     useEffect(() => { setSearchNavIdx(0); }, [results]);
 
-    // Keyboard shortcuts - Escape closes edit / reply / search
+    // Keyboard shortcuts - Escape closes edit / reply / search / preview
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
             if (e.key !== 'Escape') return;
+            if (imagePreview)       { handleCancelImagePreview(); return; }
             if (editingId !== null) cancelEdit();
             else if (replyTo)       setReplyTo(null);
             else if (isSearchOpen)  closeSearch();
         };
         document.addEventListener('keydown', handler);
         return () => document.removeEventListener('keydown', handler);
-    }, [editingId, replyTo, isSearchOpen]);
+    }, [editingId, replyTo, isSearchOpen, imagePreview]);
 
     // Focus edit input when entering edit mode
     useEffect(() => {
@@ -187,9 +192,7 @@ export default function ChatArea({
         if (isSearchOpen) setTimeout(() => searchInputRef.current?.focus(), 50);
     }, [isSearchOpen]);
 
-    // Bidirectional infinite scroll:
-    // - scroll up triggers loading older messages (cursor-based)
-    // - scroll down triggers loading newer messages (only when in jump mode)
+    // Bidirectional infinite scroll
     const handleScroll = async (e: UIEvent<HTMLDivElement>) => {
         const el = e.currentTarget;
 
@@ -206,8 +209,8 @@ export default function ChatArea({
         }
     };
 
-    // File upload with optional image compression and E2E encryption
-    const handleFileUpload = useCallback(async (file: File) => {
+    // Core upload logic — now accepts optional caption for image sends
+    const handleFileUpload = useCallback(async (file: File, caption?: string) => {
         if (!file || !conversation) return;
         setUploadError(null);
         setUploadProgress(0);
@@ -243,8 +246,6 @@ export default function ChatArea({
                 }
             }
 
-            // Create a local preview URL from the ORIGINAL file (before encryption).
-            // This lets the sender see the image/file immediately — no decrypt needed.
             const localBlobUrl = URL.createObjectURL(fileToProcess);
 
             let fileToUpload = fileToProcess;
@@ -268,9 +269,10 @@ export default function ChatArea({
                 fileName:      displayName,
                 fileType:      displayType,
                 fileSize:      displaySize,
+                content:       caption?.trim() || undefined,
                 replyToId:     replyTo?.id,
                 metadata:      encMeta,
-                _localBlobUrl: localBlobUrl, // ← sender sees this instantly
+                _localBlobUrl: localBlobUrl,
             });
             setReplyTo(null);
         } catch (err: any) {
@@ -281,7 +283,36 @@ export default function ChatArea({
         }
     }, [conversation, sendFileMessage, replyTo, otherUserId, e2e]);
 
-    // Voice message - encrypts blob before upload
+    // File select — show preview for images, upload directly for other types
+    const handleFileSelect = useCallback(async (file: File) => {
+        if (!file || !conversation) return;
+
+        const displayMime = file.type || mimeFromFileName(file.name) || '';
+        if (isImageType(displayMime, file.name)) {
+            const url = URL.createObjectURL(file);
+            setImagePreview({ file, url });
+            return;
+        }
+
+        await handleFileUpload(file);
+    }, [conversation, handleFileUpload]);
+
+    // Confirm send from image preview
+    const handleConfirmImageSend = useCallback(async (caption: string) => {
+        if (!imagePreview) return;
+        const { file, url } = imagePreview;
+        URL.revokeObjectURL(url);
+        setImagePreview(null);
+        await handleFileUpload(file, caption);
+    }, [imagePreview, handleFileUpload]);
+
+    // Cancel image preview
+    const handleCancelImagePreview = useCallback(() => {
+        if (imagePreview) URL.revokeObjectURL(imagePreview.url);
+        setImagePreview(null);
+    }, [imagePreview]);
+
+    // Voice message — encrypts blob before upload
     const mimeToExtension = (m: string) => {
         if (m === 'audio/webm') return 'webm';
         if (m === 'audio/ogg')  return 'ogg';
@@ -372,7 +403,7 @@ export default function ChatArea({
         setIsDragging(false);
         setDragCounter(0);
         const f = e.dataTransfer.files[0];
-        if (f) handleFileUpload(f);
+        if (f) handleFileSelect(f);      // ← now goes through preview for images
     };
 
     // Edit helpers
@@ -440,7 +471,7 @@ export default function ChatArea({
                 </div>
             )}
 
-            {/* Floating "back to latest" button - shown outside scroll container so it stays visible */}
+            {/* Floating "back to latest" button */}
             {hasMoreNewer && (
                 <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-20">
                     <button
@@ -514,7 +545,6 @@ export default function ChatArea({
                 onScroll={handleScroll}
                 className="flex-1 overflow-y-auto px-5 py-5 space-y-1"
             >
-                {/* Spinner for older messages loading at the top */}
                 {isLoadingMore && (
                     <div className="flex justify-center py-2">
                         <Loader2 className="w-5 h-5 animate-spin text-violet-400" />
@@ -556,7 +586,6 @@ export default function ChatArea({
                     />
                 ))}
 
-                {/* Spinner for newer messages loading at the bottom */}
                 {isLoadingNewer && (
                     <div className="flex justify-center py-2">
                         <Loader2 className="w-5 h-5 animate-spin text-violet-400" />
@@ -566,7 +595,7 @@ export default function ChatArea({
                 <div ref={messagesEndRef} />
             </div>
 
-            {/* Input bar with reply preview, upload progress and typing indicator */}
+            {/* Input bar */}
             <ChatInput
                 canPost={!!canPost}
                 inputValue={inputValue}
@@ -581,7 +610,7 @@ export default function ChatArea({
                 fileInputRef={fileInputRef}
                 onInputChange={setInputValue}
                 onSubmit={handleSubmit}
-                onFileSelect={handleFileUpload}
+                onFileSelect={handleFileSelect}      // ← uses preview wrapper
                 onSendVoice={sendVoiceMessage}
                 onCancelUpload={() => { abortRef.current?.abort(); setUploadProgress(null); }}
                 onClearError={() => setUploadError(null)}
@@ -606,6 +635,17 @@ export default function ChatArea({
                     currentUserId={currentUserId!}
                     onClose={() => setShowMedia(false)}
                     decryptFn={decryptFn}
+                />
+            )}
+
+            {/* Image send preview modal */}
+            {imagePreview && (
+                <ImageSendPreview
+                    file={imagePreview.file}
+                    previewUrl={imagePreview.url}
+                    replyTo={replyTo?.sender ?? null}
+                    onSend={handleConfirmImageSend}
+                    onCancel={handleCancelImagePreview}
                 />
             )}
         </main>

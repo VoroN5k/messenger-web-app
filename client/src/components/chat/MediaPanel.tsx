@@ -79,6 +79,62 @@ function groupByDay(items: MediaFile[]): { label: string; items: MediaFile[] }[]
     return groups;
 }
 
+// ── Skeleton components ───────────────────────────────────────────────────────
+
+function MediaGridSkeleton() {
+    return (
+        <div className="py-2">
+            <div className="h-3 mx-4 mb-2 w-16 bg-slate-200 dark:bg-slate-700 rounded-full animate-pulse" />
+            <div className="grid grid-cols-3 gap-0.5 px-1">
+                {Array.from({ length: 9 }).map((_, i) => (
+                    <div
+                        key={i}
+                        className="aspect-square rounded-sm bg-slate-200 dark:bg-slate-700 animate-pulse"
+                        style={{ animationDelay: `${i * 40}ms` }}
+                    />
+                ))}
+            </div>
+        </div>
+    );
+}
+
+function VoiceListSkeleton() {
+    return (
+        <div className="py-2 space-y-0.5">
+            <div className="h-3 mx-4 mb-3 w-16 bg-slate-200 dark:bg-slate-700 rounded-full animate-pulse" />
+            {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="px-4 py-2.5 flex items-center gap-3 animate-pulse"
+                     style={{ animationDelay: `${i * 60}ms` }}>
+                    <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-700 shrink-0" />
+                    <div className="flex-1 space-y-2">
+                        <div className="h-2 bg-slate-200 dark:bg-slate-700 rounded-full w-1/4" />
+                        <div className="h-3 bg-slate-100 dark:bg-slate-700/60 rounded-full w-full" />
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
+}
+
+function FileListSkeleton() {
+    return (
+        <div className="py-2">
+            <div className="h-3 mx-4 mb-3 w-16 bg-slate-200 dark:bg-slate-700 rounded-full animate-pulse" />
+            {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="px-4 py-2.5 flex items-center gap-3 animate-pulse"
+                     style={{ animationDelay: `${i * 50}ms` }}>
+                    <div className="w-9 h-9 rounded-xl bg-slate-200 dark:bg-slate-700 shrink-0" />
+                    <div className="flex-1 space-y-2 min-w-0">
+                        <div className="h-2.5 bg-slate-200 dark:bg-slate-700 rounded-full w-3/5" />
+                        <div className="h-2 bg-slate-100 dark:bg-slate-700/60 rounded-full w-1/4" />
+                    </div>
+                    <div className="w-5 h-5 rounded-full bg-slate-100 dark:bg-slate-700/60 shrink-0" />
+                </div>
+            ))}
+        </div>
+    );
+}
+
 // Image tile - plain (no E2E)
 
 function PlainImageTile({
@@ -91,9 +147,7 @@ function PlainImageTile({
     const [errored, setErrored] = useState(false);
 
     if (!signedSrc) return (
-        <div className="w-full h-full flex items-center justify-center bg-slate-100 dark:bg-slate-700">
-            <Loader2 size={14} className="animate-spin text-slate-400" />
-        </div>
+        <div className="w-full h-full flex items-center justify-center bg-slate-100 dark:bg-slate-700 animate-pulse" />
     );
 
     if (errored) return (
@@ -148,9 +202,7 @@ function EncryptedImageTile({
         </div>
     );
     if (!blobUrl) return (
-        <div className="w-full h-full flex items-center justify-center bg-slate-100 dark:bg-slate-800">
-            <Loader2 size={16} className="animate-spin text-slate-400" />
-        </div>
+        <div className="w-full h-full bg-slate-100 dark:bg-slate-800 animate-pulse" />
     );
     return (
         <img
@@ -279,7 +331,6 @@ function FileRow({
 
     const handleDownload = useCallback(async () => {
         if (encrypted && decryptFn) {
-            // Decrypt path: resolve signed URL → fetch → decrypt → download
             if (blobUrl) {
                 const a = document.createElement('a');
                 a.href = blobUrl; a.download = m.fileName ?? 'file'; a.click();
@@ -297,13 +348,11 @@ function FileRow({
                 const a = document.createElement('a');
                 a.href = url; a.download = m.fileName ?? 'file'; a.click();
             } catch {
-                // fallback — open raw (may be encrypted bytes, but better than nothing)
                 window.open(m.fileUrl, '_blank');
             } finally {
                 setDecrypting(false);
             }
         } else {
-            // Plain path: resolve signed URL → download
             try {
                 const src = await resolveSignedUrl(m.fileUrl);
                 const a   = document.createElement('a');
@@ -482,7 +531,7 @@ export function MediaPanel({
                         >
                             <span>{t.icon}</span>
                             <span>{t.label}</span>
-                            {t.count > 0 && (
+                            {!loading && t.count > 0 && (
                                 <span className={`text-[9px] font-bold
                                     ${tab === t.id
                                     ? 'text-violet-500'
@@ -494,12 +543,12 @@ export function MediaPanel({
                     ))}
                 </div>
 
-                {/* Content */}
+                {/* Content — skeleton while loading, real content after */}
                 <div className="flex-1 overflow-y-auto">
                     {loading ? (
-                        <div className="flex items-center justify-center h-full">
-                            <Loader2 size={22} className="animate-spin text-violet-400" />
-                        </div>
+                        tab === 'media' ? <MediaGridSkeleton /> :
+                            tab === 'voice' ? <VoiceListSkeleton /> :
+                                <FileListSkeleton />
                     ) : tab === 'media' ? (
                         <MediaGrid
                             groups={groupByDay(media)}
