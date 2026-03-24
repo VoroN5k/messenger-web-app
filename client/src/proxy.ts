@@ -21,6 +21,7 @@ export function proxy(request: NextRequest) {
         pathname.startsWith("/chat") ||
         pathname.startsWith("/profile") ||
         pathname.startsWith("/settings") ||
+        pathname.startsWith("/auth/setup-recovery") ||
         pathname === "/";
 
     // Scenario A: User without token is trying to access protected route

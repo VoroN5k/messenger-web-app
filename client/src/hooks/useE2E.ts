@@ -11,7 +11,7 @@ import {
     generateKeyPair,
     loadPrivateKey,
     savePrivateKey,
-    deletePrivateKey,
+    deletePrivateKey, decryptPrivateKeyWithPin, encryptPrivateKeyWithPin,
 } from "@/src/lib/crypto";
 import api from "@/src/lib/axios";
 
@@ -37,7 +37,21 @@ const prefetchedConvs = new Set<number>();
 let   privateKey:  CryptoKey | null = null;
 let   initialized  = false;
 let   initPromise: Promise<void> | null = null;
-let   onReadyCallbacks: Array<() => void> = [];
+
+// Recovery state
+type E2EStatus = 'idle' | 'ready' | 'needs-recovery' | 'needs-setup';
+let e2eStatus: E2EStatus = 'idle';
+let recoveryBlob: string | null = null;
+let recoverySalt:     string | null = null;
+let currentUserId:    number | null = null;
+
+let onReadyCallbacks: Array<() => void> = [];
+let statusCallbacks: Array<(s: E2EStatus) => void> = [];
+
+function broadcastStatus(s: E2EStatus) {
+    e2eStatus = s;
+    statusCallbacks.forEach(cb => cb(s));
+}
 
 // Helpers
 function bufToBase64url(buf: ArrayBuffer): string {
@@ -85,12 +99,18 @@ async function generateAesKey(): Promise<{ key: CryptoKey; raw: Uint8Array }> {
 export function useE2E() {
     const { user, accessToken } = useAuthStore();
     const [isReady, setIsReady] = useState(initialized && !!privateKey);
+    const [status, setStatus] = useState<E2EStatus>(e2eStatus)
 
     useEffect(() => {
-        if (initialized && privateKey) { setIsReady(true); return; }
-        const cb = () => setIsReady(true);
-        onReadyCallbacks.push(cb);
-        return () => { onReadyCallbacks = onReadyCallbacks.filter(x => x !== cb); };
+        if(e2eStatus !== 'idle') setStatus(e2eStatus);
+        if (initialized && privateKey) setIsReady(true);
+
+        const cb = (s: E2EStatus) => {
+            setStatus(s);
+            if (s === 'ready' || s === 'needs-setup') setIsReady(true);
+        };
+        statusCallbacks.push(cb);
+        return () => { statusCallbacks = statusCallbacks.filter(x => x !== cb); };
     }, []);
 
     useEffect(() => {
@@ -98,36 +118,67 @@ export function useE2E() {
         if (initialized && privateKey) return;
         if (initPromise) return;
 
+        currentUserId = user.id;
+        broadcastStatus('idle');
+
         initPromise = (async () => {
             try {
                 let privKey = await loadPrivateKey(user.id);
+
                 if (!privKey) {
-                    const { publicKey, privateKey: newPriv } = await generateKeyPair();
-                    await savePrivateKey(user.id, newPriv);
-                    privKey = newPriv;
-                    await api.post('/keys', { publicKey });
+                    try {
+                        const { data } = await api.get('/keys/recovery/me');
+                        recoveryBlob = data.encryptedBlob;
+                        recoverySalt = data.salt;
+                        broadcastStatus('needs-recovery');
+                        return;
+                    } catch {
+                        const { publicKey, privateKey: newPriv } = await generateKeyPair();
+                        await savePrivateKey(user.id, newPriv);
+                        privKey = newPriv;
+
+                        try {
+                            await api.post('/keys', { publicKey });
+                        } catch (e) {
+                            console.warn('[E2E] Не вдалося зберегти Public Key на сервері (можливо вже існує):', e);
+                        }
+
+                        broadcastStatus('needs-setup');
+                    }
                 } else {
+                    try {
+                        await api.get('/keys/recovery/me');
+                    } catch {
+                        broadcastStatus('needs-setup');
+                    }
                     try {
                         await api.get(`/keys/${user.id}`);
                     } catch {
                         const { publicKey, privateKey: newPriv } = await generateKeyPair();
                         await savePrivateKey(user.id, newPriv);
                         privKey = newPriv;
-                        await api.post('/keys', { publicKey });
+
+                        try {
+                            await api.post('/keys', { publicKey });
+                        } catch (e) {
+                            console.warn('[E2E] Не вдалося оновити Public Key на сервері:', e);
+                        }
                     }
                 }
+
                 privateKey  = privKey;
                 initialized = true;
-                sessionKeys.clear();
-                pendingEcdh.clear();
-                sessionKeyTimes.clear();
-                sessionKeyPubHash.clear();
-                mySenderKeys.clear();
-                peerSenderKeys.clear();
-                pendingSender.clear();
-                prefetchedConvs.clear();
+
+                if (e2eStatus !== 'needs-setup') {
+                    broadcastStatus('ready');
+                } else {
+                    broadcastStatus('needs-setup');
+                }
+
                 onReadyCallbacks.forEach(cb => cb());
                 onReadyCallbacks = [];
+            } catch (error) {
+                console.error('[E2E] Критична помилка ініціалізації:', error);
             } finally {
                 initPromise = null;
             }
@@ -136,22 +187,50 @@ export function useE2E() {
 
     useEffect(() => {
         if (!user?.id) {
-          const prevId = user?.id;
-          privateKey  = null;
-          initialized = false;
-          initPromise = null;
-          sessionKeys.clear();
-          pendingEcdh.clear();
-          sessionKeyTimes.clear();
-          sessionKeyPubHash.clear();
-          mySenderKeys.clear();
-          peerSenderKeys.clear();
-          pendingSender.clear();
-          prefetchedConvs.clear();
-          onReadyCallbacks = [];
-          setIsReady(false);
+            privateKey    = null;
+            initialized   = false;
+            initPromise   = null;
+            recoveryBlob  = null;
+            recoverySalt  = null;
+            currentUserId = null;
+            sessionKeys.clear();
+            pendingEcdh.clear();
+            sessionKeyTimes.clear();
+            sessionKeyPubHash.clear();
+            mySenderKeys.clear();
+            peerSenderKeys.clear();
+            pendingSender.clear();
+            prefetchedConvs.clear();
+            onReadyCallbacks = [];
+            broadcastStatus('idle');
+            setIsReady(false);
         }
     }, [user?.id]);
+
+    const unlockWithPin = useCallback(async (pin: string): Promise<boolean> => {
+        if (!recoveryBlob || !recoverySalt || !currentUserId) return false;
+        try {
+            const privKey = await decryptPrivateKeyWithPin(recoveryBlob, recoverySalt, pin);
+            await savePrivateKey(currentUserId, privKey);
+            privateKey  = privKey;
+            initialized = true;
+            recoveryBlob  = null;
+            recoverySalt  = null;
+            broadcastStatus('ready');
+            onReadyCallbacks.forEach(cb => cb());
+            onReadyCallbacks = [];
+            return true;
+        } catch {
+            return false; // Wrong PIN — AES-GCM auth tag mismatch
+        }
+    }, []);
+
+    const setupRecovery = useCallback(async (pin: string): Promise<void> => {
+        if (!privateKey || !initialized) throw new Error('E2E not initialized');
+        const { encryptedBlob, salt } = await encryptPrivateKeyWithPin(privateKey, pin);
+        await api.post('/keys/recovery', { encryptedBlob, salt });
+        broadcastStatus('ready');
+    }, []);
 
     // ECDH session key (DIRECT)
     const getSessionKey = useCallback(async (
@@ -572,15 +651,17 @@ export function useE2E() {
         // DIRECT
         encrypt, decrypt, encryptBinary, decryptBinary,
         // GROUP
-        encryptForGroup,
-        decryptFromGroup,
-        encryptBinaryForGroup,
-        decryptBinaryFromGroup,
-        distributeMySenderKey,
-        prefetchGroupSenderKeys,
-        invalidateGroupKeys,
-        clearAllKeyMaterial: () => user?.id ? deletePrivateKey(user.id) : Promise.resolve(),
-        // meta
+        encryptForGroup, decryptFromGroup,
+        encryptBinaryForGroup, decryptBinaryFromGroup,
+        distributeMySenderKey, prefetchGroupSenderKeys, invalidateGroupKeys,
+        // Recovery
+        unlockWithPin,
+        setupRecovery,
+        // Meta
         isReady,
+        status,
+        needsRecovery:      status === 'needs-recovery',
+        needsRecoverySetup: status === 'needs-setup',
+        clearAllKeyMaterial: () => user?.id ? deletePrivateKey(user.id) : Promise.resolve(),
     };
 }

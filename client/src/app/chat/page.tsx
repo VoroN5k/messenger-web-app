@@ -11,7 +11,7 @@ import { useFriends }             from '@/src/hooks/useFriends';
 import { usePushNotifications }   from '@/src/hooks/usePushNotifications';
 import api, { refreshAccessToken } from '@/src/lib/axios';
 import { jwtDecode }              from 'jwt-decode';
-import { Bell, X }                from 'lucide-react';
+import {Bell, KeyRound, X} from 'lucide-react';
 import Sidebar                    from '@/src/components/chat/SideBar';
 import ChatArea                   from '@/src/components/chat/ChatArea';
 import { Conversation }           from '@/src/types/conversation.types';
@@ -19,6 +19,7 @@ import { useWebRTC }              from '@/src/hooks/useWebRTC';
 import { IncomingCallModal }      from '@/src/components/call/IncomingCallModal';
 import { ActiveCallOverlay }      from '@/src/components/call/ActiveCallOverlay';
 import { useE2E }                 from '@/src/hooks/useE2E';
+import {RecoveryUnlockModal} from "@/src/components/chat/RecoveryUnlockModal";
 
 export default function ChatPage() {
     const { user, logout } = useAuthStore();
@@ -62,6 +63,7 @@ export default function ChatPage() {
     } = useWebRTC(socket, user?.id);
 
     const { isSupported, permission, requestPermission } = usePushNotifications(!!user);
+    const { needsRecovery, needsRecoverySetup, unlockWithPin } = useE2E();
 
     // Push banner
     useEffect(() => {
@@ -192,6 +194,31 @@ export default function ChatPage() {
                     onToggleMute={toggleMute}
                     onToggleCamera={toggleCamera}
                 />
+            )}
+            {needsRecovery && (
+                <RecoveryUnlockModal onUnlock={unlockWithPin} />
+            )}
+            {needsRecoverySetup && (
+                <div className="fixed bottom-6 right-6 z-50 max-w-sm bg-white dark:bg-slate-800
+                    rounded-2xl shadow-xl border border-violet-100 dark:border-violet-900/40
+                    p-4 flex items-start gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-violet-100 dark:bg-violet-900/40
+                        flex items-center justify-center shrink-0">
+                        <KeyRound size={16} className="text-violet-500" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                            Захистіть переписку
+                        </p>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                            Встановіть Recovery PIN щоб мати доступ на нових пристроях
+                        </p>
+                        <a href="/auth/setup-recovery"
+                           className="text-xs text-violet-600 font-semibold hover:underline mt-1 inline-block">
+                            Налаштувати →
+                        </a>
+                    </div>
+                </div>
             )}
         </div>
     );
