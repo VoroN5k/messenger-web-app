@@ -1,9 +1,10 @@
 'use client';
 
-import React                                     from 'react';
+import React, { useState, useEffect, useCallback }    from 'react';
 import {
     Reply, Forward, Pin, SmilePlus,
     Pencil, Trash2, Check, X,
+    Clock, Calendar, Timer, Flame,
 } from 'lucide-react';
 import { Avatar }           from '@/src/components/chat/Avatar';
 import { EmojiPicker }      from '@/src/components/chat/EmojiPicker';
@@ -15,6 +16,7 @@ import { ReactionsRow }     from './ReactionsRow';
 import { MessageStatus }    from './MessageStatus';
 import { HighlightText }    from './HighlightText';
 import { isImageType }      from '@/src/lib/uploadFile';
+import { parseMetadata }    from '@/src/lib/parseMetadata';
 import { formatTime, formatDateSep, EDIT_WINDOW_MS } from '@/src/lib/chatFormatters';
 import { Message }          from '@/src/types/conversation.types';
 
@@ -28,6 +30,7 @@ export interface MessageItemProps {
     isSearchOpen:     boolean;
     searchQuery:      string;
     jumpTarget:       number | null;
+    firstUnreadId:    number | null;
     hoveredKey:       string | null;
     editingId:        number | null;
     editingContent:   string;
@@ -50,10 +53,78 @@ export interface MessageItemProps {
     onDeleteMessage:  (msgId: number) => void;
 }
 
+// Unread divider
+function UnreadDivider() {
+    return (
+        <div className="flex items-center gap-3 my-3 select-none">
+            <div className="flex-1 h-px bg-red-300/60 dark:bg-red-500/30" />
+            <div className="flex items-center gap-1.5 px-3 py-1 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/50 rounded-full shrink-0">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse shrink-0" />
+                <span className="text-[11px] font-semibold text-red-600 dark:text-red-400 leading-none">
+                    Нові повідомлення
+                </span>
+            </div>
+            <div className="flex-1 h-px bg-red-300/60 dark:bg-red-500/30" />
+        </div>
+    );
+}
+
+// Self-destruct countdown badge
+function DestructCountdown({ destructAfterSeconds, createdAt, isMe, onExpired }: {
+    destructAfterSeconds: number;
+    createdAt:            string | Date;
+    isMe:                 boolean;
+    onExpired:            () => void;
+}) {
+    const [remaining, setRemaining] = useState<number>(() => {
+        const elapsed = Math.floor((Date.now() - new Date(createdAt).getTime()) / 1000);
+        return Math.max(0, destructAfterSeconds - elapsed);
+    });
+
+    useEffect(() => {
+        if (remaining <= 0) { onExpired(); return; }
+        const tid = setInterval(() => {
+            setRemaining(r => {
+                if (r <= 1) { clearInterval(tid); onExpired(); return 0; }
+                return r - 1;
+            });
+        }, 1000);
+        return () => clearInterval(tid);
+    }, []);
+
+    const fmt = (s: number) => s >= 3600
+        ? `${Math.floor(s/3600)}г`
+        : s >= 60
+            ? `${Math.floor(s/60)}хв`
+            : `${s}с`;
+
+    const urgency = remaining <= 10 ? 'text-red-400 animate-pulse' : remaining <= 60 ? 'text-orange-400' : isMe ? 'text-indigo-200' : 'text-slate-400';
+
+    return (
+        <div className={`flex items-center gap-1 text-[10px] font-mono font-semibold ${urgency}`}>
+            <Flame size={9} />
+            {fmt(remaining)}
+        </div>
+    );
+}
+
+// Scheduled badge
+function ScheduledBadge({ scheduledAt, isMe }: { scheduledAt: string; isMe: boolean }) {
+    const date = new Date(scheduledAt);
+    const fmt  = date.toLocaleString('uk-UA', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    return (
+        <div className={`flex items-center gap-1 text-[10px] font-medium ${isMe ? 'text-indigo-200' : 'text-slate-400'}`}>
+            <Calendar size={9} />
+            {fmt}
+        </div>
+    );
+}
+
+// Main component
 export function MessageItem({
                                 msg, prevMsg, currentUserId,
                                 isGroup, isChannel, canPin,
-                                isSearchOpen, searchQuery, jumpTarget,
+                                isSearchOpen, searchQuery, jumpTarget, firstUnreadId,
                                 hoveredKey, editingId, editingContent, confirmDelId, pickerKey,
                                 decryptFn, msgRefsMap, editInputRef,
                                 onHover, onSetReplyTo, onForwardMsg, onPinMessage, onPickerKey,
@@ -80,9 +151,23 @@ export function MessageItem({
         new Date(msg.createdAt).toDateString() !== new Date(prevMsg.createdAt).toDateString();
     const showSender= !isMe && (isGroup || isChannel);
 
+    // Unread divider: show before the first unread message from others
+    const showUnreadDivider = !!firstUnreadId && msg.id === firstUnreadId && !isMe;
+
+    // Self-destruct metadata
+    const { destructAfterSeconds } = parseMetadata(msg.metadata);
+    const hasDestruct = !!destructAfterSeconds && !isDeleted;
+
+    // Scheduled: future scheduledAt
+    const isScheduled = !!msg.scheduledAt && new Date(msg.scheduledAt) > new Date();
+
     const msgUrls = (!isDeleted && msg.content && !isVoice && !msg.fileUrl)
         ? extractUrls(msg.content).slice(0, 1)
         : [];
+
+    const handleDestructExpired = useCallback(() => {
+        if (msg.id) onDeleteMessage(msg.id);
+    }, [msg.id, onDeleteMessage]);
 
     return (
         <>
@@ -94,8 +179,11 @@ export function MessageItem({
                 </div>
             )}
 
+            {/* ── Unread divider ── */}
+            {showUnreadDivider && <UnreadDivider />}
+
             <div
-                ref={(el) => { if (msg.id) msgRefsMap.current[msg.id] = el; }}
+                ref={el => { if (msg.id) msgRefsMap.current[msg.id] = el; }}
                 className={`flex flex-col mb-1 ${isMe ? 'items-end' : 'items-start'}`}
                 onMouseEnter={() => onHover(msgKey)}
                 onMouseLeave={() => onHover(null)}
@@ -125,37 +213,31 @@ export function MessageItem({
                             </button>
                             {canPin && (isGroup || isChannel) && (
                                 <button onClick={() => onPinMessage(msg.id!)}
-                                        className="p-1.5 rounded-full text-slate-400 hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/30 cursor-pointer transition-all"
-                                        title="Закріпити">
+                                        className="p-1.5 rounded-full text-slate-400 hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/30 cursor-pointer transition-all" title="Закріпити">
                                     <Pin size={13} />
                                 </button>
                             )}
-                            {/* Emoji picker */}
                             <div className="relative">
-                                <button
-                                    onClick={() => onPickerKey(isPickerOn ? null : msgKey)}
-                                    className={`p-1.5 rounded-full transition-all cursor-pointer
-                                        ${isPickerOn ? 'text-indigo-500 bg-indigo-50 dark:bg-indigo-900/40' : 'text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30'}`}>
+                                <button onClick={() => onPickerKey(isPickerOn ? null : msgKey)}
+                                        className={`p-1.5 rounded-full transition-all cursor-pointer ${isPickerOn ? 'text-indigo-500 bg-indigo-50 dark:bg-indigo-900/40' : 'text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30'}`}>
                                     <SmilePlus size={13} />
                                 </button>
                                 {isPickerOn && (
                                     <EmojiPicker
                                         align={isMe ? 'right' : 'left'}
-                                        onSelect={(e) => { onToggleReaction(msg.id!, e); }}
+                                        onSelect={e => { onToggleReaction(msg.id!, e); }}
                                         onClose={() => onPickerKey(null)}
                                     />
                                 )}
                             </div>
-                            {/* My-message actions */}
                             {isMe && (
                                 <>
                                     {isConfirm ? (
-                                        <div className="flex items-center gap-1.5 bg-white dark:bg-slate-800 border border-red-100 dark:border-red-900 rounded-xl px-2.5 py-1.5 shadow-md"
-                                             onClick={(e) => e.stopPropagation()}>
+                                        <div className="flex items-center gap-1.5 bg-white dark:bg-slate-800 border border-red-100 dark:border-red-900 rounded-xl px-2.5 py-1.5 shadow-md" onClick={e => e.stopPropagation()}>
                                             <span className="text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap">Видалити?</span>
-                                            <button onClick={(e) => { e.stopPropagation(); onDeleteMessage(msg.id!); onConfirmDelete(null); }}
+                                            <button onClick={e => { e.stopPropagation(); onDeleteMessage(msg.id!); onConfirmDelete(null); }}
                                                     className="text-xs font-semibold text-red-500 hover:text-red-700 px-1.5 py-0.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/30 cursor-pointer">Так</button>
-                                            <button onClick={(e) => { e.stopPropagation(); onConfirmDelete(null); }}
+                                            <button onClick={e => { e.stopPropagation(); onConfirmDelete(null); }}
                                                     className="text-xs font-semibold text-slate-400 hover:text-slate-600 px-1.5 py-0.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer">Ні</button>
                                         </div>
                                     ) : (
@@ -166,7 +248,7 @@ export function MessageItem({
                                                     <Pencil size={13} />
                                                 </button>
                                             )}
-                                            <button onClick={(e) => { e.stopPropagation(); onConfirmDelete(msg.id!); }}
+                                            <button onClick={e => { e.stopPropagation(); onConfirmDelete(msg.id!); }}
                                                     className="p-1.5 rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 cursor-pointer transition-all">
                                                 <Trash2 size={13} />
                                             </button>
@@ -188,6 +270,7 @@ export function MessageItem({
                             ${isDeleted  ? 'opacity-60' : ''}
                             ${isEditing  ? 'ring-2 ring-indigo-300 ring-offset-1' : ''}
                             ${isJump     ? 'ring-2 ring-yellow-400 ring-offset-2 scale-[1.02]' : ''}
+                            ${isScheduled ? 'opacity-70 border-dashed' : ''}
                         `}
                         onDoubleClick={() => canEdit && !isEditing && onStartEdit(msg)}
                     >
@@ -200,8 +283,8 @@ export function MessageItem({
                                 <input
                                     ref={editInputRef as any}
                                     value={editingContent}
-                                    onChange={(e) => onEditContent(e.target.value)}
-                                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onSubmitEdit(msg.id!); }}}
+                                    onChange={e => onEditContent(e.target.value)}
+                                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); onSubmitEdit(msg.id!); }}}
                                     maxLength={4000}
                                     className="flex-1 bg-transparent text-white placeholder-indigo-300 outline-none text-sm leading-relaxed min-w-0"
                                 />
@@ -220,14 +303,14 @@ export function MessageItem({
                                         fileUrl={msg.fileUrl!}
                                         metadata={msg.metadata}
                                         isMe={isMe}
-                                        onDecrypt={decryptFn ? (d) => decryptFn(d, Number(msg.senderId)) : undefined}
+                                        onDecrypt={decryptFn ? d => decryptFn(d, Number(msg.senderId)) : undefined}
                                     />
                                 )}
                                 {hasFile && (
                                     <FileBubble
                                         msg={msg}
                                         isMe={isMe}
-                                        onDecrypt={decryptFn ? (d) => decryptFn(d, Number(msg.senderId)) : undefined}
+                                        onDecrypt={decryptFn ? d => decryptFn(d, Number(msg.senderId)) : undefined}
                                     />
                                 )}
                                 {msg.content && !isVoice && (
@@ -237,15 +320,28 @@ export function MessageItem({
                                             : msg.content}
                                     </span>
                                 )}
-                                {msgUrls.map(url => (
-                                    <LinkPreview key={url} url={url} isMe={isMe} />
-                                ))}
+                                {msgUrls.map(url => <LinkPreview key={url} url={url} isMe={isMe} />)}
                             </>
                         )}
 
-                        {/* Timestamp + status */}
+                        {/* Timestamp + status + self-destruct + scheduled */}
                         {!isEditing && (
-                            <div className={`flex items-center gap-1 self-end mt-1 ${isImage ? 'px-2 pb-1' : ''}`}>
+                            <div className={`flex items-center gap-1 self-end mt-1 flex-wrap ${isImage ? 'px-2 pb-1' : ''}`}>
+                                {/* Self-destruct countdown */}
+                                {hasDestruct && !isDeleted && (
+                                    <DestructCountdown
+                                        destructAfterSeconds={destructAfterSeconds!}
+                                        createdAt={msg.createdAt}
+                                        isMe={isMe}
+                                        onExpired={handleDestructExpired}
+                                    />
+                                )}
+
+                                {/* Scheduled badge */}
+                                {isScheduled && msg.scheduledAt && (
+                                    <ScheduledBadge scheduledAt={msg.scheduledAt} isMe={isMe} />
+                                )}
+
                                 {isEdited && (
                                     <span className={`text-[10px] italic select-none ${isMe ? 'text-indigo-200' : 'text-slate-400 dark:text-slate-500'}`}>ред.</span>
                                 )}
@@ -254,9 +350,7 @@ export function MessageItem({
                                 </span>
                                 {isMe && !isDeleted && <MessageStatus msg={msg} />}
                                 {isMe && !isDeleted && (isGroup || isChannel) && msg.readBy && msg.readBy.length > 0 && (
-                                    <span
-                                        className="text-[10px] text-indigo-200 cursor-default ml-0.5"
-                                        title={msg.readBy.map(r => r.nickname).join(', ')}>
+                                    <span className="text-[10px] text-indigo-200 cursor-default ml-0.5" title={msg.readBy.map(r => r.nickname).join(', ')}>
                                         👁 {msg.readBy.length}
                                     </span>
                                 )}
@@ -268,7 +362,7 @@ export function MessageItem({
                 <ReactionsRow
                     reactions={msg.reactions ?? []}
                     currentUserId={currentUserId!}
-                    onToggle={(e) => msg.id && onToggleReaction(msg.id, e)}
+                    onToggle={e => msg.id && onToggleReaction(msg.id, e)}
                 />
             </div>
         </>

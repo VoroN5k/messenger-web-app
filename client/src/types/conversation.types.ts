@@ -47,10 +47,17 @@ export interface Conversation {
     } | null;
 }
 
+export interface ReactionUser {
+    id: number;
+    nickname: string;
+    avatarUrl: string | null;
+}
+
 export interface Reaction {
     emoji:   string;
     count:   number;
     userIds: (number | string)[];
+    users: ReactionUser[];
 }
 
 export interface ReplyPreview {
@@ -87,6 +94,8 @@ export interface Message {
         sender:  { id: number; nickname: string };
     } | null;
     readBy?: { userId: number; nickname: string }[];
+    scheduledAt?: string | null;
+    _destructsAt?: number | null;
     isPending?: boolean;
     _queueId?: string; // for client-side tracking of unsent messages
     _localBlobUrl?: string;

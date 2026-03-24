@@ -99,7 +99,7 @@ export default function ChatArea({
         messages, typingUsers,
         hasMore, hasMoreNewer,
         isLoadingMore, isLoadingNewer,
-        jumpTarget,
+        jumpTarget, firstUnreadId,
         sendMessage, sendFileMessage, deleteMessage, editMessage, toggleReaction,
         notifyTyping, loadMoreMessages, loadNewerMessages, resetToLatest,
         jumpToMessage, clearJumpTarget,
@@ -432,10 +432,14 @@ export default function ChatArea({
         if (msg.id) jumpToMessage(msg.id);
     };
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = (
+        e: React.FormEvent,
+        scheduledAt?: Date | null,
+        destructAfterSeconds?: number | null,
+    ) => {
         e.preventDefault();
         if (!inputValue.trim()) return;
-        sendMessage(inputValue.trim(), replyTo?.id);
+        sendMessage(inputValue.trim(), replyTo?.id, scheduledAt, destructAfterSeconds);
         setInputValue('');
         setReplyTo(null);
     };
@@ -563,6 +567,7 @@ export default function ChatArea({
                         isSearchOpen={isSearchOpen}
                         searchQuery={query}
                         jumpTarget={jumpTarget}
+                        firstUnreadId={firstUnreadId}
                         hoveredKey={hoveredKey}
                         editingId={editingId}
                         editingContent={editingContent}
@@ -610,7 +615,7 @@ export default function ChatArea({
                 fileInputRef={fileInputRef}
                 onInputChange={setInputValue}
                 onSubmit={handleSubmit}
-                onFileSelect={handleFileSelect}      // ← uses preview wrapper
+                onFileSelect={handleFileSelect}
                 onSendVoice={sendVoiceMessage}
                 onCancelUpload={() => { abortRef.current?.abort(); setUploadProgress(null); }}
                 onClearError={() => setUploadError(null)}

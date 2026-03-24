@@ -1,16 +1,15 @@
-
 export interface MessageMetadata {
-    waveform:  number[];
-    duration:  number;
-    mimeType:  string;
-    encrypted: boolean;
+    waveform:              number[];
+    duration:              number;
+    mimeType:              string;
+    encrypted:             boolean;
+    destructAfterSeconds?: number;
 }
 
 const FORBIDDEN_KEYS = new Set([
     '__proto__', 'constructor', 'prototype', 'toString', 'valueOf',
 ]);
 
-// Дефолт — webm, бо саме його використовують браузери
 const DEFAULTS: MessageMetadata = {
     waveform:  [],
     duration:  0,
@@ -18,41 +17,23 @@ const DEFAULTS: MessageMetadata = {
     encrypted: false,
 };
 
-/**
- * Перевіряє чи MIME type є безпечним audio/* рядком.
- * Не використовує жорсткий allowlist — MediaRecorder повертає
- * багато варіантів одного формату.
- */
 function isSafeAudioMime(mime: string): boolean {
     const normalized = mime.toLowerCase().trim();
     if (!normalized.startsWith('audio/')) return false;
     if (normalized.length > 100) return false;
-    // Блокуємо підозрілі injection-рядки
     if (/html|javascript|script|<|>/.test(normalized)) return false;
     return true;
 }
 
-/**
- * Безпечно парсить metadata рядок.
- * Ніколи не кидає помилку - при будь-якій проблемі повертає defaults.
- */
 export function parseMetadata(raw: string | null | undefined): MessageMetadata {
     if (!raw) return { ...DEFAULTS };
 
     let parsed: unknown;
-    try {
-        parsed = JSON.parse(raw);
-    } catch {
-        return { ...DEFAULTS };
-    }
+    try { parsed = JSON.parse(raw); }
+    catch { return { ...DEFAULTS }; }
 
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-        return { ...DEFAULTS };
-    }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return { ...DEFAULTS };
 
-    // FIX: use hasOwnProperty instead of `in` operator.
-    // `'constructor' in {}` is always true (inherited via prototype chain),
-    // which caused this function to always return DEFAULTS — breaking encrypted audio.
     for (const key of FORBIDDEN_KEYS) {
         if (Object.prototype.hasOwnProperty.call(parsed, key)) return { ...DEFAULTS };
     }
@@ -65,7 +46,7 @@ export function parseMetadata(raw: string | null | undefined): MessageMetadata {
     if (Array.isArray(rawWaveform)) {
         waveform = rawWaveform
             .slice(0, 2_000)
-            .map((v) => {
+            .map(v => {
                 const n = typeof v === 'number' ? v : parseFloat(String(v));
                 if (!isFinite(n)) return 0.05;
                 return Math.min(1, Math.max(0, n));
@@ -76,27 +57,31 @@ export function parseMetadata(raw: string | null | undefined): MessageMetadata {
     let duration = 0;
     const rawDuration = obj['duration'];
     if (rawDuration !== undefined) {
-        const n = typeof rawDuration === 'number'
-            ? rawDuration
-            : parseFloat(String(rawDuration));
-        if (isFinite(n) && n >= 0 && n <= 10_800) {
-            duration = n;
-        }
+        const n = typeof rawDuration === 'number' ? rawDuration : parseFloat(String(rawDuration));
+        if (isFinite(n) && n >= 0 && n <= 10_800) duration = n;
     }
 
-    // mimeType — приймаємо будь-який audio/*, зберігаємо оригінальний рядок
+    // mimeType
     let mimeType = DEFAULTS.mimeType;
     const rawMime = obj['mimeType'];
     if (typeof rawMime === 'string' && rawMime.trim()) {
-        if (isSafeAudioMime(rawMime.trim())) {
-            mimeType = rawMime.trim();
-        }
+        if (isSafeAudioMime(rawMime.trim())) mimeType = rawMime.trim();
     }
 
     // encrypted
     const encrypted = obj['encrypted'] === true;
 
-    return { waveform, duration, mimeType, encrypted };
+    // destructAfterSeconds ← NEW
+    let destructAfterSeconds: number | undefined;
+    const rawDas = obj['destructAfterSeconds'];
+    if (rawDas !== undefined) {
+        const n = typeof rawDas === 'number' ? rawDas : parseFloat(String(rawDas));
+        if (isFinite(n) && n >= 1 && n <= 7 * 24 * 3600) {
+            destructAfterSeconds = Math.round(n);
+        }
+    }
+
+    return { waveform, duration, mimeType, encrypted, destructAfterSeconds };
 }
 
 export function hasMetadata(raw: string | null | undefined): boolean {
