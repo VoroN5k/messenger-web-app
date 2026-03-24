@@ -3,16 +3,18 @@ import {
     Injectable, NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
-import {validateAndNormalizeMetadata} from "./metadata.validator.js";
-import {UploadService} from "../upload/upload.service.js";
+import { validateAndNormalizeMetadata } from './metadata.validator.js';
+import { UploadService } from '../upload/upload.service.js';
+import {ReactionUser} from "./interfaces/reactionUser.interface.js";
 
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
 const ALLOWED_EMOJIS = ['👍','❤️','😂','😮','😢','😡','🔥','👏','🎉','💯'];
 
+
 const MSG_SELECT = {
     id: true, content: true, createdAt: true, editedAt: true, deletedAt: true,
     fileUrl: true, fileName: true, fileType: true, fileSize: true,
-    metadata: true,
+    metadata: true, scheduledAt: true,
     senderId: true, conversationId: true, replyToId: true,
     forwardedFromId: true, forwardedFromUser: true,
     sender: { select: { id: true, nickname: true, avatarUrl: true } },
@@ -26,10 +28,14 @@ const MSG_SELECT = {
         select: {
             id: true, content: true, fileType: true,
             sender: { select: { id: true, nickname: true } },
-        }
+        },
     },
     reactions: {
-        select:  { emoji: true, userId: true },
+        select: {
+            emoji: true,
+            userId: true,
+            user: { select: { id: true, nickname: true, avatarUrl: true } },
+        },
         orderBy: { createdAt: 'asc' as const },
     },
 };
@@ -46,15 +52,24 @@ export class ConversationsService {
     ) {}
 
     // Helpers
-    private groupReactions(reactions: { emoji: string; userId: number }[]) {
-        const map = new Map<string, number[]>();
+
+    private groupReactions(reactions: Array<{
+        emoji: string;
+        userId: number;
+        user: ReactionUser;
+    }>) {
+        const map = new Map<string, { userIds: number[]; users: ReactionUser[] }>();
         for (const r of reactions) {
-            const ids = map.get(r.emoji) ?? [];
-            ids.push(r.userId);
-            map.set(r.emoji, ids);
+            const slot = map.get(r.emoji) ?? { userIds: [], users: [] };
+            slot.userIds.push(r.userId);
+            slot.users.push(r.user);
+            map.set(r.emoji, slot);
         }
-        return Array.from(map.entries()).map(([emoji, userIds]) => ({
-            emoji, count: userIds.length, userIds,
+        return Array.from(map.entries()).map(([emoji, slot]) => ({
+            emoji,
+            count:   slot.userIds.length,
+            userIds: slot.userIds,
+            users:   slot.users,
         }));
     }
 
@@ -102,7 +117,7 @@ export class ConversationsService {
     private async getOtherMembersLastRead(
         conversationId: number,
         currentUserId: number,
-    ): Promise<Map<number, { lastReadAt: Date, nickname: string }>> {
+    ): Promise<Map<number, { lastReadAt: Date; nickname: string }>> {
         const members = await this.prisma.conversationMember.findMany({
             where: { conversationId, userId: { not: currentUserId } },
             select: { userId: true, lastReadAt: true, user: { select: { nickname: true } } },
@@ -114,6 +129,18 @@ export class ConversationsService {
         return map;
     }
 
+    // Scheduled message filter
+    // Hides messages with future scheduledAt from non-senders
+    private scheduledFilter(userId: number) {
+        return {
+            OR: [
+                { scheduledAt: null },
+                { scheduledAt: { lte: new Date() } },
+                { senderId: userId },
+            ],
+        };
+    }
+
     // My conversations
     async getMyConversations(userId: number) {
         const memberships = await this.prisma.conversationMember.findMany({
@@ -121,17 +148,12 @@ export class ConversationsService {
             include: {
                 conversation: {
                     include: {
-                        members: {
-                            include: { user: { select: MEMBER_USER_SELECT } },
-                        },
+                        members: { include: { user: { select: MEMBER_USER_SELECT } } },
                         messages: {
-                            where:   { deletedAt: null },
+                            where: { deletedAt: null, ...this.scheduledFilter(userId) },
                             orderBy: { id: 'desc' },
-                            take:    1,
-                            select: {
-                                id: true, content: true, senderId: true,
-                                createdAt: true, fileType: true, fileUrl: true,
-                            },
+                            take: 1,
+                            select: { id: true, content: true, senderId: true, createdAt: true, fileType: true, fileUrl: true },
                         },
                     },
                 },
@@ -139,221 +161,73 @@ export class ConversationsService {
             orderBy: { conversation: { updatedAt: 'desc' } },
         });
 
-        return Promise.all(
-            memberships.map(async (m) => {
-                const conv = m.conversation;
+        return Promise.all(memberships.map(async (m) => {
+            const conv = m.conversation;
 
-                const convFull = await this.prisma.conversation.findUnique({
-                    where:  { id: conv.id },
-                    select: { pinnedMessageId: true },
-                });
-
-                const unreadCount = await this.prisma.message.count({
-                    where: {
-                        conversationId: conv.id,
-                        senderId:       { not: userId },
-                        deletedAt:      null,
-                        createdAt:      { gt: m.lastReadAt },
-                    },
-                });
-
-                let displayName   = conv.name;
-                let displayAvatar = conv.avatarUrl;
-                let isOnline      = false;
-
-                if (conv.type === 'DIRECT') {
-                    const other = conv.members.find((mem) => mem.userId !== userId);
-                    if (other) {
-                        displayName   = other.user.nickname;
-                        displayAvatar = other.user.avatarUrl;
-                        isOnline      = other.user.isOnline;
-                    } else {
-                        displayName = 'Збережені';
-                    }
-                }
-
-                const pinnedMessageId = convFull?.pinnedMessageId ?? null;
-
-                const pinnedMessage = pinnedMessageId
-                    ? await this.prisma.message.findUnique({
-                        where:  { id: pinnedMessageId },
-                        select: {
-                            id:      true,
-                            content: true,
-                            sender:  { select: { id: true, nickname: true } },
-                        },
-                    })
-                    : null;
-
-                return {
-                    id:              conv.id,
-                    type:            conv.type,
-                    name:            displayName,
-                    avatarUrl:       displayAvatar,
-                    description:     conv.description,
-                    isOnline,
-                    myRole:          m.role,
-                    lastMessage:     conv.messages[0] ?? null,
-                    unreadCount,
-                    members:         conv.members.map((mem) => ({
-                        userId:   mem.userId,
-                        role:     mem.role,
-                        joinedAt: mem.joinedAt,
-                        user:     mem.user,
-                    })),
-                    updatedAt:        conv.updatedAt,
-                    pinnedMessageId,
-                    pinnedMessage,
-                };
-            }),
-        );
-    }
-
-    async pinMessage(userId: number, conversationId: number, messageId: number) {
-        await this.assertAdmin(userId, conversationId);
-        const msg = await this.prisma.message.findUnique({ where: { id: messageId } });
-        if (!msg || msg.conversationId !== conversationId) throw new NotFoundException('Message not found');
-
-        await this.prisma.conversation.update({
-            where: { id: conversationId },
-            data:  { pinnedMessageId: messageId },
-        });
-        return { pinnedMessageId: messageId, message: this.mapMessage(msg) };
-    }
-
-    async unpinMessage(userId: number, conversationId: number) {
-        await this.assertAdmin(userId, conversationId);
-        await this.prisma.conversation.update({
-            where: { id: conversationId },
-            data:  { pinnedMessageId: null },
-        });
-        return { pinnedMessageId: null };
-    }
-
-    async forwardMessage(userId: number, messageId: number, targetConversationId: number) {
-        await this.assertMember(userId, targetConversationId);
-        const original = await this.prisma.message.findUnique({ where: { id: messageId } });
-        if (!original) throw new NotFoundException('Message not found');
-
-        const msg = await this.prisma.message.create({
-            data: {
-                content:            original.content,
-                senderId:           userId,
-                conversationId:     targetConversationId,
-                fileUrl:            original.fileUrl,
-                fileName:           original.fileName,
-                fileType:           original.fileType,
-                fileSize:           original.fileSize,
-                forwardedFromId:    original.id,
-                forwardedFromUserId: original.senderId,
-            },
-            select: MSG_SELECT,
-        });
-
-        await this.prisma.conversation.update({
-            where: { id: targetConversationId },
-            data:  { updatedAt: new Date() },
-        });
-
-        return { ...this.mapMessage(msg), isRead: false };
-    }
-
-    // Get or create DIRECT
-    async getOrCreateDirect(userId: number, targetId: number) {
-        const isSelf = userId === targetId;
-
-        if(!isSelf) {
-            const target = await this.prisma.user.findUnique({ where: { id: targetId } });
-            if(!target) throw new NotFoundException('User not found');
-        }
-
-        const existing = isSelf
-        ? await this.prisma.conversation.findFirst({
-                where: {
-                    type: 'DIRECT',
-                    members: { every: { userId } },
-                },
-                include: { members: { include: { user: { select: MEMBER_USER_SELECT } } } },
-            })
-            : await this.prisma.conversation.findFirst({
-                where: {
-                    type: 'DIRECT',
-                    AND: [
-                        { members: { some: { userId } } },
-                        { members: { some: { userId: targetId } } },
-                    ],
-                },
-                include: { members: { include: { user: { select: MEMBER_USER_SELECT } } } },
+            const convFull = await this.prisma.conversation.findUnique({
+                where:  { id: conv.id },
+                select: { pinnedMessageId: true },
             });
 
-        if (existing) return existing;
-
-        return this.prisma.conversation.create({
-            data: {
-                type:        'DIRECT',
-                createdById: userId,
-                members: {
-                    create: isSelf
-                        ? [{ userId, role: 'MEMBER'}]
-                        : [
-                            { userId, role: 'MEMBER' },
-                            { userId: targetId, role: 'MEMBER' },
-                          ],
+            const unreadCount = await this.prisma.message.count({
+                where: {
+                    conversationId: conv.id,
+                    senderId:       { not: userId },
+                    deletedAt:      null,
+                    createdAt:      { gt: m.lastReadAt },
+                    ...this.scheduledFilter(userId),
                 },
-            },
-            include: { members: { include: { user: { select: MEMBER_USER_SELECT } } } },
-        });
-    }
+            });
 
-    // Create GROUP
-    async createGroup(userId: number, dto: { name: string; description?: string; memberIds: number[] }) {
-        const uniqueIds = [...new Set(dto.memberIds.filter((id) => id !== userId))];
-        return this.prisma.conversation.create({
-            data: {
-                type:        'GROUP',
-                name:        dto.name,
-                description: dto.description,
-                createdById: userId,
-                members: {
-                    create: [
-                        { userId, role: 'OWNER' },
-                        ...uniqueIds.map((id) => ({ userId: id, role: 'MEMBER' as const })),
-                    ],
-                },
-            },
-            include: { members: { include: { user: { select: MEMBER_USER_SELECT } } } },
-        });
-    }
+            let displayName   = conv.name;
+            let displayAvatar = conv.avatarUrl;
+            let isOnline      = false;
 
-    // Create CHANNEL
-    async createChannel(userId: number, dto: { name: string; description?: string }) {
-        return this.prisma.conversation.create({
-            data: {
-                type:        'CHANNEL',
-                name:        dto.name,
-                description: dto.description,
-                createdById: userId,
-                members: { create: [{ userId, role: 'OWNER' }] },
-            },
-            include: { members: { include: { user: { select: MEMBER_USER_SELECT } } } },
-        });
-    }
+            if (conv.type === 'DIRECT') {
+                const other = conv.members.find(mem => mem.userId !== userId);
+                if (other) {
+                    displayName   = other.user.nickname;
+                    displayAvatar = other.user.avatarUrl;
+                    isOnline      = other.user.isOnline;
+                } else {
+                    displayName = 'Збережені';
+                }
+            }
 
-    // Single conversation
-    async getConversation(userId: number, conversationId: number) {
-        await this.assertMember(userId, conversationId);
-        return this.prisma.conversation.findUnique({
-            where: { id: conversationId },
-            include: { members: { include: { user: { select: MEMBER_USER_SELECT } } } },
-        });
+            const pinnedMessageId = convFull?.pinnedMessageId ?? null;
+            const pinnedMessage   = pinnedMessageId
+                ? await this.prisma.message.findUnique({
+                    where:  { id: pinnedMessageId },
+                    select: { id: true, content: true, sender: { select: { id: true, nickname: true } } },
+                })
+                : null;
+
+            return {
+                id: conv.id, type: conv.type, name: displayName, avatarUrl: displayAvatar,
+                description: conv.description, isOnline, myRole: m.role,
+                lastMessage: conv.messages[0] ?? null, unreadCount,
+                members: conv.members.map(mem => ({ userId: mem.userId, role: mem.role, joinedAt: mem.joinedAt, user: mem.user })),
+                updatedAt: conv.updatedAt, pinnedMessageId, pinnedMessage,
+            };
+        }));
     }
 
     // Messages
+
+    /** Returns { messages, meta: { firstUnreadId } } for initial load */
     async getMessages(userId: number, conversationId: number, cursor?: number) {
         await this.assertMember(userId, conversationId);
 
+        // Fetch member's lastReadAt for unread divider (only on initial load, no cursor)
+        const member = !cursor
+            ? await this.prisma.conversationMember.findUnique({
+                where: { conversationId_userId: { conversationId, userId } },
+                select: { lastReadAt: true },
+            })
+            : null;
+
         const msgs = await this.prisma.message.findMany({
-            where:   { conversationId },
+            where: { conversationId, ...this.scheduledFilter(userId) },
             select:  MSG_SELECT,
             take:    30,
             ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
@@ -361,44 +235,45 @@ export class ConversationsService {
         });
 
         const otherMembersLastRead = await this.getOtherMembersLastRead(conversationId, userId);
+        const ordered = msgs.reverse();
 
-        return msgs.reverse().map((msg) =>
-            this.mapMessageWithRead(msg, userId, otherMembersLastRead),
-        );
+        // Find the first unread message from others (for the red divider)
+        const firstUnreadMsg = !cursor && member?.lastReadAt
+            ? ordered.find(m =>
+                String(m.senderId) !== String(userId) &&
+                new Date(m.createdAt) > member!.lastReadAt,
+            )
+            : null;
+
+        const messages = ordered.map(msg => this.mapMessageWithRead(msg, userId, otherMembersLastRead));
+
+        if (cursor) return messages; // paginated: plain array for backward compat
+
+        return { messages, meta: { firstUnreadId: firstUnreadMsg?.id ?? null } };
     }
 
     async getMessagesAround(userId: number, conversationId: number, around: number) {
         await this.assertMember(userId, conversationId);
-
         const msgs = await this.prisma.message.findMany({
-            where:   { conversationId, id: { lte: around } },
+            where:   { conversationId, id: { lte: around }, ...this.scheduledFilter(userId) },
             select:  MSG_SELECT,
             take:    30,
             orderBy: { id: 'desc' },
         });
-
         const otherMembersLastRead = await this.getOtherMembersLastRead(conversationId, userId);
-
-        return msgs.reverse().map((msg) =>
-            this.mapMessageWithRead(msg, userId, otherMembersLastRead),
-        );
+        return msgs.reverse().map(msg => this.mapMessageWithRead(msg, userId, otherMembersLastRead));
     }
 
     async getMessagesAfter(userId: number, conversationId: number, after: number) {
         await this.assertMember(userId, conversationId);
-
         const msgs = await this.prisma.message.findMany({
-            where:   { conversationId, id: { gt: after } },
+            where:   { conversationId, id: { gt: after }, ...this.scheduledFilter(userId) },
             select:  MSG_SELECT,
             take:    30,
-            orderBy: { id: 'asc' },   // ASC — від старішого до новішого
+            orderBy: { id: 'asc' },
         });
-
         const otherMembersLastRead = await this.getOtherMembersLastRead(conversationId, userId);
-
-        return msgs.map((msg) =>
-            this.mapMessageWithRead(msg, userId, otherMembersLastRead),
-        );
+        return msgs.map(msg => this.mapMessageWithRead(msg, userId, otherMembersLastRead));
     }
 
     async searchMessages(userId: number, conversationId: number, query: string) {
@@ -406,56 +281,50 @@ export class ConversationsService {
         const q = query.trim();
         if (q.length < 2) return [];
         const msgs = await this.prisma.message.findMany({
-            where:   { conversationId, deletedAt: null, content: { contains: q, mode: 'insensitive' } },
-            select:  MSG_SELECT,
+            where: {
+                conversationId, deletedAt: null,
+                content: { contains: q, mode: 'insensitive' },
+                ...this.scheduledFilter(userId),
+            },
+            select: MSG_SELECT,
             orderBy: { id: 'desc' },
-            take:    30,
+            take: 30,
         });
-
         const otherMembersLastRead = await this.getOtherMembersLastRead(conversationId, userId);
-
-        return msgs.reverse().map((msg) =>
-            this.mapMessageWithRead(msg, userId, otherMembersLastRead),
-        );
+        return msgs.reverse().map(msg => this.mapMessageWithRead(msg, userId, otherMembersLastRead));
     }
 
     async getMediaFiles(userId: number, conversationId: number) {
         await this.assertMember(userId, conversationId);
-
         return this.prisma.message.findMany({
-            where: {
-                conversationId,
-                deletedAt: null,
-                fileUrl: { not: null },
-            },
+            where: { conversationId, deletedAt: null, fileUrl: { not: null }, ...this.scheduledFilter(userId) },
             select: {
-                id: true,
-                fileUrl: true,
-                fileName: true,
-                fileType: true,
-                fileSize: true,
-                metadata: true,
-                createdAt: true,
-                senderId: true,
+                id: true, fileUrl: true, fileName: true, fileType: true,
+                fileSize: true, metadata: true, createdAt: true, senderId: true,
                 sender: { select: { id: true, nickname: true } },
             },
-            orderBy: { id: 'desc'},
+            orderBy: { id: 'desc' },
             take: 200,
-        })
+        });
     }
 
-    // Save message (from gateway)
+    /** Used by gateway to fetch a scheduled message just before emitting it */
+    async getMessageById(messageId: number) {
+        const msg = await this.prisma.message.findUnique({ where: { id: messageId }, select: MSG_SELECT });
+        if (!msg) return null;
+        return { ...this.mapMessage(msg), isRead: false };
+    }
+
+    // Save message
     async saveMessage(userId: number, conversationId: number, dto: {
         content?: string; fileUrl?: string; fileName?: string;
         fileType?: string; fileSize?: number; replyToId?: number;
-        metadata?: string; // ← FIX: was missing — waveform/encrypted flag never persisted
+        metadata?: string; scheduledAt?: Date | null;
     }) {
         const member = await this.assertMember(userId, conversationId);
         const conv   = await this.prisma.conversation.findUnique({ where: { id: conversationId } });
         if (!conv) throw new NotFoundException('Conversation not found');
-
-        if (conv.type === 'CHANNEL' && member.role === 'MEMBER')
-            throw new ForbiddenException('Only admins can post in channels');
+        if (conv.type === 'CHANNEL' && member.role === 'MEMBER') throw new ForbiddenException('Only admins can post in channels');
 
         const msg = await this.prisma.message.create({
             data: {
@@ -468,6 +337,7 @@ export class ConversationsService {
                 fileSize:      dto.fileSize,
                 replyToId:     dto.replyToId,
                 metadata:      validateAndNormalizeMetadata(dto.metadata),
+                scheduledAt:   dto.scheduledAt ?? null,
             },
             select: MSG_SELECT,
         });
@@ -480,7 +350,7 @@ export class ConversationsService {
         return { ...this.mapMessage(msg), isRead: false };
     }
 
-    //  Mark as read
+    // Mark as read
     async markAsRead(userId: number, conversationId: number) {
         await this.prisma.conversationMember.updateMany({
             where: { conversationId, userId },
@@ -492,182 +362,198 @@ export class ConversationsService {
     async deleteMessage(messageId: number, userId: number) {
         const msg = await this.prisma.message.findUnique({ where: { id: messageId } });
         if (!msg) throw new NotFoundException('Message not found');
-
-        // Permission check: only sender or admin can delete
         if (msg.senderId !== userId) {
             const m = await this.prisma.conversationMember.findUnique({
                 where: { conversationId_userId: { conversationId: msg.conversationId, userId } },
             });
             if (!m || m.role === 'MEMBER') throw new ForbiddenException('Cannot delete this message');
         }
-
-        // Already soft-deleted — nothing to do
         if (msg.deletedAt) return msg;
-
-        // Soft-delete the message in DB first
-        const deleted = await this.prisma.message.update({
-            where: { id: messageId },
-            data:  { deletedAt: new Date() },
-        });
-
+        const deleted = await this.prisma.message.update({ where: { id: messageId }, data: { deletedAt: new Date() } });
         if (msg.fileUrl) {
-            const otherRefs = await this.prisma.message.count({
-                where: {
-                    fileUrl:   msg.fileUrl,
-                    deletedAt: null,
-                    id:        { not: messageId },
-                },
-            });
-
-            if (otherRefs === 0) {
-                // Fire-and-forget — failure is logged inside deleteFile, never throws
-                this.upload.deleteFile(msg.fileUrl).catch(() => {});
-            }
+            const otherRefs = await this.prisma.message.count({ where: { fileUrl: msg.fileUrl, deletedAt: null, id: { not: messageId } } });
+            if (otherRefs === 0) this.upload.deleteFile(msg.fileUrl).catch(() => {});
         }
-
         return deleted;
     }
 
     async editMessage(messageId: number, userId: number, content: string) {
         const msg = await this.prisma.message.findUnique({ where: { id: messageId } });
-        if (!msg)                  throw new NotFoundException('Not found');
+        if (!msg) throw new NotFoundException('Not found');
         if (msg.senderId !== userId) throw new ForbiddenException('Cannot edit others\' messages');
-        if (msg.deletedAt)           throw new BadRequestException('Cannot edit deleted message');
-        if (Date.now() - msg.createdAt.getTime() > EDIT_WINDOW_MS)
-            throw new BadRequestException('Edit window expired');
-
+        if (msg.deletedAt) throw new BadRequestException('Cannot edit deleted message');
+        if (Date.now() - msg.createdAt.getTime() > EDIT_WINDOW_MS) throw new BadRequestException('Edit window expired');
         const trimmed = content.trim();
-        if (!trimmed)           throw new BadRequestException('Content empty');
+        if (!trimmed) throw new BadRequestException('Content empty');
         if (trimmed === msg.content) return msg;
-
-        return this.prisma.message.update({
-            where: { id: messageId },
-            data:  { content: trimmed, editedAt: new Date() },
-        });
+        return this.prisma.message.update({ where: { id: messageId }, data: { content: trimmed, editedAt: new Date() } });
     }
 
     async toggleReaction(messageId: number, userId: number, emoji: string) {
         if (!ALLOWED_EMOJIS.includes(emoji)) throw new BadRequestException('Invalid emoji');
-
         const msg = await this.prisma.message.findUnique({ where: { id: messageId } });
-        if (!msg)           throw new NotFoundException('Not found');
-        if (msg.deletedAt)  throw new BadRequestException('Cannot react to deleted message');
+        if (!msg) throw new NotFoundException('Not found');
+        if (msg.deletedAt) throw new BadRequestException('Cannot react to deleted message');
         await this.assertMember(userId, msg.conversationId);
-
-        const existing = await this.prisma.reaction.findUnique({
-            where: { userId_messageId_emoji: { userId, messageId, emoji } },
-        });
-
+        const existing = await this.prisma.reaction.findUnique({ where: { userId_messageId_emoji: { userId, messageId, emoji } } });
         if (existing) await this.prisma.reaction.delete({ where: { id: existing.id } });
         else          await this.prisma.reaction.create({ data: { emoji, userId, messageId } });
-
         const reactions = await this.prisma.reaction.findMany({
-            where:   { messageId },
-            select:  { emoji: true, userId: true },
+            where: { messageId },
+            select: { emoji: true, userId: true, user: { select: { id: true, nickname: true, avatarUrl: true } } },
             orderBy: { createdAt: 'asc' },
         });
-
         return { grouped: this.groupReactions(reactions), conversationId: msg.conversationId };
     }
 
-    // Members
+    // ── Pin / Unpin ───────────────────────────────────────────────────────────
+    async pinMessage(userId: number, conversationId: number, messageId: number) {
+        await this.assertAdmin(userId, conversationId);
+        const msg = await this.prisma.message.findUnique({ where: { id: messageId } });
+        if (!msg || msg.conversationId !== conversationId) throw new NotFoundException('Message not found');
+        await this.prisma.conversation.update({ where: { id: conversationId }, data: { pinnedMessageId: messageId } });
+        return { pinnedMessageId: messageId, message: this.mapMessage(msg) };
+    }
+
+    async unpinMessage(userId: number, conversationId: number) {
+        await this.assertAdmin(userId, conversationId);
+        await this.prisma.conversation.update({ where: { id: conversationId }, data: { pinnedMessageId: null } });
+        return { pinnedMessageId: null };
+    }
+
+    // ── Forward ───────────────────────────────────────────────────────────────
+    async forwardMessage(userId: number, messageId: number, targetConversationId: number) {
+        await this.assertMember(userId, targetConversationId);
+        const original = await this.prisma.message.findUnique({ where: { id: messageId } });
+        if (!original) throw new NotFoundException('Message not found');
+        const msg = await this.prisma.message.create({
+            data: {
+                content: original.content, senderId: userId, conversationId: targetConversationId,
+                fileUrl: original.fileUrl, fileName: original.fileName, fileType: original.fileType, fileSize: original.fileSize,
+                forwardedFromId: original.id, forwardedFromUserId: original.senderId,
+            },
+            select: MSG_SELECT,
+        });
+        await this.prisma.conversation.update({ where: { id: targetConversationId }, data: { updatedAt: new Date() } });
+        return { ...this.mapMessage(msg), isRead: false };
+    }
+
+    // ── Direct / Group / Channel ──────────────────────────────────────────────
+    async getOrCreateDirect(userId: number, targetId: number) {
+        const isSelf = userId === targetId;
+        if (!isSelf) {
+            const target = await this.prisma.user.findUnique({ where: { id: targetId } });
+            if (!target) throw new NotFoundException('User not found');
+        }
+        const existing = isSelf
+            ? await this.prisma.conversation.findFirst({
+                where: { type: 'DIRECT', members: { every: { userId } } },
+                include: { members: { include: { user: { select: MEMBER_USER_SELECT } } } },
+            })
+            : await this.prisma.conversation.findFirst({
+                where: { type: 'DIRECT', AND: [{ members: { some: { userId } } }, { members: { some: { userId: targetId } } }] },
+                include: { members: { include: { user: { select: MEMBER_USER_SELECT } } } },
+            });
+        if (existing) return existing;
+        return this.prisma.conversation.create({
+            data: {
+                type: 'DIRECT', createdById: userId,
+                members: { create: isSelf ? [{ userId, role: 'MEMBER' }] : [{ userId, role: 'MEMBER' }, { userId: targetId, role: 'MEMBER' }] },
+            },
+            include: { members: { include: { user: { select: MEMBER_USER_SELECT } } } },
+        });
+    }
+
+    async createGroup(userId: number, dto: { name: string; description?: string; memberIds: number[] }) {
+        const uniqueIds = [...new Set(dto.memberIds.filter(id => id !== userId))];
+        return this.prisma.conversation.create({
+            data: {
+                type: 'GROUP', name: dto.name, description: dto.description, createdById: userId,
+                members: { create: [{ userId, role: 'OWNER' }, ...uniqueIds.map(id => ({ userId: id, role: 'MEMBER' as const }))] },
+            },
+            include: { members: { include: { user: { select: MEMBER_USER_SELECT } } } },
+        });
+    }
+
+    async createChannel(userId: number, dto: { name: string; description?: string }) {
+        return this.prisma.conversation.create({
+            data: {
+                type: 'CHANNEL', name: dto.name, description: dto.description, createdById: userId,
+                members: { create: [{ userId, role: 'OWNER' }] },
+            },
+            include: { members: { include: { user: { select: MEMBER_USER_SELECT } } } },
+        });
+    }
+
+    async getConversation(userId: number, conversationId: number) {
+        await this.assertMember(userId, conversationId);
+        return this.prisma.conversation.findUnique({
+            where: { id: conversationId },
+            include: { members: { include: { user: { select: MEMBER_USER_SELECT } } } },
+        });
+    }
+
     async addMember(adminId: number, conversationId: number, targetUserId: number) {
         const conv = await this.prisma.conversation.findUnique({ where: { id: conversationId } });
         if (conv?.type === 'DIRECT') throw new BadRequestException('Cannot add to direct chats');
         await this.assertAdmin(adminId, conversationId);
-
-        const exists = await this.prisma.conversationMember.findUnique({
-            where: { conversationId_userId: { conversationId, userId: targetUserId } },
-        });
+        const exists = await this.prisma.conversationMember.findUnique({ where: { conversationId_userId: { conversationId, userId: targetUserId } } });
         if (exists) throw new ConflictException('Already a member');
-
-        return this.prisma.conversationMember.create({
-            data: { conversationId, userId: targetUserId, role: 'MEMBER' },
-            include: { user: { select: MEMBER_USER_SELECT } },
-        });
+        return this.prisma.conversationMember.create({ data: { conversationId, userId: targetUserId, role: 'MEMBER' }, include: { user: { select: MEMBER_USER_SELECT } } });
     }
 
     async removeMember(adminId: number, conversationId: number, targetUserId: number) {
         const conv = await this.prisma.conversation.findUnique({ where: { id: conversationId } });
         if (conv?.type === 'DIRECT') throw new BadRequestException('Cannot remove from direct chats');
-
         if (adminId !== targetUserId) {
             await this.assertAdmin(adminId, conversationId);
-            const target = await this.prisma.conversationMember.findUnique({
-                where: { conversationId_userId: { conversationId, userId: targetUserId } },
-            });
+            const target = await this.prisma.conversationMember.findUnique({ where: { conversationId_userId: { conversationId, userId: targetUserId } } });
             if (target?.role === 'OWNER') throw new ForbiddenException('Cannot remove owner');
         }
-
-        await this.prisma.groupSenderKey.deleteMany({
-            where: { conversationId, senderId: targetUserId },
-        })
-
-        await this.prisma.conversationMember.delete({
-            where: { conversationId_userId: { conversationId, userId: targetUserId } },
-        });
+        await this.prisma.groupSenderKey.deleteMany({ where: { conversationId, senderId: targetUserId } });
+        await this.prisma.conversationMember.delete({ where: { conversationId_userId: { conversationId, userId: targetUserId } } });
         return { removed: targetUserId };
     }
 
     async setMemberRole(ownerId: number, conversationId: number, targetUserId: number, role: 'ADMIN' | 'MEMBER') {
-        const owner = await this.prisma.conversationMember.findUnique({
-            where: { conversationId_userId: { conversationId, userId: ownerId } },
-        });
+        const owner = await this.prisma.conversationMember.findUnique({ where: { conversationId_userId: { conversationId, userId: ownerId } } });
         if (owner?.role !== 'OWNER') throw new ForbiddenException('Owner only');
-
-        return this.prisma.conversationMember.update({
-            where: { conversationId_userId: { conversationId, userId: targetUserId } },
-            data:  { role },
-        });
+        return this.prisma.conversationMember.update({ where: { conversationId_userId: { conversationId, userId: targetUserId } }, data: { role } });
     }
 
-    async updateConversation(userId: number, conversationId: number, dto: {
-        name?: string; description?: string; avatarUrl?: string;
-    }) {
+    async updateConversation(userId: number, conversationId: number, dto: { name?: string; description?: string; avatarUrl?: string }) {
         await this.assertAdmin(userId, conversationId);
         return this.prisma.conversation.update({ where: { id: conversationId }, data: dto });
     }
 
-    async setSenderKey(
-        requesterId: number,
-        conversationId: number,
-        keys: Array<{ recipientId: number; encryptedKey: string }>,
-    ) {
+    async setSenderKey(requesterId: number, conversationId: number, keys: Array<{ recipientId: number; encryptedKey: string }>) {
         await this.assertMember(requesterId, conversationId);
-
-        await Promise.all(
-            keys.map(({ recipientId, encryptedKey }) =>
-                this.prisma.groupSenderKey.upsert({
-                    where: {
-                        conversationId_senderId_recipientId: {
-                            conversationId,
-                            senderId: requesterId,
-                            recipientId,
-                        },
-                    },
-                    create: {
-                        conversationId,
-                        senderId: requesterId,
-                        recipientId,
-                        encryptedKey,
-                    },
-                    update: { encryptedKey },
-                }),
-            ),
-        );
-
+        await Promise.all(keys.map(({ recipientId, encryptedKey }) =>
+            this.prisma.groupSenderKey.upsert({
+                where: { conversationId_senderId_recipientId: { conversationId, senderId: requesterId, recipientId } },
+                create: { conversationId, senderId: requesterId, recipientId, encryptedKey },
+                update: { encryptedKey },
+            }),
+        ));
         return { ok: true };
     }
 
     async getSenderKeysForMe(userId: number, conversationId: number) {
         await this.assertMember(userId, conversationId);
-
-        const keys = await this.prisma.groupSenderKey.findMany({
+        return this.prisma.groupSenderKey.findMany({
             where: { conversationId, recipientId: userId },
             select: { senderId: true, encryptedKey: true },
-        })
-
-        return keys;
+        });
     }
 
+    /** Load all pending scheduled messages (called on server start) */
+    async getPendingScheduledMessages() {
+        return this.prisma.message.findMany({
+            where: {
+                scheduledAt: { gt: new Date() },
+                deletedAt: null,
+            },
+            select: { id: true, conversationId: true, scheduledAt: true, senderId: true },
+        });
+    }
 }

@@ -25,7 +25,10 @@ export function proxy(request: NextRequest) {
 
     // Scenario A: User without token is trying to access protected route
     if ( isProtectedRoute && !refreshToken ) {
-        return NextResponse.redirect(new URL('/auth/login', request.url));
+        const loginUrl = new URL('/auth/login', request.url);
+
+        loginUrl.searchParams.set('from', pathname);
+        return NextResponse.redirect(loginUrl);
     }
 
     // Scenario B: User with token is trying to access auth route
@@ -38,7 +41,9 @@ export function proxy(request: NextRequest) {
 
 export const config = {
     matcher: [
+        '/',
         '/chat/:path*',
         '/profile/:path*',
+        '/settings/:path*',
         '/auth/:path*'],
 };

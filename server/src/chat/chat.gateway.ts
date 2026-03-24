@@ -3,7 +3,7 @@ import {
     ConnectedSocket, OnGatewayConnection, OnGatewayDisconnect, WebSocketServer,
 } from '@nestjs/websockets';
 import { Server, Socket }         from 'socket.io';
-import { Logger, UseGuards }      from '@nestjs/common';
+import { Logger, UseGuards, OnModuleInit }      from '@nestjs/common';
 import { WsJwtGuard }             from './guards/ws-jwt.guard.js';
 import { PrismaService }          from '../prisma/prisma.service.js';
 import { JwtService }             from '@nestjs/jwt';
@@ -13,7 +13,7 @@ import { PushService }            from '../push/push.service.js';
 import { WsRateLimiter }          from './ws-rate-limiter.js';
 
 @WebSocketGateway({ cors: { origin: 'http://localhost:3000', credentials: true } })
-export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit {
     @WebSocketServer() server: Server;
     private logger      = new Logger('ChatGateway');
     private activeUsers = new Map<number, Set<string>>();
@@ -72,6 +72,53 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
             return false;
         }
         return true;
+    }
+
+    private scheduleMessageDelivery(messageId: number, conversationId: number, delayMs: number) {
+        setTimeout(() => this.deliverScheduledMessage(messageId, conversationId), delayMs);
+    }
+
+    private async deliverScheduledMessage(messageId: number, conversationId: number) {
+        try {
+            const msg = await this.convService.getMessageById(messageId);
+            if (!msg || msg.deletedAt) return;
+            this.server.to(`conv_${conversationId}`).emit('onMessage', msg);
+
+            // push notify
+            const members = await this.prisma.conversationMember.findMany({
+                where: { conversationId, userId: { not: Number(msg.senderId) } },
+                select: { userId: true },
+            });
+            const bodyText = msg.fileUrl ? `📎 ${msg.fileName ?? 'Файл'}` : msg.content;
+            for (const m of members) {
+                this.push.sendToUser(m.userId, {
+                    title: 'Нове повідомлення',
+                    body: bodyText.length > 100 ? bodyText.slice(0, 97) + '…' : bodyText,
+                    senderId: Number(msg.senderId),
+                    url: '/chat',
+                }).catch(() => {});
+            }
+        } catch (e: any) {
+            this.logger.warn(`Failed to deliver scheduled message ${messageId}: ${e.message}`);
+        }
+    }
+
+    async onModuleInit() {
+        try {
+            const pending = await this.convService.getPendingScheduledMessages();
+            for (const msg of pending) {
+                const delay = new Date(msg.scheduledAt!).getTime() - Date.now();
+                if (delay > 0) {
+                    this.scheduleMessageDelivery(msg.id, msg.conversationId, delay);
+                } else {
+                    // Overdue - deliver immediately
+                    this.deliverScheduledMessage(msg.id, msg.conversationId);
+                }
+            }
+            this.logger.log(`Reloaded ${pending.length} pending scheduled messages`);
+        } catch (e : any) {
+            this.logger.warn(`Failed to reload scheduled messages: ${e.message}`);
+        }
     }
 
     // Connection
@@ -150,35 +197,47 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         @MessageBody() data: {
             conversationId: number; content?: string;
             fileUrl?: string; fileName?: string; fileType?: string; fileSize?: number;
-            replyToId?: number; metadata?: string;
+            replyToId?: number; metadata?: string; scheduledAt?: string | null;
         },
     ) {
         if (!this.rateLimit(client, this.msgLimiter, 'sendMessage')) return;
-
         const userId = client.data.user.id as number;
         if (!data?.conversationId) return;
         if (!data.content?.trim() && !data.fileUrl) return;
 
         try {
-            const message = await this.convService.saveMessage(userId, data.conversationId, data);
-            this.server.to(`conv_${data.conversationId}`).emit('onMessage', message);
+            const scheduledAt = data.scheduledAt ? new Date(data.scheduledAt) : null;
+            const isScheduled = scheduledAt && scheduledAt > new Date();
 
-            const members = await this.prisma.conversationMember.findMany({
-                where: { conversationId: data.conversationId, userId: { not: userId } },
-                select: { userId: true },
+            const message = await this.convService.saveMessage(userId, data.conversationId, {
+                ...data,
+                scheduledAt: scheduledAt ?? null,
             });
 
-            const bodyText = data.fileUrl
-                ? `📎 ${data.fileName ?? 'Файл'}`
-                : (data.content!.length > 100 ? data.content!.slice(0, 97) + '…' : data.content!);
+            if (isScheduled) {
+                // Only emit back to the sender with a special event (they see their pending message)
+                client.emit('messageScheduled', message);
 
-            for (const m of members) {
-                this.push.sendToUser(m.userId, {
-                    title:    client.data.user.nickname,
-                    body:     bodyText,
-                    senderId: userId,
-                    url:      '/chat',
-                }).catch(() => {});
+                // Schedule delivery to the room
+                const delayMs = scheduledAt.getTime() - Date.now();
+                this.scheduleMessageDelivery(message.id!, data.conversationId, delayMs);
+            } else {
+                // Normal immediate delivery
+                this.server.to(`conv_${data.conversationId}`).emit('onMessage', message);
+
+                const members = await this.prisma.conversationMember.findMany({
+                    where: { conversationId: data.conversationId, userId: { not: userId } },
+                    select: { userId: true },
+                });
+                const bodyText = data.fileUrl
+                    ? `📎 ${data.fileName ?? 'Файл'}`
+                    : (data.content!.length > 100 ? data.content!.slice(0, 97) + '…' : data.content!);
+                for (const m of members) {
+                    this.push.sendToUser(m.userId, {
+                        title: client.data.user.nickname, body: bodyText,
+                        senderId: userId, url: '/chat',
+                    }).catch(() => {});
+                }
             }
         } catch (e: any) {
             client.emit('messageFailed', { error: e.message });
