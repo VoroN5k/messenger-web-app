@@ -20,6 +20,7 @@ import {ChangePasswordDto} from "./dto/changePassword.dto.js";
 import {ForgotPasswordDto, ResetPasswordDto} from "./dto/passwordReset.dto.js";
 import {ResendVerificationDto} from "./dto/resendVerification.dto.js";
 import {DeleteAccountDto} from "./dto/deleteAccount.dto.js";
+import {Disable2FADto, Enable2FADto} from "./dto/twoFactor.dto.js";
 
 @Controller('auth')
 export class AuthController {
@@ -132,7 +133,7 @@ export class AuthController {
         @Body() dto: DeleteAccountDto,
         @Res({ passthrough: true }) res: Response,
     ) {
-        await this.authService.deleteAccount(userId, dto.password);
+        await this.authService.deleteAccount(userId, dto.password, dto.twoFactorCode);
         res.clearCookie('refreshToken', { path: '/' });
         return { message: 'Account deleted successfully' };
     }
@@ -160,6 +161,41 @@ export class AuthController {
         await this.authService.resetPassword(dto.token, dto.newPassword);
         return { message: 'Пароль успішно змінено. Тепер ви можете увійти.' };
     }
+
+    // 2FA endpoints would go here
+    @UseGuards(JwtAuthGuard)
+    @Get('2fa/status')
+    get2FAStatus(@CurrentUser('sub') userId: number) {
+        return this.authService.get2FAStatus(userId);
+    }
+
+    @UseGuards(JwtAuthGuard)
+    @Throttle({ default: { ttl: 60000, limit: 5 } })
+    @Post('2fa/setup')
+    setup2FA(@CurrentUser('sub') userId: number) {
+        return this.authService.setup2FA(userId);
+    }
+
+    @UseGuards(JwtAuthGuard)
+    @Throttle({ default: { ttl: 60000, limit: 10 } })
+    @Post('2fa/enable')
+    enable2FA(
+        @CurrentUser('sub') userId: number,
+        @Body() dto: Enable2FADto,
+    ) {
+        return this.authService.enable2FA(userId, dto.token);
+    }
+
+    @UseGuards(JwtAuthGuard)
+    @Throttle({ default: { ttl: 60000, limit: 5 } })
+    @Post('2fa/disable')
+    disable2FA(
+        @CurrentUser('sub') userId: number,
+        @Body() dto: Disable2FADto,
+    ) {
+        return this.authService.disable2FA(userId, dto.token, dto.password);
+    }
+
 
     private setRefreshCookie(res: Response, token: string) {
         res.cookie('refreshToken', token, {

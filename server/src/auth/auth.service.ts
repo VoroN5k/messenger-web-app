@@ -14,6 +14,8 @@ import { JWTPayload } from './interfaces/jwt-payload.interface.js';
 import { SessionMeta } from './interfaces/session-meta.interface.js';
 import { generateToken, hashToken } from './utils/token.util.js';
 import { EmailService } from './email/email.service.js';
+import { authenticator } from '@otplib/preset-default';
+import * as QRCode from 'qrcode';
 
 @Injectable()
 export class AuthService {
@@ -257,7 +259,7 @@ export class AuthService {
         return { message: 'Session terminated' };
     }
 
-    async deleteAccount(userId: number, password: string): Promise<void> {
+    async deleteAccount(userId: number, password: string, twoFactorCode?: string): Promise<void> {
         const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
 
         const passwordValid = await bcrypt.compare(password, user.password);
@@ -265,8 +267,9 @@ export class AuthService {
             throw new UnauthorizedException('Password incorrect');
         }
 
-        await this.prisma.user.delete({ where: { id: userId } });
+        await this.verify2FAToken(userId, twoFactorCode);
 
+        await this.prisma.user.delete({ where: { id: userId } });
         this.logger.log(`User ${userId} (${user.email}) deleted their account`);
     }
 
@@ -375,7 +378,76 @@ export class AuthService {
             rawRefreshToken: generateToken(),
         };
     }
+
+    async get2FAStatus(userId: number) {
+        const user = await this.prisma.user.findUniqueOrThrow({
+            where: { id: userId },
+            select: { twoFactorEnabled: true },
+        });
+        return { enabled: user.twoFactorEnabled };
+    }
+
+    async setup2FA(userId: number): Promise<{ secret: string; qrCodeDataUrl: string; manualEntry: string}> {
+        const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+
+        const secret = authenticator.generateSecret(20); // 20 байт в base32
+        const otpauthUrl = authenticator.keyuri(user.email, 'Messenger', secret);
+        const qrCodeDataUrl = await QRCode.toDataURL(otpauthUrl, { width: 256, margin: 2 });
+
+        // Зберігаємо secret тимчасово ( 2FA ще не увімкнена ) / Save secret temporarily (2FA not enabled yet)
+        await this.prisma.user.update({
+            where: { id: userId },
+            data:  { twoFactorSecret: secret, twoFactorEnabled: false },
+        });
+
+        return { secret, qrCodeDataUrl, manualEntry: secret}
+    }
+
+    async enable2FA(userId: number, token: string): Promise<void> {
+        const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+        if (!user.twoFactorSecret) throw new BadRequestException('2FA не налаштовано. Спочатку викличте /2fa/setup'); // 2FA not set up. Call /2fa/setup first
+
+        const isValid = authenticator.check(token, user.twoFactorSecret);
+        if (!isValid) throw new BadRequestException('Невірний код. Перевірте час на пристрої'); // Invalid 2FA token
+
+        await this.prisma.user.update({
+            where: { id: userId },
+            data:  { twoFactorEnabled: true },
+        });
+        this.logger.log(`User ${userId} enabled 2FA`);
+    }
+
+    async disable2FA(userId: number, token: string, password: string): Promise<void> {
+        const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+
+        if (!await bcrypt.compare(password, user.password)) {
+            throw new UnauthorizedException('Невірний пароль');
+        }
+        if (user.twoFactorEnabled && user.twoFactorSecret) {
+            const isValid = authenticator.check(token, user.twoFactorSecret);
+            if (!isValid) throw new UnauthorizedException('Невірний код 2FA');
+        }
+
+        await this.prisma.user.update({
+            where: { id: userId },
+            data:  { twoFactorEnabled: false, twoFactorSecret: null },
+        });
+        this.logger.log(`User ${userId} disabled 2FA`);
+    }
+
+    async verify2FAToken(userId: number, token: string | undefined): Promise<void> {
+        const user = await this.prisma.user.findUniqueOrThrow({
+            where: { id: userId },
+            select: { twoFactorEnabled: true, twoFactorSecret: true },
+        });
+        if (!user.twoFactorEnabled) return; // 2FA не увімкнена, пропускаємо перевірку
+        if(!token) throw new UnauthorizedException('Потрібен код 2FA'); // 2FA code required
+        const isValid = authenticator.check(token, user.twoFactorSecret!);
+        if (!isValid) throw new UnauthorizedException('Невірний код 2FA'); // Invalid 2FA code
+    }
+
 }
+
 
 // Utility
 function sleep(ms: number): Promise<void> {

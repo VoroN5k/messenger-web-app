@@ -60,6 +60,9 @@ model User {
   privateKeySalt String?
   forwardedMessages Message[] @relation("MessageForwardUser")
 
+  twoFactorSecret String?
+  twoFactorEnabled Boolean @default(false)
+
   // Sender Key relations
   ownedSenderKeys     GroupSenderKey[] @relation("SenderKeyOwner")
   receivedSenderKeys  GroupSenderKey[] @relation("SenderKeyRecipient")
