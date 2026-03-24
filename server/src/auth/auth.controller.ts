@@ -90,8 +90,17 @@ export class AuthController {
     }
 
     @Get('verify-email')
-    async verify(@Query('token') token: string) {
-        return this.authService.verifyEmail(token);
+    async verify(
+        @Query('token') token: string,
+        @Res() res: Response,
+    ) {
+        const clientUrl = process.env.CLIENT_URL ?? 'http://localhost:3000';
+        try {
+            await this.authService.verifyEmail(token);
+            return res.redirect(`${clientUrl}/auth/setup-recovery?verified=true`);
+        } catch {
+            return res.redirect(`${clientUrl}/auth/verify-pending?error=invalid-token`);
+        }
     }
 
     @Throttle({ default: { ttl: 60000, limit: 3 } })
