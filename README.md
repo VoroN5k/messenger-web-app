@@ -48,3 +48,7 @@ Outgoing messages appear on the screen instantly after the user clicks "Send", b
 ### Prerequisites
 - Node.js (v18+)
 - PostgreSQL (or Docker for spinning up a local database)
+
+## Links
+
+[![Hypercommit](https://img.shields.io/badge/Hypercommit-DB2475)](https://hypercommit.com/messenger-web-app)
