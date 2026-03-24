@@ -255,14 +255,87 @@ async function decryptAndImport(
             'pkcs8',
             rawKey,
             { name: 'X25519' },
-            false, // non-extractable
+            true, // extractable: true — потрібно для експорту при зміні PIN; без цього setupRecovery не зможе отримати rawKey для повторного шифрування
             ['deriveKey', 'deriveBits'],
         );
     } catch (err) {
-
         console.warn('[E2E] Cannot decrypt private key (vault secret missing?):', err);
         return null;
     }
+}
+
+// Робота з PBKDF2
+export async function deriveKeyFromPin(
+    pin: string,
+    salt: Uint8Array,
+): Promise<CryptoKey> {
+    const keyMaterial = await crypto.subtle.importKey(
+        'raw',
+        new TextEncoder().encode(pin),
+        'PBKDF2',
+        false,
+        ['deriveKey'],
+    );
+    return crypto.subtle.deriveKey(
+        { name: 'PBKDF2',
+            salt: salt as Uint8Array<ArrayBuffer>,
+            iterations: 600_000,
+            hash: 'SHA-256'
+        },
+        keyMaterial,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt', 'decrypt'],
+    );
+}
+
+export async function encryptPrivateKeyWithPin(
+    privateKey: CryptoKey,
+    pin: string,
+): Promise<{ encryptedBlob: string; salt: string; }> {
+    const salt       = crypto.getRandomValues(new Uint8Array(16));
+    const derivedKey = await deriveKeyFromPin(pin, salt);
+    const rawPkcs8   = await crypto.subtle.exportKey('pkcs8', privateKey);
+
+    const iv        = crypto.getRandomValues(new Uint8Array(12));
+    const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, derivedKey, rawPkcs8);
+
+    const blob = new Uint8Array(12 + encrypted.byteLength);
+    blob.set(iv, 0);
+    blob.set(new Uint8Array(encrypted), 12);
+
+    return {
+        encryptedBlob: bufToBase64url(blob.buffer as ArrayBuffer),
+        salt:          bufToBase64url(salt.buffer as ArrayBuffer),
+    };
+}
+
+export async function decryptPrivateKeyWithPin(
+    encryptedBlob: string,
+    salt: string,
+    pin: string,
+): Promise<CryptoKey> {
+    const saltBytes  = new Uint8Array(base64urlToBuf(salt));
+    const derivedKey = await deriveKeyFromPin(pin, saltBytes);
+
+    const blobBytes  = new Uint8Array(base64urlToBuf(encryptedBlob));
+    const iv         = blobBytes.slice(0, 12);
+    const ciphertext = blobBytes.slice(12);
+
+    const rawKey = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv },
+        derivedKey,
+        ciphertext,
+    );
+
+    // extractable: true — потрібно щоб setupRecovery міг повторно експортувати при зміні PIN
+    return crypto.subtle.importKey(
+        'pkcs8',
+        rawKey,
+        { name: 'X25519' },
+        true,
+        ['deriveKey', 'deriveBits'],
+    );
 }
 
 // Helpers
@@ -278,3 +351,4 @@ function base64urlToBuf(b64: string): ArrayBuffer {
     for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
     return buf.buffer as ArrayBuffer;
 }
+
