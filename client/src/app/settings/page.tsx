@@ -140,6 +140,7 @@ export default function SettingsPage() {
                 {/* Password */}
                 <Section title="Безпека" icon={<Lock size={15} />}>
                     <ChangePasswordForm />
+                    <ResetRecoveryPinRow />
                 </Section>
 
                 {/* Two-factor authentication */}
@@ -404,12 +405,44 @@ function DeleteAccountSection() {
     );
 }
 
+function ResetRecoveryPinRow() {
+    return (
+        <div className="px-5 py-3.5 flex items-center justify-between border-t border-slate-100 dark:border-slate-700">
+            <div>
+                <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Recovery PIN</p>
+                <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                    Скинути PIN для відновлення зашифрованих повідомлень
+                </p>
+            </div>
+            <a
+                href="/auth/setup-recovery?reset=true"
+                className="flex items-center gap-1.5 text-xs font-semibold text-violet-600
+                           border border-violet-200 dark:border-violet-800
+                           hover:bg-violet-50 dark:hover:bg-violet-900/20
+                           px-3 py-1.5 rounded-lg transition-all"
+            >
+                <KeyRound size={12} />
+                Скинути
+            </a>
+        </div>
+    );
+}
+
+// Drop-in replacement for DeleteAccountModal in client/src/app/settings/page.tsx
+// Replace the entire DeleteAccountModal function with this one.
+
 function DeleteAccountModal({ onClose }: { onClose: () => void }) {
-    const [step,     setStep]     = useState<1 | 2>(1);
-    const [password, setPassword] = useState('');
-    const [showPass, setShowPass] = useState(false);
-    const [loading,  setLoading]  = useState(false);
-    const [error,    setError]    = useState('');
+    const [step,       setStep]       = useState<1 | 2>(1);
+    const [password,   setPassword]   = useState('');
+    const [showPass,   setShowPass]   = useState(false);
+    const [loading,    setLoading]    = useState(false);
+    const [error,      setError]      = useState('');
+
+    // 2FA
+    const [twoFAEnabled, setTwoFAEnabled] = useState(false);
+    const [twoFACode,    setTwoFACode]    = useState('');
+    const [checkingTwoFA, setCheckingTwoFA] = useState(false);
+
     const router = useRouter();
 
     // Close on Escape
@@ -419,12 +452,29 @@ function DeleteAccountModal({ onClose }: { onClose: () => void }) {
         return () => document.removeEventListener('keydown', h);
     }, [onClose]);
 
+    // Check 2FA status when entering step 2
+    useEffect(() => {
+        if (step !== 2) return;
+        setCheckingTwoFA(true);
+        api.get('/auth/2fa/status')
+            .then(r => setTwoFAEnabled(r.data.enabled))
+            .catch(() => {})
+            .finally(() => setCheckingTwoFA(false));
+    }, [step]);
+
     const handleDelete = async () => {
         if (!password) { setError('Введіть пароль'); return; }
+        if (twoFAEnabled && twoFACode.length !== 6) { setError('Введіть 6-значний код 2FA'); return; }
+
         setLoading(true);
         setError('');
         try {
-            await api.delete('/auth/account', { data: { password } });
+            await api.delete('/auth/account', {
+                data: {
+                    password,
+                    ...(twoFAEnabled && twoFACode ? { twoFactorCode: twoFACode } : {}),
+                },
+            });
             useAuthStore.getState().logout();
             localStorage.removeItem('auth-storage');
             router.push('/auth/register');
@@ -481,17 +531,19 @@ function DeleteAccountModal({ onClose }: { onClose: () => void }) {
                         </div>
                     </div>
                 ) : (
-                    /* ── Step 2: Password confirm ── */
-                    <div className="p-5">
-                        <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">
+                    /* ── Step 2: Password (+ 2FA if enabled) ── */
+                    <div className="p-5 space-y-4">
+                        <p className="text-sm text-slate-600 dark:text-slate-400">
                             Щоб підтвердити видалення, введіть ваш пароль:
                         </p>
-                        <div className="relative mb-4">
+
+                        {/* Password */}
+                        <div className="relative">
                             <input
                                 type={showPass ? 'text' : 'password'}
                                 value={password}
                                 onChange={e => { setPassword(e.target.value); setError(''); }}
-                                onKeyDown={e => { if (e.key === 'Enter') handleDelete(); }}
+                                onKeyDown={e => { if (e.key === 'Enter' && !twoFAEnabled) handleDelete(); }}
                                 placeholder="Ваш пароль"
                                 autoFocus
                                 className={`w-full px-4 py-3 pr-10 rounded-xl border text-sm outline-none transition-all
@@ -505,17 +557,49 @@ function DeleteAccountModal({ onClose }: { onClose: () => void }) {
                                 {showPass ? <EyeOff size={15} /> : <Eye size={15} />}
                             </button>
                         </div>
-                        {error && (
-                            <p className="text-xs text-red-500 mb-4">{error}</p>
+
+                        {/* 2FA code (shown only if enabled) */}
+                        {checkingTwoFA && (
+                            <div className="flex items-center gap-2 text-xs text-slate-400">
+                                <Loader2 size={12} className="animate-spin" />
+                                Перевірка налаштувань безпеки...
+                            </div>
                         )}
+
+                        {!checkingTwoFA && twoFAEnabled && (
+                            <div>
+                                <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">
+                                    Код з Google Authenticator
+                                </label>
+                                <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    maxLength={6}
+                                    value={twoFACode}
+                                    onChange={e => { setTwoFACode(e.target.value.replace(/\D/g, '').slice(0, 6)); setError(''); }}
+                                    onKeyDown={e => { if (e.key === 'Enter') handleDelete(); }}
+                                    placeholder="000000"
+                                    className={`w-full px-4 py-2.5 rounded-xl border text-sm text-center font-mono tracking-[0.3em] outline-none transition-all
+                                        dark:bg-slate-700 dark:text-slate-200 dark:placeholder-slate-500
+                                        ${error
+                                        ? 'border-red-400 focus:ring-2 focus:ring-red-100'
+                                        : 'border-slate-200 dark:border-slate-600 focus:ring-2 focus:ring-red-200 focus:border-red-400'}`}
+                                />
+                            </div>
+                        )}
+
+                        {error && (
+                            <p className="text-xs text-red-500">{error}</p>
+                        )}
+
                         <div className="flex gap-2">
-                            <button onClick={() => setStep(1)}
+                            <button onClick={() => { setStep(1); setError(''); setTwoFACode(''); }}
                                     className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600 text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer transition-colors">
                                 Назад
                             </button>
                             <button
                                 onClick={handleDelete}
-                                disabled={loading || !password}
+                                disabled={loading || !password || (twoFAEnabled && twoFACode.length !== 6) || checkingTwoFA}
                                 className="flex-1 py-2.5 rounded-xl bg-red-500 hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed
                                            text-white text-sm font-semibold cursor-pointer transition-colors flex items-center justify-center gap-2"
                             >

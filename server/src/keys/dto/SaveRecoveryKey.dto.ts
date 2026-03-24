@@ -1,4 +1,4 @@
-import {IsNotEmpty, IsString} from "class-validator";
+import {IsBoolean, IsNotEmpty, IsOptional, IsString, Length} from "class-validator";
 
 export class SaveRecoveryKeyDto {
     @IsString() @IsNotEmpty() encryptedBlob: string;
