@@ -27,7 +27,13 @@ export class KeysController {
         @CurrentUser('sub') userId: number,
         @Body() dto: SaveRecoveryKeyDto,
     ) {
-        return this.keysService.saveRecoveryKey(userId, dto.encryptedBlob, dto.salt);
+        return this.keysService.saveRecoveryKey(
+            userId,
+            dto.encryptedBlob,
+            dto.salt,
+            dto.isReset ?? false,
+            dto.twoFactorCode,
+        );
     }
 
     @Get('recovery/me')

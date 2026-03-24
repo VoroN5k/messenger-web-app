@@ -225,10 +225,18 @@ export function useE2E() {
         }
     }, []);
 
-    const setupRecovery = useCallback(async (pin: string): Promise<void> => {
+    const setupRecovery = useCallback(async (
+        pin: string,
+        options?: { isReset?: boolean; twoFactorCode?: string }
+    ): Promise<void> => {
         if (!privateKey || !initialized) throw new Error('E2E not initialized');
         const { encryptedBlob, salt } = await encryptPrivateKeyWithPin(privateKey, pin);
-        await api.post('/keys/recovery', { encryptedBlob, salt });
+        await api.post('/keys/recovery', {
+            encryptedBlob,
+            salt,
+            isReset:      options?.isReset      ?? false,
+            twoFactorCode: options?.twoFactorCode,
+        });
         broadcastStatus('ready');
     }, []);
 

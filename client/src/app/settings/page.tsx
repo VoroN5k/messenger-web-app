@@ -15,8 +15,9 @@ import {
     Loader2, KeyRound, Languages,
     Monitor, Smartphone, Globe, Laptop,
     LogOut, Trash2, AlertTriangle, X,
-    Wifi, Shield, Clock, RefreshCw,
+    Wifi, Shield, Clock, RefreshCw, ShieldCheck,
 } from 'lucide-react';
+import {TwoFactorSection} from "@/src/components/settings/TwoFactorSection";
 
 type ThemeOption = 'light' | 'dark';
 
@@ -139,6 +140,11 @@ export default function SettingsPage() {
                 {/* Password */}
                 <Section title="Безпека" icon={<Lock size={15} />}>
                     <ChangePasswordForm />
+                </Section>
+
+                {/* Two-factor authentication */}
+                <Section title="Двофакторна аутентифікація" icon={<ShieldCheck size={15} />}>
+                    <TwoFactorSection />
                 </Section>
 
                 {/* Active Devices */}

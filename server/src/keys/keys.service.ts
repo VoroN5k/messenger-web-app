@@ -1,4 +1,4 @@
-import {Injectable, NotFoundException} from "@nestjs/common";
+import {Injectable, NotFoundException, UnauthorizedException} from "@nestjs/common";
 import {PrismaService} from "../prisma/prisma.service.js";
 
 @Injectable()
@@ -20,13 +20,30 @@ export class KeysService {
         return { userId: k.userId, publicKey: k.publicKey, updatedAt: k.updatedAt }
     }
 
-    async saveRecoveryKey(userId: number, encryptedBlob: string, salt: string) {
+    async saveRecoveryKey(
+        userId: number,
+        encryptedBlob: string,
+        salt: string,
+        isReset: boolean,
+        twoFactorCode?: string
+    ) {
+        if (isReset) {
+            const user = await this.prisma.user.findUniqueOrThrow({
+                where:  { id: userId },
+                select: { twoFactorEnabled: true, twoFactorSecret: true },
+            });
+            if (user.twoFactorEnabled) {
+                if (!twoFactorCode) throw new UnauthorizedException('Потрібен код 2FA');
+                const { authenticator } = await import('@otplib/preset-default');
+                if (!authenticator.check(twoFactorCode, user.twoFactorSecret!)) {
+                    throw new UnauthorizedException('Невірний код 2FA');
+                }
+            }
+        }
+
         return this.prisma.user.update({
             where: { id: userId },
-            data: {
-                encryptedPrivateKey: encryptedBlob,
-                privateKeySalt: salt,
-            },
+            data:  { encryptedPrivateKey: encryptedBlob, privateKeySalt: salt },
             select: { id: true },
         });
     }
