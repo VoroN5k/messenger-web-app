@@ -56,6 +56,8 @@ model User {
   sentFriendRequests Friendship[] @relation("FriendshipSender")
   receivedFriendRequests Friendship[] @relation("FriendshipReceiver")
   publicKey UserPublicKey?
+  encryptedPrivateKey String? @db.Text
+  privateKeySalt String?
   forwardedMessages Message[] @relation("MessageForwardUser")
 
   // Sender Key relations

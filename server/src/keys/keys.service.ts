@@ -19,4 +19,37 @@ export class KeysService {
         // return only public key
         return { userId: k.userId, publicKey: k.publicKey, updatedAt: k.updatedAt }
     }
+
+    async saveRecoveryKey(userId: number, encryptedBlob: string, salt: string) {
+        return this.prisma.user.update({
+            where: { id: userId },
+            data: {
+                encryptedPrivateKey: encryptedBlob,
+                privateKeySalt: salt,
+            },
+            select: { id: true },
+        });
+    }
+
+    async getRecoveryKey(userId: number) {
+        const user = await this.prisma.user.findUnique({
+            where: { id: userId },
+            select: { encryptedPrivateKey: true, privateKeySalt: true },
+        });
+        if(!user?.encryptedPrivateKey) throw new NotFoundException('No recovery key found');
+
+        return {
+            encryptedBlob: user.encryptedPrivateKey,
+            salt: user.privateKeySalt!
+        };
+    }
+
+    async hasRecoveryKey(userId: number): Promise<boolean> {
+        const user = await this.prisma.user.findUnique({
+            where: { id: userId },
+            select: { encryptedPrivateKey: true },
+        });
+
+        return !!user?.encryptedPrivateKey;
+    }
 }
