@@ -21,8 +21,7 @@ export function proxy(request: NextRequest) {
         pathname.startsWith("/chat") ||
         pathname.startsWith("/profile") ||
         pathname.startsWith("/settings") ||
-        pathname.startsWith("/auth/setup-recovery") ||
-        pathname === "/";
+        pathname.startsWith("/auth/setup-recovery");
 
     // Scenario A: User without token is trying to access protected route
     if ( isProtectedRoute && !refreshToken ) {
@@ -33,7 +32,7 @@ export function proxy(request: NextRequest) {
     }
 
     // Scenario B: User with token is trying to access auth route
-    if ((isAuthRoute || pathname === "/") && refreshToken ) {
+    if (isAuthRoute && refreshToken) {
         return NextResponse.redirect(new URL('/chat', request.url));
     }
 
