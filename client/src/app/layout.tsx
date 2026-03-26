@@ -5,6 +5,7 @@ import { NextIntlClientProvider } from 'next-intl';
 import { getMessages, getLocale } from 'next-intl/server';
 import { ThemeProvider } from '@/src/context/ThemeProvider';
 import { SocketProvider } from '@/src/context/SocketContext';
+import AuthSync from '@/src/app/auth/AuthSync';
 
 const inter = Inter({ subsets: ['latin', 'cyrillic'] });
 
@@ -12,6 +13,7 @@ export const metadata: Metadata = {
     title: 'Мій Месенджер',
     description: 'Найкращий чат на Next.js',
 };
+
 
 export default async function RootLayout({
                                              children,
@@ -42,6 +44,7 @@ export default async function RootLayout({
         </head>
         <body className={inter.className}>
         <NextIntlClientProvider locale={locale} messages={messages}>
+            <AuthSync />
             <ThemeProvider>
                 <SocketProvider>
                     {children}

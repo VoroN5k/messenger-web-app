@@ -20,10 +20,23 @@ api.interceptors.request.use((config) => {
 
 let refreshPromise: Promise<string | null> | null = null;
 
+
+
 export async function refreshAccessToken(): Promise<string | null> {
     // If a refresh is already in-flight, return the same promise
     if (refreshPromise) return refreshPromise;
 
+    if (typeof navigator !== 'undefined' && navigator.locks) {
+        // Use a lock to ensure only one refresh at a time across tabs
+        return navigator.locks.request('refresh_token_lock', async () => {
+
+            return executeRefresh();
+        })
+    }
+    return executeRefresh();
+}
+
+async function executeRefresh(): Promise<string | null> {
     refreshPromise = (async () => {
         try {
             const { data } = await axios.post(
@@ -32,21 +45,22 @@ export async function refreshAccessToken(): Promise<string | null> {
                 { withCredentials: true },
             );
             const newToken: string = data.accessToken;
-            useAuthStore.getState().setAuth(useAuthStore.getState().user, newToken);
+            const currentUser = useAuthStore.getState().user;
+
+            if (!currentUser) throw new Error("Cross-tab sync error");
+
+            useAuthStore.getState().setAuth(currentUser, newToken);
             return newToken;
         } catch {
-            // Refresh failed — clear auth and redirect to login
             useAuthStore.getState().logout();
             if (typeof window !== 'undefined' && window.location.pathname !== '/auth/login') {
                 window.location.href = '/auth/login';
             }
             return null;
         } finally {
-            // Always clear the promise so the next genuine refresh can proceed
             refreshPromise = null;
         }
     })();
-
     return refreshPromise;
 }
 
