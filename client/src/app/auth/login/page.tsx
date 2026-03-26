@@ -210,6 +210,8 @@ export default function LoginPage() {
                 email: decoded.email, role: decoded.role, avatarUrl: decoded.avatarUrl,
             };
             setAuth(user, token);
+
+            sessionStorage.setItem('freshLogin', 'true');
             window.location.href = '/chat';
         } catch (e: any) {
             const msg = e.response?.data?.message || 'Помилка входу';
@@ -243,7 +245,7 @@ export default function LoginPage() {
                         background: 'linear-gradient(135deg, #e2d9f3 0%, #a78bfa 100%)',
                         WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
                     }}>
-            CIPHER<span style={{ WebkitTextFillColor: 'rgba(139,92,246,0.6)' }}>MSG</span>
+            VESPER<span style={{ WebkitTextFillColor: 'rgba(139,92,246,0.6)' }}>MSG</span>
           </span>
                 </Link>
 

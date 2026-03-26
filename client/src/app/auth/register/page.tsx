@@ -312,7 +312,7 @@ export default function RegisterPage() {
                         background: 'linear-gradient(135deg, #e2d9f3 0%, #a78bfa 100%)',
                         WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
                     }}>
-            CIPHER<span style={{ WebkitTextFillColor: 'rgba(139,92,246,0.6)' }}>MSG</span>
+            VESPER<span style={{ WebkitTextFillColor: 'rgba(139,92,246,0.6)' }}>MSG</span>
           </span>
                 </Link>
 

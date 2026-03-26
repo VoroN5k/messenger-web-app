@@ -49,13 +49,6 @@ export default function ChatPage() {
         }
     }, []);
 
-    useEffect(() => {
-        if (user && !user.isVerified) {
-            // Якщо залогінений, але пошта не підтверджена - викидаємо назад
-            window.location.href = `/auth/verify-pending?email=${user.email}`;
-        }
-    }, [user]);
-
     const {
         conversations, isLoading: convsLoading,
         fetchConversations, markConversationRead,

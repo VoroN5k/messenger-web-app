@@ -4,9 +4,13 @@ import { useState, useEffect } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import api from '@/src/lib/axios';
-import { Loader2, KeyRound, Eye, EyeOff, CheckCircle, XCircle, ArrowLeft } from 'lucide-react';
+import { Loader2, KeyRound, Eye, EyeOff, CheckCircle, XCircle, ArrowLeft, AlertTriangle } from 'lucide-react';
+import { GridLines, BackgroundOrbs, NoiseOverlay } from "@/src/components/ui/BackgroundFx";
+import { CipherInput } from "@/src/components/ui/CipherInput";
 
-function PasswordStrength({ password }: { password: string }) {
+// ── Індикатор надійності пароля ──
+function CyberPasswordStrength({ password }: { password: string }) {
+    if (!password) return null;
     const score = [
         password.length >= 8,
         /[A-Z]/.test(password),
@@ -14,24 +18,31 @@ function PasswordStrength({ password }: { password: string }) {
         /[^A-Za-z0-9]/.test(password),
     ].filter(Boolean).length;
 
-    const levels = [
-        { label: 'Дуже слабкий', color: 'bg-red-500',    text: 'text-red-500'    },
-        { label: 'Слабкий',      color: 'bg-orange-400', text: 'text-orange-500' },
-        { label: 'Середній',     color: 'bg-yellow-400', text: 'text-yellow-500' },
-        { label: 'Сильний',      color: 'bg-emerald-400',text: 'text-emerald-500'},
-        { label: 'Дуже сильний', color: 'bg-emerald-500',text: 'text-emerald-600'},
+    const labels = ['WEAK', 'FAIR', 'GOOD', 'STRONG'];
+    const colors = [
+        'rgba(239,68,68,0.7)',
+        'rgba(245,158,11,0.7)',
+        'rgba(99,179,237,0.7)',
+        'rgba(52,211,153,0.7)',
     ];
-    const level = levels[score] ?? levels[0];
+    const color = colors[score - 1] ?? colors[0];
 
     return (
         <div className="space-y-1.5 mt-2">
             <div className="flex gap-1">
                 {[0,1,2,3].map(i => (
-                    <div key={i} className={`h-1 flex-1 rounded-full transition-all duration-300
-                        ${i < score ? level.color : 'bg-slate-200'}`} />
+                    <div key={i} className="h-0.5 flex-1 rounded-full transition-all duration-300"
+                         style={{ background: i < score ? color : 'rgba(109,40,217,0.15)' }} />
                 ))}
             </div>
-            <p className={`text-xs font-medium ${level.text}`}>{level.label}</p>
+            <div className="flex items-center justify-between">
+                <span className="text-[9px] font-mono tracking-widest" style={{ color }}>
+                    ENTROPY_{labels[score - 1] ?? 'ZERO'}
+                </span>
+                <span className="text-[9px] font-mono" style={{ color: 'rgba(100,116,139,0.4)' }}>
+                    {password.length} chars
+                </span>
+            </div>
         </div>
     );
 }
@@ -48,8 +59,10 @@ export default function ResetPasswordPage() {
     const [loading,   setLoading]   = useState(false);
     const [success,   setSuccess]   = useState(false);
     const [error,     setError]     = useState('');
+    const [mounted,   setMounted]   = useState(false);
 
-    // Redirect to login after successful reset
+    useEffect(() => { setTimeout(() => setMounted(true), 50); }, []);
+
     useEffect(() => {
         if (!success) return;
         const t = setTimeout(() => router.push('/auth/login'), 3000);
@@ -57,9 +70,9 @@ export default function ResetPasswordPage() {
     }, [success, router]);
 
     const validate = () => {
-        if (!token)                  return 'Посилання недійсне або застаріле';
-        if (password.length < 6)     return 'Пароль — мінімум 6 символів';
-        if (password !== confirm)    return 'Паролі не збігаються';
+        if (!token) return 'Токен авторизації відсутній або застарілий.';
+        if (password.length < 6) return 'Пароль повинен містити мінімум 6 символів.';
+        if (password !== confirm) return 'Криптографічні хеші не збігаються.';
         return '';
     };
 
@@ -68,170 +81,158 @@ export default function ResetPasswordPage() {
         const err = validate();
         if (err) { setError(err); return; }
 
-        setLoading(true);
-        setError('');
+        setLoading(true); setError('');
         try {
             await api.post('/auth/reset-password', { token, newPassword: password });
             setSuccess(true);
         } catch (err: any) {
             const msg = err.response?.data?.message;
-            setError(Array.isArray(msg) ? msg[0] : (msg ?? 'Помилка. Спробуйте ще раз.'));
+            setError(Array.isArray(msg) ? msg[0] : (msg ?? 'Помилка виконання операції.'));
         } finally {
             setLoading(false);
         }
     };
 
-    // ── Invalid / missing token ───────────────────────────────────────────────
-    if (!token) {
+    const EyeIcon = ({ show }: { show: boolean }) => show
+        ? <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+        : <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>;
+
+    // ── Стан: Токен відсутній ──
+    if (!token && mounted) {
         return (
-            <main className="min-h-screen w-full flex items-center justify-center bg-gray-50 p-4">
-                <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-100 max-w-md w-full text-center">
-                    <div className="flex justify-center mb-4">
-                        <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center">
-                            <XCircle className="text-red-500" size={32} />
-                        </div>
-                    </div>
-                    <h1 className="text-xl font-bold text-gray-900 mb-2">Недійсне посилання</h1>
-                    <p className="text-gray-500 text-sm mb-6">
-                        Посилання для відновлення паролю недійсне або термін його дії минув.
-                        Спробуйте запросити нове.
-                    </p>
-                    <Link
-                        href="/auth/forgot-password"
-                        className="inline-flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition-colors"
-                    >
-                        Запросити новий лист
+            <div className="min-h-screen flex items-center justify-center relative overflow-hidden" style={{ background: '#06040f', fontFamily: "'JetBrains Mono', monospace" }}>
+                <GridLines /><NoiseOverlay />
+                <div className="relative z-10 w-full max-w-md bg-[#0a0714] border border-red-500/30 p-8 rounded-2xl text-center shadow-[0_0_50px_rgba(239,68,68,0.1)]">
+                    <XCircle className="text-red-500 mx-auto mb-4 drop-shadow-[0_0_10px_rgba(239,68,68,0.5)]" size={40} />
+                    <h1 className="text-xl font-bold text-white mb-2 tracking-wide">[ERR_INVALID_TOKEN]</h1>
+                    <p className="text-xs text-slate-400 mb-6 leading-relaxed">Посилання для відновлення паролю недійсне, пошкоджене або термін його дії минув.</p>
+                    <Link href="/auth/forgot-password" className="inline-flex items-center justify-center w-full gap-2 py-3 rounded-xl border border-red-500/30 bg-red-500/10 text-red-400 text-xs uppercase tracking-widest hover:bg-red-500/20 transition-all">
+                        Запросити новий токен
                     </Link>
                 </div>
-            </main>
+            </div>
         );
     }
 
     return (
-        <main className="min-h-screen w-full flex flex-col items-center justify-center bg-gray-50 p-4">
-            <div className="w-full max-w-md">
-                <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-100">
+        <div className="min-h-screen flex relative overflow-hidden"
+             style={{ background: 'linear-gradient(160deg, #06040f 0%, #0a0714 50%, #080c1a 100%)', fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
+            <BackgroundOrbs /><GridLines /><NoiseOverlay />
 
-                    {success ? (
-                        /* ── Success ── */
-                        <div className="text-center">
-                            <div className="flex justify-center mb-5">
-                                <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center">
-                                    <CheckCircle className="text-emerald-500" size={32} />
-                                </div>
-                            </div>
-                            <h1 className="text-2xl font-bold text-gray-900 mb-2">Пароль змінено!</h1>
-                            <p className="text-gray-500 text-sm mb-6">
-                                Ваш пароль успішно оновлено. Зараз вас перенаправлять на сторінку входу...
-                            </p>
-                            <Link
-                                href="/auth/login"
-                                className="inline-flex items-center gap-2 text-sm text-violet-600 font-semibold hover:underline"
-                            >
-                                <ArrowLeft size={14} />
-                                Увійти зараз
-                            </Link>
+            <div className="flex-1 flex items-center justify-center relative z-10 px-6 py-12">
+                <div className="w-full max-w-md transition-all duration-700"
+                     style={{ opacity: mounted ? 1 : 0, transform: mounted ? 'translateY(0)' : 'translateY(20px)' }}>
+
+                    <div className="flex justify-center mb-8">
+                        <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-violet-500/20 border border-violet-500/40 shadow-[0_0_15px_rgba(109,40,217,0.4)]">
+                            <KeyRound className="text-violet-300" size={20} />
                         </div>
-                    ) : (
-                        /* ── Form ── */
-                        <>
-                            <div className="mb-7">
-                                <div className="w-12 h-12 rounded-xl bg-violet-100 flex items-center justify-center mb-4">
-                                    <KeyRound className="text-violet-600" size={22} />
-                                </div>
-                                <h1 className="text-2xl font-bold text-gray-900">Новий пароль</h1>
-                                <p className="text-gray-500 text-sm mt-1.5">
-                                    Введіть новий пароль для вашого акаунту.
-                                </p>
-                            </div>
+                    </div>
 
-                            <form onSubmit={handleSubmit} className="space-y-4">
-                                {/* New password */}
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <div className="relative rounded-2xl overflow-hidden" style={{
+                        background: 'rgba(10,7,25,0.82)',
+                        border: '1px solid rgba(109,40,217,0.18)',
+                        backdropFilter: 'blur(24px)',
+                        boxShadow: '0 0 60px rgba(109,40,217,0.08)',
+                    }}>
+                        <div className="absolute top-0 left-12 right-12 h-px" style={{ background: 'linear-gradient(90deg, transparent, rgba(139,92,246,0.5), transparent)' }} />
+
+                        {success ? (
+                            /* ── Success ── */
+                            <div className="p-8 text-center animate-in fade-in duration-500">
+                                <div className="flex justify-center mb-5">
+                                    <div className="w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center shadow-[0_0_20px_rgba(16,185,129,0.2)]">
+                                        <CheckCircle className="text-emerald-400" size={32} />
+                                    </div>
+                                </div>
+                                <h1 className="text-2xl font-bold mb-2 text-white">Ключ оновлено</h1>
+                                <p className="text-xs text-slate-400 mb-6">Ваші облікові дані успішно змінено. Ініціалізуємо перехід...</p>
+                                <div className="w-full bg-slate-800/50 rounded-full h-1 mb-2 overflow-hidden">
+                                    <div className="bg-emerald-500 h-full animate-[progress_3s_ease-in-out_forwards]" />
+                                </div>
+                                <p className="text-[10px] text-emerald-500/50 uppercase tracking-widest">Redirecting</p>
+                            </div>
+                        ) : (
+                            /* ── Form ── */
+                            <>
+                                <div className="px-8 pt-8 pb-5 border-b border-violet-500/10">
+                                    <div className="text-[10px] tracking-[0.3em] uppercase mb-2 text-violet-400/60">
+                                        // set new credentials
+                                    </div>
+                                    <h1 className="text-2xl font-bold" style={{ background: 'linear-gradient(135deg, #f1f5f9 0%, #c4b5fd 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
                                         Новий пароль
-                                    </label>
-                                    <div className="relative">
-                                        <input
+                                    </h1>
+                                </div>
+
+                                <form onSubmit={handleSubmit} className="px-8 py-6 space-y-5">
+                                    <div>
+                                        <CipherInput
+                                            label="Новий пароль / Ключ"
                                             type={showPass ? 'text' : 'password'}
                                             value={password}
                                             onChange={e => { setPassword(e.target.value); setError(''); }}
-                                            placeholder="мінімум 6 символів"
-                                            autoFocus
-                                            autoComplete="new-password"
-                                            className="w-full px-4 py-3 pr-10 rounded-xl border border-gray-200 text-sm outline-none
-                                                       focus:ring-2 focus:ring-violet-200 focus:border-violet-400 transition-all"
+                                            placeholder="Мінімум 6 символів"
+                                            rightSlot={
+                                                <button type="button" onClick={() => setShowPass(s => !s)} className="transition-colors text-slate-400 hover:text-violet-400">
+                                                    <EyeIcon show={showPass} />
+                                                </button>
+                                            }
                                         />
-                                        <button type="button" onClick={() => setShowPass(s => !s)}
-                                                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer">
-                                            {showPass ? <EyeOff size={15} /> : <Eye size={15} />}
-                                        </button>
+                                        <CyberPasswordStrength password={password} />
                                     </div>
-                                    {password && <PasswordStrength password={password} />}
-                                </div>
 
-                                {/* Confirm */}
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                                        Підтвердження паролю
-                                    </label>
-                                    <div className="relative">
-                                        <input
-                                            type={showConf ? 'text' : 'password'}
-                                            value={confirm}
-                                            onChange={e => { setConfirm(e.target.value); setError(''); }}
-                                            placeholder="повторіть пароль"
-                                            autoComplete="new-password"
-                                            className={`w-full px-4 py-3 pr-10 rounded-xl border text-sm outline-none transition-all
-                                                ${confirm && confirm !== password
-                                                ? 'border-red-400 focus:ring-2 focus:ring-red-100'
-                                                : 'border-gray-200 focus:ring-2 focus:ring-violet-200 focus:border-violet-400'
-                                            }`}
-                                        />
-                                        <button type="button" onClick={() => setShowConf(s => !s)}
-                                                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer">
-                                            {showConf ? <EyeOff size={15} /> : <Eye size={15} />}
-                                        </button>
-                                    </div>
-                                    {confirm && confirm !== password && (
-                                        <p className="text-xs text-red-500 mt-1">Паролі не збігаються</p>
+                                    <CipherInput
+                                        label="Підтвердження"
+                                        type={showConf ? 'text' : 'password'}
+                                        value={confirm}
+                                        onChange={e => { setConfirm(e.target.value); setError(''); }}
+                                        placeholder="Повторіть пароль"
+                                        rightSlot={
+                                            <button type="button" onClick={() => setShowConf(s => !s)} className="transition-colors text-slate-400 hover:text-violet-400">
+                                                <EyeIcon show={showConf} />
+                                            </button>
+                                        }
+                                    />
+
+                                    {error && (
+                                        <div className="flex items-start gap-2.5 rounded-lg px-4 py-3 bg-red-500/10 border border-red-500/20">
+                                            <AlertTriangle size={13} className="text-red-400 shrink-0 mt-0.5" />
+                                            <p className="text-[11px] text-red-400">{error}</p>
+                                        </div>
                                     )}
-                                </div>
 
-                                {/* Error */}
-                                {error && (
-                                    <div className="flex items-start gap-2 bg-red-50 border border-red-100 rounded-xl px-3 py-2.5">
-                                        <XCircle size={14} className="text-red-500 shrink-0 mt-0.5" />
-                                        <p className="text-sm text-red-600">{error}</p>
-                                    </div>
-                                )}
+                                    <button
+                                        type="submit"
+                                        disabled={loading || !password || !confirm}
+                                        className="w-full relative py-3.5 mt-2 rounded-xl text-xs tracking-widest uppercase text-white overflow-hidden group transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                        style={{
+                                            background: 'linear-gradient(135deg, rgba(109,40,217,0.85) 0%, rgba(79,70,229,0.85) 100%)',
+                                            border: '1px solid rgba(139,92,246,0.45)',
+                                            boxShadow: '0 0 30px rgba(109,40,217,0.2)',
+                                        }}
+                                    >
+                                        <span className="relative z-10 flex items-center justify-center gap-2.5">
+                                            {loading ? <><Loader2 size={14} className="animate-spin" /> UPDATING...</> : 'UPDATE_CREDENTIALS'}
+                                        </span>
+                                        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-white/5" />
+                                    </button>
+                                </form>
+                            </>
+                        )}
+                    </div>
 
-                                <button
-                                    type="submit"
-                                    disabled={loading || !password || !confirm}
-                                    className="w-full bg-violet-600 hover:bg-violet-700 disabled:opacity-60 disabled:cursor-not-allowed
-                                               text-white font-semibold py-3 rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer mt-2"
-                                >
-                                    {loading ? (
-                                        <><Loader2 size={16} className="animate-spin" />Збереження...</>
-                                    ) : (
-                                        'Встановити новий пароль'
-                                    )}
-                                </button>
-                            </form>
-                        </>
+                    {!success && (
+                        <div className="mt-6 text-center">
+                            <Link href="/auth/login" className="inline-flex items-center gap-2 text-[10px] tracking-widest uppercase text-slate-500 hover:text-violet-400 transition-colors">
+                                <ArrowLeft size={12} /> ABORT_PROCESS
+                            </Link>
+                        </div>
                     )}
                 </div>
-
-                {!success && (
-                    <p className="text-center mt-6 text-sm text-gray-500">
-                        <Link href="/auth/login" className="text-violet-600 font-semibold hover:underline inline-flex items-center gap-1">
-                            <ArrowLeft size={12} />
-                            Повернутись до входу
-                        </Link>
-                    </p>
-                )}
             </div>
-        </main>
+            <style jsx>{`
+                @keyframes progress { 0% { width: 0%; } 100% { width: 100%; } }
+            `}</style>
+        </div>
     );
 }

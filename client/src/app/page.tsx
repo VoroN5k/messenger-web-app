@@ -102,7 +102,7 @@ function AnimatedLock() {
                 }}
             />
 
-            <svg width="160" height="190" viewBox="0 0 160 190" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <svg width="160" height="190" viewBox="0 0 160 190" fill="none" xmlns="http://www.w3.org/2000/svg" className="overflow-visiblejrt">
                 {/* ── Shackle ── */}
                 <g
                     style={{
@@ -176,7 +176,7 @@ function AnimatedLock() {
 
             {/* Status text */}
             <div
-                className="absolute bottom-0 left-1/2 -translate-x-1/2 text-xs font-mono tracking-[0.25em] transition-all duration-700"
+                className="absolute bottom-0 left-1/2 -translate-x-1/2 text-xs font-mono tracking-[0.25em] transition-all duration-700 whitespace-nowrap"
                 style={{
                     color: unlocked ? 'rgba(196,181,253,0.9)' : 'rgba(100,116,139,0.7)',
                     textShadow: unlocked ? '0 0 10px rgba(139,92,246,0.8)' : 'none',
@@ -423,7 +423,7 @@ export default function LandingPage() {
                             </svg>
                         </div>
                         <span className="font-semibold tracking-tight" style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '15px', background: 'linear-gradient(135deg, #e2d9f3 0%, #a78bfa 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                            CIPHER<span style={{ WebkitTextFillColor: 'rgba(139,92,246,0.6)' }}>MSG</span>
+                            VESPER<span style={{ WebkitTextFillColor: 'rgba(139,92,246,0.6)' }}>MSG</span>
                         </span>
                     </div>
 
@@ -633,7 +633,7 @@ export default function LandingPage() {
             <footer className="relative z-10 py-8 px-6 border-t border-violet-500/10">
                 <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
                     <span className="text-xs font-mono tracking-widest text-violet-500/50">
-                        © 2026 CipherMsg — Encrypted Communications.
+                        © 2026 Vesper — Encrypted Communications.
                     </span>
                     <div className="flex items-center gap-6">
                         {['Приватність', 'GitHub', 'Документація'].map(item => (

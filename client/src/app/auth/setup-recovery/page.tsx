@@ -1,45 +1,55 @@
+// client/src/app/auth/setup-recovery/page.tsx
 'use client';
 
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Shield, Eye, EyeOff, Check, Loader2, KeyRound, ArrowRight } from 'lucide-react';
+import Link from 'next/link';
 import { useE2E } from '@/src/hooks/useE2E';
 import { useAuthStore } from '@/src/store/useAuthStore';
 import api from "@/src/lib/axios";
 import { TwoFactorVerifyModal } from "@/src/components/auth/TwoFactorVerifyModal";
+import { GridLines, BackgroundOrbs, NoiseOverlay } from "@/src/components/ui/BackgroundFx";
+import { CipherInput } from "@/src/components/ui/CipherInput";
+import { ClosingLockVisual } from "@/src/components/auth/ClosingLockVisual";
+import {EmergencyKitModal} from "@/src/components/auth/EmergencyKitModal";
 
-function PinStrength({ pin }: { pin: string }) {
+// ── Індикатор надійності PIN ──
+function CyberPinStrength({ pin }: { pin: string }) {
+    if (!pin) return null;
     const score = [
         pin.length >= 6,
-        pin.length >= 10,
-        /[A-Z]/.test(pin),
-        /[A-Z]/.test(pin),
-        /[0-9]/.test(pin),
-        /[^A-Za-z0-9]/.test(pin),
+        pin.length >= 8,
+        /[A-Za-z]/.test(pin), // Якщо додали літери
+        /[^A-Za-z0-9]/.test(pin), // Символи
     ].filter(Boolean).length;
 
-    const levels = [
-        { label: 'Дуже слабкий', color: 'bg-red-500',     text: 'text-red-500'    },
-        { label: 'Слабкий',      color: 'bg-orange-400',  text: 'text-orange-500' },
-        { label: 'Середній',     color: 'bg-yellow-400',  text: 'text-yellow-500' },
-        { label: 'Надійний',     color: 'bg-emerald-400', text: 'text-emerald-600'},
-        { label: 'Відмінний',    color: 'bg-emerald-500', text: 'text-emerald-700'},
+    const labels = ['WEAK', 'FAIR', 'GOOD', 'STRONG'];
+    const colors = [
+        'rgba(239,68,68,0.7)',
+        'rgba(245,158,11,0.7)',
+        'rgba(99,179,237,0.7)',
+        'rgba(52,211,153,0.7)',
     ];
-    const level = levels[Math.min(score, 4)];
+    const color = colors[score - 1] ?? colors[0];
 
     return (
         <div className="space-y-1.5 mt-2">
             <div className="flex gap-1">
-                {[0,1,2,3,4].map(i => (
-                    <div key={i} className={`h-1 flex-1 rounded-full transition-all duration-300
-                        ${i < score ? level.color : 'bg-slate-200'}`} />
+                {[0,1,2,3].map(i => (
+                    <div key={i} className="h-0.5 flex-1 rounded-full transition-all duration-300"
+                         style={{ background: i < score ? color : 'rgba(109,40,217,0.15)' }} />
                 ))}
             </div>
-            <p className={`text-xs font-medium ${level.text}`}>{level.label}</p>
+            <div className="flex items-center justify-between">
+                <span className="text-[9px] font-mono tracking-widest" style={{ color }}>
+                    SECURITY_{labels[score - 1] ?? 'ZERO'}
+                </span>
+            </div>
         </div>
     );
 }
 
+// ── Головна Сторінка ──
 export default function SetupRecoveryPage() {
     const router       = useRouter();
     const searchParams = useSearchParams();
@@ -49,7 +59,6 @@ export default function SetupRecoveryPage() {
     const { user, _hasHydrated } = useAuthStore();
     const { isReady, setupRecovery } = useE2E();
 
-    // All state declarations at the top
     const [pin,         setPin]         = useState('');
     const [confirm,     setConfirm]     = useState('');
     const [showPin,     setShowPin]     = useState(false);
@@ -57,6 +66,7 @@ export default function SetupRecoveryPage() {
     const [loading,     setLoading]     = useState(false);
     const [success,     setSuccess]     = useState(false);
     const [error,       setError]       = useState('');
+    const [mounted,     setMounted]     = useState(false);
 
     // 2FA state
     const [twoFACode,   setTwoFACode]   = useState('');
@@ -64,17 +74,18 @@ export default function SetupRecoveryPage() {
     const [twoFADone,   setTwoFADone]   = useState(false);
     const [checking2FA, setChecking2FA] = useState(false);
 
-    // Redirect if not logged in
+    const [showEmergencyKit, setShowEmergencyKit] = useState(false);
+
+    useEffect(() => { setTimeout(() => setMounted(true), 50); }, []);
+
     useEffect(() => {
         if (_hasHydrated && !user) router.push('/auth/login');
     }, [user, _hasHydrated, router]);
 
-    // For first-time setup (not reset) — 2FA not required
     useEffect(() => {
         if (!isReset) setTwoFADone(true);
     }, [isReset]);
 
-    // For reset — check if 2FA is enabled
     useEffect(() => {
         if (!isReset || !user) return;
         setChecking2FA(true);
@@ -87,236 +98,243 @@ export default function SetupRecoveryPage() {
             .finally(() => setChecking2FA(false));
     }, [isReset, user]);
 
-    // Auto-redirect after success
+    // Авто-редирект через 3 секунди (щоб програлась анімація замка)
     useEffect(() => {
         if (!success) return;
-        const t = setTimeout(() => router.push('/chat'), 2500);
+        const t = setTimeout(() => setShowEmergencyKit(true), 3000);
         return () => clearTimeout(t);
-    }, [success, router]);
+    }, [success]);
 
-    // 2FA verification
-    const verify2FA = async (code: string): Promise<boolean> => {
-        setTwoFACode(code);
-        setShow2FA(false);
-        setTwoFADone(true);
-        return true;
-    };
-
-    const handleCancel2FA = () => {
-        router.push('/chat');
-    };
-
-    // Form validation
-    const validate = (): string => {
-        if (pin.length < 6)   return 'Мінімум 6 символів';
-        if (pin !== confirm)  return 'PIN-коди не збігаються';
-        return '';
-    };
-
-    // Submit
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        const err = validate();
-        if (err) { setError(err); return; }
-        if (!isReady) { setError('E2E ще не готовий, зачекайте секунду...'); return; }
+        if (pin.length < 6) { setError('Мінімум 6 символів'); return; }
+        if (pin !== confirm) { setError('PIN-коди не збігаються'); return; }
+        if (!isReady) { setError('Криптографічний модуль ініціалізується...'); return; }
         if (isReset && !twoFADone) { setError('Потрібне підтвердження 2FA'); return; }
 
-        setLoading(true);
-        setError('');
+        setLoading(true); setError('');
         try {
-            await setupRecovery(pin, {
-                isReset,
-                twoFactorCode: twoFACode || undefined,
-            });
+            await setupRecovery(pin, { isReset, twoFactorCode: twoFACode || undefined });
             setSuccess(true);
         } catch (e: any) {
             const msg = e.response?.data?.message;
-            setError(Array.isArray(msg) ? msg[0] : (msg ?? 'Помилка збереження. Спробуйте ще раз.'));
-            // If the 2FA code was wrong, show the modal again
+            setError(Array.isArray(msg) ? msg[0] : (msg ?? 'Помилка збереження ключа.'));
             if (isReset && e.response?.status === 401) {
-                setTwoFADone(false);
-                setTwoFACode('');
-                setShow2FA(true);
+                setTwoFADone(false); setTwoFACode(''); setShow2FA(true);
             }
         } finally {
             setLoading(false);
         }
     };
 
-    // Render
+    const EyeIcon = ({ show }: { show: boolean }) => show
+        ? <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+        : <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>;
 
-    // Show 2FA modal (always rendered above everything else)
     if (show2FA) {
         return (
-            <main className="min-h-screen w-full flex flex-col items-center justify-center bg-gradient-to-br from-slate-50 to-violet-50 p-4">
+            <div className="min-h-screen w-full flex flex-col items-center justify-center bg-[#06040f] p-4" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+                <NoiseOverlay />
                 <TwoFactorVerifyModal
-                    title="Підтвердіть особу"
-                    subtitle="Введіть код з Google Authenticator для скидання Recovery PIN"
-                    onVerify={verify2FA}
-                    onCancel={handleCancel2FA}
+                    title="ВЕРИФІКАЦІЯ"
+                    subtitle="Введіть код з Google Authenticator для доступу до ключів"
+                    onVerify={async (code) => { setTwoFACode(code); setShow2FA(false); setTwoFADone(true); return true; }}
+                    onCancel={() => router.push('/chat')}
                 />
-            </main>
+            </div>
         );
     }
 
-    // Show spinner while checking 2FA status
     if (checking2FA) {
         return (
-            <main className="min-h-screen w-full flex items-center justify-center">
-                <Loader2 size={28} className="animate-spin text-violet-500" />
-            </main>
+            <div className="min-h-screen w-full flex items-center justify-center bg-[#06040f]">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-violet-500"></div>
+            </div>
         );
     }
 
     return (
-        <main className="min-h-screen w-full flex flex-col items-center justify-center bg-gradient-to-br from-slate-50 to-violet-50 p-4">
-            <div className="w-full max-w-md">
+        <div className="min-h-screen flex relative overflow-hidden"
+             style={{ background: 'linear-gradient(160deg, #06040f 0%, #0a0714 50%, #080c1a 100%)', fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
+            <BackgroundOrbs />
+            <GridLines />
+            <NoiseOverlay />
 
-                {success ? (
-                    /* ── Success ── */
-                    <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-100 text-center">
-                        <div className="w-20 h-20 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-5">
-                            <Check size={36} className="text-emerald-500" />
-                        </div>
-                        <h1 className="text-2xl font-bold text-gray-900 mb-2">Захист встановлено!</h1>
-                        <p className="text-gray-500 text-sm leading-relaxed">
-                            Ваш ключ шифрування захищений PIN-кодом і збережений на сервері.
-                            Тепер ви зможете відновити доступ до переписки на будь-якому пристрої.
-                        </p>
-                        <p className="text-xs text-slate-400 mt-4">Переходимо до чату...</p>
+            {/* ── Left panel (Info) ── */}
+            <div className="hidden lg:flex flex-col justify-between w-[400px] shrink-0 relative z-10 p-12"
+                 style={{ borderRight: '1px solid rgba(109,40,217,0.12)' }}>
+                <Link href="/" className="flex items-center gap-2.5 group">
+                    <div className="w-8 h-8 rounded-lg flex items-center justify-center transition-all group-hover:scale-105" style={{
+                        background: 'rgba(109,40,217,0.2)', border: '1px solid rgba(139,92,246,0.4)',
+                        boxShadow: '0 0 12px rgba(109,40,217,0.3)',
+                    }}>
+                        <svg width="16" height="16" fill="none" viewBox="0 0 24 24">
+                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" stroke="rgba(196,181,253,0.9)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
                     </div>
-                ) : (
-                    <div className="bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden">
+                    <span className="text-sm font-semibold tracking-tight" style={{ background: 'linear-gradient(135deg, #e2d9f3 0%, #a78bfa 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+                        CIPHER<span style={{ WebkitTextFillColor: 'rgba(139,92,246,0.6)' }}>MSG</span>
+                    </span>
+                </Link>
 
-                        {/* Header banner */}
-                        <div className="bg-gradient-to-br from-violet-600 to-indigo-600 px-6 py-8 text-center">
-                            <div className="w-16 h-16 rounded-full bg-white/20 flex items-center justify-center mx-auto mb-3">
-                                <Shield size={28} className="text-white" />
-                            </div>
-                            <h1 className="text-xl font-bold text-white">
-                                {isReset ? 'Скинути Recovery PIN' : 'Захист ключів шифрування'}
-                            </h1>
-                            <p className="text-indigo-200 text-sm mt-1.5 leading-relaxed">
-                                {isVerified
-                                    ? 'Email підтверджено! Тепер встановіть PIN для захисту ваших зашифрованих повідомлень.'
-                                    : 'Встановіть PIN для відновлення доступу до переписки на нових пристроях.'}
-                            </p>
+                <div className="space-y-8">
+                    <div>
+                        <div className="text-[10px] tracking-[0.3em] uppercase mb-3" style={{ color: 'rgba(139,92,246,0.6)' }}>
+                            // security protocol
                         </div>
+                        <h2 className="text-2xl font-bold text-white mb-4">
+                            {isReset ? 'Відновлення ключів' : 'Захист Сейфа'}
+                        </h2>
+                        <p className="text-xs leading-relaxed" style={{ color: 'rgba(148,163,184,0.7)' }}>
+                            {isVerified
+                                ? 'Ваш email підтверджено. '
+                                : ''}
+                            Щоб ваші E2E ключі можна було відновити на іншому пристрої, ми шифруємо їх вашим персональним PIN-кодом перед відправкою на сервер.
+                        </p>
+                    </div>
 
-                        <div className="p-6">
-                            {/* Info bullets */}
-                            <div className="space-y-3 mb-6">
-                                {[
-                                    { icon: '🔐', text: 'Ваші повідомлення зашифровані наскрізно (E2E)' },
-                                    { icon: '📱', text: 'PIN дозволяє відновити доступ з нового пристрою' },
-                                    { icon: '🚫', text: 'Сервер зберігає тільки зашифрований ключ — PIN відомий тільки вам' },
-                                ].map((item, i) => (
-                                    <div key={i} className="flex items-start gap-3">
-                                        <span className="text-lg shrink-0">{item.icon}</span>
-                                        <p className="text-xs text-slate-600 leading-relaxed">{item.text}</p>
-                                    </div>
-                                ))}
+                    <div className="space-y-3 text-[10px] font-mono">
+                        {[
+                            { icon: '⬡', text: 'PIN-код неможливо відновити через техпідтримку' },
+                            { icon: '⬡', text: 'Сервер зберігає лише зашифрований блоб даних' },
+                            { icon: '⬡', text: 'Втрата PIN-коду = втрата доступу до історії чатів' },
+                        ].map((item, i) => (
+                            <div key={i} className="flex items-start gap-2.5" style={{ color: 'rgba(148,163,184,0.5)' }}>
+                                <span style={{ color: 'rgba(109,40,217,0.6)' }}>{item.icon}</span>
+                                {item.text}
                             </div>
+                        ))}
+                    </div>
+                </div>
 
-                            {!isReady && (
-                                <div className="flex items-center justify-center gap-2 py-4 text-slate-400 text-sm">
-                                    <Loader2 size={16} className="animate-spin" />
-                                    Генерація ключів...
-                                </div>
-                            )}
+                <div className="text-[9px] font-mono tracking-widest" style={{ color: 'rgba(109,40,217,0.3)' }}>
+                    AES-256-GCM · PBKDF2 DERIVATION
+                </div>
+            </div>
 
-                            {isReady && (
-                                <form onSubmit={handleSubmit} className="space-y-4">
-                                    {/* PIN input */}
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                                            Recovery PIN
-                                        </label>
-                                        <div className="relative">
-                                            <input
-                                                type={showPin ? 'text' : 'password'}
-                                                value={pin}
-                                                onChange={e => { setPin(e.target.value); setError(''); }}
-                                                placeholder="Мінімум 6 символів"
-                                                autoFocus
-                                                className={`w-full px-4 py-3 pr-10 rounded-xl border text-sm outline-none transition-all
-                                                    ${error ? 'border-red-400' : 'border-gray-200 focus:ring-2 focus:ring-violet-200 focus:border-violet-400'}`}
-                                            />
-                                            <button type="button" onClick={() => setShowPin(s => !s)}
-                                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer">
-                                                {showPin ? <EyeOff size={15} /> : <Eye size={15} />}
-                                            </button>
-                                        </div>
-                                        {pin && <PinStrength pin={pin} />}
+            {/* ── Right panel (Form / Success) ── */}
+            <div className="flex-1 flex items-center justify-center relative z-10 px-6 py-12">
+                <div className="w-full max-w-md transition-all duration-700"
+                     style={{ opacity: mounted ? 1 : 0, transform: mounted ? 'translateY(0)' : 'translateY(20px)' }}>
+
+                    <div className="relative rounded-2xl overflow-hidden" style={{
+                        background: 'rgba(10,7,25,0.82)',
+                        border: '1px solid rgba(109,40,217,0.18)',
+                        backdropFilter: 'blur(24px)',
+                        boxShadow: '0 0 60px rgba(109,40,217,0.08), 0 40px 80px rgba(0,0,0,0.5)',
+                    }}>
+                        <div className="absolute top-0 left-12 right-12 h-px" style={{
+                            background: 'linear-gradient(90deg, transparent, rgba(139,92,246,0.5), transparent)',
+                        }} />
+
+                        {success ? (
+                            /* ── State: Success (Animation) ── */
+                            <ClosingLockVisual />
+                        ) : (
+                            /* ── State: Form ── */
+                            <>
+                                <div className="px-8 pt-8 pb-5" style={{ borderBottom: '1px solid rgba(109,40,217,0.1)' }}>
+                                    <div className="text-[10px] tracking-[0.3em] uppercase mb-2" style={{ color: 'rgba(139,92,246,0.6)' }}>
+                                        // recovery vault setup
                                     </div>
+                                    <h1 className="text-2xl font-bold" style={{ background: 'linear-gradient(135deg, #f1f5f9 0%, #c4b5fd 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+                                        Встановіть PIN-код
+                                    </h1>
+                                </div>
 
-                                    {/* Confirm PIN */}
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                                            Підтвердіть PIN
-                                        </label>
-                                        <div className="relative">
-                                            <input
+                                <form onSubmit={handleSubmit} className="px-8 py-6 space-y-5">
+                                    {!isReady && (
+                                        <div className="flex items-center gap-3 text-xs text-violet-400 animate-pulse bg-violet-900/10 p-3 rounded-lg border border-violet-500/20">
+                                            <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-violet-400" />
+                                            Генерація криптографічних ключів...
+                                        </div>
+                                    )}
+
+                                    {isReady && (
+                                        <>
+                                            <div>
+                                                <CipherInput
+                                                    label="Recovery PIN"
+                                                    type={showPin ? 'text' : 'password'}
+                                                    value={pin}
+                                                    onChange={e => { setPin(e.target.value); setError(''); }}
+                                                    placeholder="Мінімум 6 символів"
+                                                    hint="мін. 6 символів"
+                                                    icon={<svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>}
+                                                    rightSlot={
+                                                        <button type="button" onClick={() => setShowPin(s => !s)} className="transition-colors" style={{ color: showPin ? 'rgba(139,92,246,0.8)' : 'rgba(100,116,139,0.4)' }}>
+                                                            <EyeIcon show={showPin} />
+                                                        </button>
+                                                    }
+                                                />
+                                                <CyberPinStrength pin={pin} />
+                                            </div>
+
+                                            <CipherInput
+                                                label="Підтвердження PIN"
                                                 type={showConf ? 'text' : 'password'}
                                                 value={confirm}
                                                 onChange={e => { setConfirm(e.target.value); setError(''); }}
                                                 placeholder="Повторіть PIN"
-                                                className={`w-full px-4 py-3 pr-10 rounded-xl border text-sm outline-none transition-all
-                                                    ${confirm && confirm !== pin
-                                                    ? 'border-red-400 focus:ring-2 focus:ring-red-100'
-                                                    : 'border-gray-200 focus:ring-2 focus:ring-violet-200 focus:border-violet-400'}`}
+                                                icon={<svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>}
+                                                rightSlot={
+                                                    <button type="button" onClick={() => setShowConf(s => !s)} className="transition-colors" style={{ color: showConf ? 'rgba(139,92,246,0.8)' : 'rgba(100,116,139,0.4)' }}>
+                                                        <EyeIcon show={showConf} />
+                                                    </button>
+                                                }
                                             />
-                                            <button type="button" onClick={() => setShowConf(s => !s)}
-                                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer">
-                                                {showConf ? <EyeOff size={15} /> : <Eye size={15} />}
+
+                                            {error && (
+                                                <div className="flex items-start gap-2.5 rounded-lg px-4 py-3 bg-red-500/10 border border-red-500/20">
+                                                    <svg width="13" height="13" fill="none" stroke="rgba(248,113,113,0.8)" strokeWidth="2" viewBox="0 0 24 24" className="shrink-0 mt-0.5">
+                                                        <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                                                    </svg>
+                                                    <p className="text-[11px] font-mono text-red-400">{error}</p>
+                                                </div>
+                                            )}
+
+                                            <button type="submit" disabled={loading || pin.length < 6 || confirm !== pin}
+                                                    className="w-full relative py-3 mt-4 rounded-xl text-xs font-mono tracking-widest uppercase text-white overflow-hidden group transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                                    style={{
+                                                        background: 'linear-gradient(135deg, rgba(109,40,217,0.85) 0%, rgba(79,70,229,0.85) 100%)',
+                                                        border: '1px solid rgba(139,92,246,0.45)',
+                                                        boxShadow: '0 0 30px rgba(109,40,217,0.2)',
+                                                    }}>
+                                                <span className="relative z-10 flex items-center justify-center gap-2.5">
+                                                    {loading ? (
+                                                        <>
+                                                            <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white" />
+                                                            Шифрування...
+                                                        </>
+                                                    ) : (
+                                                        'ENCRYPT_VAULT'
+                                                    )}
+                                                </span>
+                                                <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: 'rgba(255,255,255,0.05)' }} />
                                             </button>
-                                        </div>
-                                        {confirm && confirm !== pin && (
-                                            <p className="text-xs text-red-500 mt-1">PIN-коди не збігаються</p>
-                                        )}
-                                    </div>
 
-                                    {error && (
-                                        <p className="text-xs text-red-500 bg-red-50 rounded-xl px-3 py-2">{error}</p>
-                                    )}
-
-                                    {/* Warning */}
-                                    <div className="bg-amber-50 border border-amber-100 rounded-xl px-3 py-2.5">
-                                        <p className="text-xs text-amber-700 font-medium">⚠️ Запам'ятайте PIN!</p>
-                                        <p className="text-xs text-amber-600 mt-0.5">
-                                            Якщо ви забудете PIN, доступ до зашифрованих повідомлень буде втрачено назавжди.
-                                        </p>
-                                    </div>
-
-                                    <button
-                                        type="submit"
-                                        disabled={loading || !pin || !confirm}
-                                        className="w-full bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed
-                                                   text-white font-semibold py-3 rounded-xl transition-all
-                                                   flex items-center justify-center gap-2 cursor-pointer"
-                                    >
-                                        {loading
-                                            ? <><Loader2 size={16} className="animate-spin" />Захищаємо...</>
-                                            : <><KeyRound size={16} />Встановити PIN<ArrowRight size={15} /></>
-                                        }
-                                    </button>
-
-                                    {/* Skip option (only for non-first-time, non-reset) */}
-                                    {!isVerified && !isReset && (
-                                        <button
-                                            type="button"
-                                            onClick={() => router.push('/chat')}
-                                            className="w-full text-xs text-slate-400 hover:text-slate-600 py-2 transition-colors cursor-pointer"
-                                        >
-                                            Пропустити (не рекомендовано)
-                                        </button>
+                                            {!isVerified && !isReset && (
+                                                <div className="text-center pt-2">
+                                                    <button type="button" onClick={() => router.push('/chat')} className="text-[10px] font-mono text-slate-500 hover:text-slate-300 transition-colors uppercase">
+                                                        Пропустити (Небезпечно)
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </>
                                     )}
                                 </form>
-                            )}
-                        </div>
+                            </>
+                        )}
                     </div>
-                )}
+                </div>
             </div>
-        </main>
+            {showEmergencyKit && (
+                <EmergencyKitModal
+                    pin={pin}
+                    email={user?.email || 'unknown@ciphermsg.com'}
+                    onComplete={() => router.push('/chat')}
+                />
+            )}
+        </div>
     );
 }
