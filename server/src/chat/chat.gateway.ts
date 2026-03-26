@@ -163,7 +163,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
             sockets.delete(client.id);
             if (sockets.size === 0) {
                 this.activeUsers.delete(userId);
-                await this.prisma.user.update({
+                await this.prisma.user.updateMany({
                     where: { id: userId },
                     data:  { isOnline: false, lastSeen: new Date() },
                 });

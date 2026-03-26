@@ -34,10 +34,9 @@ export class AuthController {
         @Res({ passthrough: true }) res: Response,
     ) {
         const meta = this.extractMeta(req);
-        const tokens = await this.authService.register(dto, meta);
+        await this.authService.register(dto, meta);
 
-        this.setRefreshCookie(res, tokens.refreshToken);
-        return { accessToken: tokens.accessToken };
+        return { message: 'Registration successful. Please check your email.' };
     }
 
     @Throttle({ default: { ttl: 60000, limit: 5 } })
@@ -98,7 +97,7 @@ export class AuthController {
         const clientUrl = process.env.CLIENT_URL ?? 'http://localhost:3000';
         try {
             await this.authService.verifyEmail(token);
-            return res.redirect(`${clientUrl}/auth/setup-recovery?verified=true`);
+            return res.redirect(`${clientUrl}/auth/login?verified=true`);
         } catch {
             return res.redirect(`${clientUrl}/auth/verify-pending?error=invalid-token`);
         }

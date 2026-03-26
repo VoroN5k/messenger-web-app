@@ -29,6 +29,8 @@ export const LoginForm = () => {
                 avatarUrl: decoded.avatarUrl,
             };
             setAuth(userFromToken, token);
+            sessionStorage.setItem('freshLogin', 'true');
+
             window.location.href = "/chat";
         } catch (e: any) {
             const message = e.response?.data?.message || "Помилка входу";

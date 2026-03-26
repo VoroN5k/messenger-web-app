@@ -1,8 +1,5 @@
 'use client';
 
-// client/src/app/chat/page.tsx
-// ЗМІНА: прибрано локальний useSocket() — тепер береться з SocketContext
-
 import { useEffect, useState } from 'react';
 import { useAuthStore }           from '@/src/store/useAuthStore';
 import { useSocket }              from '@/src/context/SocketContext';   // ← з контексту
@@ -20,12 +17,21 @@ import { IncomingCallModal }      from '@/src/components/call/IncomingCallModal'
 import { ActiveCallOverlay }      from '@/src/components/call/ActiveCallOverlay';
 import { useE2E }                 from '@/src/hooks/useE2E';
 import {RecoveryUnlockModal} from "@/src/components/chat/RecoveryUnlockModal";
+import {useRouter} from "next/navigation";
 
 export default function ChatPage() {
     const { user, logout } = useAuthStore();
     const socket = useSocket();   // ← береться з SocketContext, не створюється тут
+    const { needsRecovery, needsRecoverySetup, unlockWithPin } = useE2E();
+    const router = useRouter();
 
-    useE2E();
+    useEffect(() => {
+        if (needsRecoverySetup && sessionStorage.getItem('freshLogin') === 'true') {
+            sessionStorage.removeItem('freshLogin');
+
+            router.push('/auth/setup-recovery');
+        }
+    }, [needsRecoverySetup, router]);
 
     const [selectedConv,  setSelectedConv]  = useState<Conversation | null>(null);
     const [isLoaded,      setIsLoaded]      = useState(false);
@@ -42,6 +48,13 @@ export default function ChatPage() {
             });
         }
     }, []);
+
+    useEffect(() => {
+        if (user && !user.isVerified) {
+            // Якщо залогінений, але пошта не підтверджена - викидаємо назад
+            window.location.href = `/auth/verify-pending?email=${user.email}`;
+        }
+    }, [user]);
 
     const {
         conversations, isLoading: convsLoading,
@@ -63,7 +76,7 @@ export default function ChatPage() {
     } = useWebRTC(socket, user?.id);
 
     const { isSupported, permission, requestPermission } = usePushNotifications(!!user);
-    const { needsRecovery, needsRecoverySetup, unlockWithPin } = useE2E();
+
 
     // Push banner
     useEffect(() => {
