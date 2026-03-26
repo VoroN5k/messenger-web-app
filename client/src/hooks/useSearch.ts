@@ -17,7 +17,7 @@ export const useSearch = (
 
     const e2e = useE2E();
 
-    // Stable refs — prevent stale closure issues in async loops
+    // Стабільні посилання для розшифровки
     const decryptDirectRef = useRef(e2e.decrypt);
     const decryptGroupRef  = useRef(e2e.decryptFromGroup);
     useEffect(() => { decryptDirectRef.current = e2e.decrypt; },      [e2e.decrypt]);
@@ -27,13 +27,21 @@ export const useSearch = (
     const timerRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
     const prevConvRef = useRef<number | undefined>(undefined);
 
-    const looksEncrypted = (s?: string | null) =>
-        !!s && s.length > 20 && /^[A-Za-z0-9_\-]+$/.test(s);
+    // Універсальна та безпечна перевірка на шифротекст
+    const looksEncrypted = (s?: string | null) => {
+        if (!s) return false;
+        const t = s.trim();
+        // Якщо зашифровано у вигляді JSON об'єкта
+        if (t.startsWith('{') && t.endsWith('}')) return true;
+        // Якщо це суцільний Base64 (немає пробілів і довгий рядок)
+        if (t.length > 15 && !t.includes(' ')) return true;
+        return false;
+    };
 
-    // DIRECT: load + decrypt full history for client-side search
+    // УНІВЕРСАЛЬНИЙ ЗАВАНТАЖУВАЧ (Direct + Group)
     const fetchAllDecrypted = useCallback(async (
         convId:     number,
-        peerUserId: number,
+        peerUserId: number | undefined,
         signal:     AbortSignal,
     ): Promise<Message[]> => {
         const cached = sessionCache.get(convId);
@@ -57,7 +65,16 @@ export const useSearch = (
                 data.map(async (msg) => {
                     if (!msg.content || !looksEncrypted(msg.content)) return msg;
                     try {
-                        const plain = await decryptDirectRef.current(msg.content, peerUserId);
+                        const plain = peerUserId
+                            ? await decryptDirectRef.current(msg.content, peerUserId)
+                            : await decryptGroupRef.current(msg.content, convId, Number(msg.senderId));
+
+                        // НАЙГОЛОВНІШИЙ ФІКС:
+                        // Якщо хук повернув свою заглушку замість тексту, ігноруємо її та залишаємо шифр!
+                        if (plain === '[🔒 Не вдалося розшифрувати]') {
+                            return msg;
+                        }
+
                         return { ...msg, content: plain };
                     } catch {
                         return msg;
@@ -65,47 +82,22 @@ export const useSearch = (
                 }),
             );
 
-            // Server returns desc then reverses → data is ASC; unshift = prepend older batch
             all.unshift(...decrypted);
-            cursor = data[0].id;      // oldest id in this batch → next page goes further back
+            cursor = data[0].id; // Найстаріше повідомлення для наступної сторінки
 
             setLoadedCount(all.length);
         }
 
-        if (!signal.aborted) sessionCache.set(convId, all);
+        // Кешуємо ТІЛЬКИ якщо в масиві не залишилось жодного нерозшифрованого повідомлення
+        const hasEncryptedLeft = all.some(m => looksEncrypted(m.content));
+        if (!signal.aborted && !hasEncryptedLeft) {
+            sessionCache.set(convId, all);
+        }
+
         return all;
     }, []);
 
-    // GROUP / CHANNEL: server-side search + client decrypt
-    const searchAndDecryptGroup = useCallback(async (
-        convId: number,
-        q:      string,
-        signal: AbortSignal,
-    ): Promise<Message[]> => {
-        const { data }: { data: Message[] } = await api.get(
-            `/conversations/${convId}/messages/search`,
-            { params: { q }, signal },
-        );
-
-        // Server stores encrypted ciphertext — decrypt each result
-        return Promise.all(
-            data.map(async (msg) => {
-                if (!msg.content || !looksEncrypted(msg.content)) return msg;
-                try {
-                    const plain = await decryptGroupRef.current(
-                        msg.content,
-                        convId,
-                        Number(msg.senderId),
-                    );
-                    return { ...msg, content: plain };
-                } catch {
-                    return msg;
-                }
-            }),
-        );
-    }, []);
-
-    // Main search effect
+    // Головний ефект пошуку
     useEffect(() => {
         abortRef.current?.abort();
         if (timerRef.current) clearTimeout(timerRef.current);
@@ -126,21 +118,15 @@ export const useSearch = (
             setLoadedCount(0);
 
             try {
-                let found: Message[];
+                // Завантажуємо та розшифровуємо всі повідомлення
+                const all = await fetchAllDecrypted(conversationId, otherUserId, ctrl.signal);
+                if (ctrl.signal.aborted) return;
 
-                if (otherUserId) {
-                    // DIRECT — client-side filter over full decrypted history
-                    const all = await fetchAllDecrypted(conversationId, otherUserId, ctrl.signal);
-                    if (ctrl.signal.aborted) return;
-
-                    const q = query.trim().toLowerCase();
-                    found = all.filter(
-                        (m) => !m.deletedAt && m.content?.toLowerCase().includes(q),
-                    );
-                } else {
-                    // GROUP / CHANNEL — search on server, decrypt results here
-                    found = await searchAndDecryptGroup(conversationId, query.trim(), ctrl.signal);
-                }
+                // Фільтруємо суто локально
+                const q = query.trim().toLowerCase();
+                const found = all.filter(
+                    (m) => !m.deletedAt && m.content?.toLowerCase().includes(q),
+                );
 
                 if (!ctrl.signal.aborted) setResults(found);
             } catch (err: any) {
@@ -157,14 +143,13 @@ export const useSearch = (
         }, 400);
 
         return () => { if (timerRef.current) clearTimeout(timerRef.current); };
-    }, [query, conversationId, isOpen, otherUserId, fetchAllDecrypted, searchAndDecryptGroup]);
+    }, [query, conversationId, isOpen, otherUserId, fetchAllDecrypted]);
 
-    // Invalidate cache on conversation change
+    // Інвалідація кешу при зміні відкритого чату
     useEffect(() => {
         if (prevConvRef.current !== undefined && prevConvRef.current !== conversationId) {
             abortRef.current?.abort();
             if (timerRef.current) clearTimeout(timerRef.current);
-            if (prevConvRef.current) sessionCache.delete(prevConvRef.current);
             setIsOpen(false);
             setQuery('');
             setResults([]);
@@ -177,8 +162,6 @@ export const useSearch = (
     const close = useCallback(() => {
         abortRef.current?.abort();
         if (timerRef.current) clearTimeout(timerRef.current);
-        const convId = prevConvRef.current;
-        if (convId) sessionCache.delete(convId);
         setIsOpen(false);
         setQuery('');
         setResults([]);

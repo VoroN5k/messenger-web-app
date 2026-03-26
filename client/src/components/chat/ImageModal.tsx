@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useCallback, useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Download, ZoomIn, ZoomOut } from 'lucide-react';
 
 interface ImageModalProps {
@@ -12,20 +13,27 @@ interface ImageModalProps {
 }
 
 export function ImageModal({ src, alt, onClose, fileName }: ImageModalProps) {
-    const [scale,   setScale]   = useState(1);
-    const [offset,  setOffset]  = useState({ x: 0, y: 0 });
+    const [scale, setScale] = useState(1);
+    const [offset, setOffset] = useState({ x: 0, y: 0 });
     const [isDragging, setDragging] = useState(false);
     const dragStart = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
+    const [mounted, setMounted] = useState(false);
 
-    // ── Close on Escape ───────────────────────────────────────────────────────
+    // ── Mount, Escape Listener & Scroll Lock ──────────────────────────────────
     useEffect(() => {
-        const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-        document.addEventListener('keydown', h);
+        setMounted(true);
+
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') onClose();
+        };
+
+        document.addEventListener('keydown', handleKeyDown);
         // Prevent body scroll while modal is open
         document.body.style.overflow = 'hidden';
+
         return () => {
-            document.removeEventListener('keydown', h);
-            document.body.style.overflow = '';
+            document.removeEventListener('keydown', handleKeyDown);
+            document.body.style.overflow = ''; // Resetting to empty string is safer than 'unset'
         };
     }, [onClose]);
 
@@ -42,6 +50,7 @@ export function ImageModal({ src, alt, onClose, fileName }: ImageModalProps) {
         setDragging(true);
         dragStart.current = { x: e.clientX, y: e.clientY, ox: offset.x, oy: offset.y };
     };
+
     const onMouseMove = useCallback((e: React.MouseEvent) => {
         if (!isDragging) return;
         setOffset({
@@ -49,6 +58,7 @@ export function ImageModal({ src, alt, onClose, fileName }: ImageModalProps) {
             y: dragStart.current.oy + e.clientY - dragStart.current.y,
         });
     }, [isDragging]);
+
     const onMouseUp = () => setDragging(false);
 
     const resetZoom = () => { setScale(1); setOffset({ x: 0, y: 0 }); };
@@ -69,15 +79,18 @@ export function ImageModal({ src, alt, onClose, fileName }: ImageModalProps) {
         }
     };
 
-    return (
+    if (!mounted) return null;
+
+    // Вміст модалки винесено в окрему змінну для передачі в Portal
+    const modalContent = (
         <div
-            className="fixed inset-0 z-[200] flex items-center justify-center"
+            className="fixed inset-0 z-[9999] flex items-center justify-center"
             style={{ background: 'rgba(0,0,0,0.88)', backdropFilter: 'blur(6px)' }}
             onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
         >
             {/* ── Top bar ── */}
-            <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3 z-10">
-                <div className="flex items-center gap-2">
+            <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3 z-10 pointer-events-none">
+                <div className="flex items-center gap-2 pointer-events-auto">
                     <button
                         onClick={() => setScale(s => Math.min(5, s + 0.25))}
                         className="p-2 rounded-full text-white/70 hover:text-white hover:bg-white/10 cursor-pointer transition-all"
@@ -102,7 +115,7 @@ export function ImageModal({ src, alt, onClose, fileName }: ImageModalProps) {
                     )}
                 </div>
 
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 pointer-events-auto">
                     <button
                         onClick={handleDownload}
                         className="p-2 rounded-full text-white/70 hover:text-white hover:bg-white/10 cursor-pointer transition-all"
@@ -120,9 +133,9 @@ export function ImageModal({ src, alt, onClose, fileName }: ImageModalProps) {
                 </div>
             </div>
 
-            {/* ── Image ── */}
+            {/* ── Image Wrapper ── */}
             <div
-                className="relative flex items-center justify-center w-full h-full"
+                className="relative flex items-center justify-center w-full h-full overflow-hidden"
                 onWheel={onWheel}
                 onMouseDown={onMouseDown}
                 onMouseMove={onMouseMove}
@@ -157,4 +170,7 @@ export function ImageModal({ src, alt, onClose, fileName }: ImageModalProps) {
             )}
         </div>
     );
+
+    // Рендеримо модалку безпосередньо в <body> для уникнення проблем з CSS трансформаціями батьків
+    return createPortal(modalContent, document.body);
 }

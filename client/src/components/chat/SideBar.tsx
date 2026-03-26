@@ -150,12 +150,14 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
             <div className="px-4 pt-4 pb-3 flex items-center justify-between shrink-0"
                  style={{ borderBottom: '1px solid var(--border)' }}>
                 {/* User info */}
-                <div
-                    className="flex items-center gap-2.5 min-w-0 cursor-pointer group flex-1"
-                    onClick={() => setShowCropModal(true)}
-                    title="Змінити аватар"
-                >
-                    <div className="relative shrink-0">
+                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+
+                    {/* Аватарка (ТІЛЬКИ вона тепер клікабельна і викликає модалку) */}
+                    <div
+                        className="relative shrink-0 cursor-pointer group"
+                        onClick={() => setShowCropModal(true)}
+                        title="Змінити аватар"
+                    >
                         {currentUser && <Avatar user={currentUser} size="md" />}
                         <div
                             className="absolute inset-0 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center justify-center"
@@ -164,6 +166,8 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
                             <Plus size={12} className="text-white" />
                         </div>
                     </div>
+
+                    {/* Текст (нікнейм), він більше не розтягує клікабельну зону */}
                     <div className="min-w-0 flex-1">
                         <p className="text-[13px] font-semibold truncate leading-tight" style={{ color: 'var(--text-1)' }}>
                             {currentUser?.nickname ?? '—'}
@@ -177,16 +181,17 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
 
                 {/* Action buttons */}
                 <div className="flex items-center gap-0.5 shrink-0">
-                    {/* Notification bell */}
-                    {onTogglePush && !notifDenied && (
+                    {/* Notification bell (Тепер не зникає, а стає неактивним (disabled) та показує BellOff) */}
+                    {onTogglePush && (
                         <SidebarIconBtn
-                            onClick={onTogglePush}
-                            title={notifGranted ? 'Сповіщення увімкнені' : 'Увімкнути сповіщення'}
+                            onClick={notifDenied ? () => {} : onTogglePush}
+                            title={notifDenied ? 'Сповіщення заблоковані в браузері' : (notifGranted ? 'Сповіщення увімкнені' : 'Увімкнути сповіщення')}
                             active={notifGranted}
+                            disabled={notifDenied}
                         >
-                            {notifGranted
-                                ? <BellRing size={15} style={{ color: 'var(--accent-bright)' }} />
-                                : <Bell size={15} />
+                            {notifDenied
+                                ? <BellOff size={15} />
+                                : (notifGranted ? <BellRing size={15} style={{ color: 'var(--accent-bright)' }} /> : <Bell size={15} />)
                             }
                         </SidebarIconBtn>
                     )}
@@ -607,26 +612,30 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
 
 // ── Reusable icon button ──────────────────────────────────────────────────────
 function SidebarIconBtn({
-                            children, onClick, title, active, danger,
+                            children, onClick, title, active, danger, disabled,
                         }: {
     children: React.ReactNode;
     onClick: () => void;
     title?: string;
     active?: boolean;
     danger?: boolean;
+    disabled?: boolean;
 }) {
     return (
         <button
             onClick={onClick}
             title={title}
-            className="w-8 h-8 rounded-xl flex items-center justify-center cursor-pointer transition-all duration-150"
+            disabled={disabled}
+            className={`w-8 h-8 rounded-xl flex items-center justify-center transition-all duration-150 ${
+                disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+            }`}
             style={{
                 background: active ? 'var(--accent-dim)' : 'transparent',
                 color: active ? 'var(--accent-bright)' : 'var(--text-3)',
                 border: active ? '1px solid var(--border-accent)' : '1px solid transparent',
             }}
             onMouseEnter={e => {
-                if (!active) {
+                if (!active && !disabled) {
                     (e.currentTarget as HTMLElement).style.background = danger
                         ? 'rgba(255,77,106,0.1)'
                         : 'rgba(255,255,255,0.05)';
@@ -634,7 +643,7 @@ function SidebarIconBtn({
                 }
             }}
             onMouseLeave={e => {
-                if (!active) {
+                if (!active && !disabled) {
                     (e.currentTarget as HTMLElement).style.background = 'transparent';
                     (e.currentTarget as HTMLElement).style.color = 'var(--text-3)';
                 }
