@@ -3,7 +3,7 @@
 import React, {
     useState, useRef, useEffect, UIEvent, useCallback,
 } from 'react';
-import { Paperclip, Loader2, Pin, PinOff, ArrowDown } from 'lucide-react';
+import { Paperclip, Loader2, Pin, PinOff, ArrowDown, Lock } from 'lucide-react';
 
 import { useMessages }              from '@/src/hooks/useMessages';
 import { useSearch }                from '@/src/hooks/useSearch';
@@ -40,7 +40,6 @@ export default function ChatArea({
                                  }: Readonly<ChatAreaProps>) {
     const currentUserId = currentUser?.id;
 
-    // UI state
     const [inputValue,     setInputValue]     = useState('');
     const [hoveredKey,     setHoveredKey]     = useState<string | null>(null);
     const [confirmDelId,   setConfirmDelId]   = useState<number | null>(null);
@@ -56,11 +55,8 @@ export default function ChatArea({
     const [showVoice,      setShowVoice]      = useState(false);
     const [forwardMsg,     setForwardMsg]     = useState<Message | null>(null);
     const [showMedia,      setShowMedia]      = useState(false);
+    const [imagePreview,   setImagePreview]   = useState<{ file: File; url: string } | null>(null);
 
-    // Image preview before sending
-    const [imagePreview, setImagePreview] = useState<{ file: File; url: string } | null>(null);
-
-    // Refs
     const abortRef       = useRef<AbortController | null>(null);
     const fileInputRef   = useRef<HTMLInputElement>(null);
     const editInputRef   = useRef<HTMLInputElement>(null);
@@ -70,7 +66,6 @@ export default function ChatArea({
     const lastMsgIdRef   = useRef<string | number | null>(null);
     const msgRefsMap     = useRef<Record<number, HTMLDivElement | null>>({});
 
-    // Conversation-level helpers
     const otherUserId = conversation?.type === 'DIRECT'
         ? conversation.members.find(m => m.userId !== currentUserId)?.userId
         : undefined;
@@ -85,7 +80,6 @@ export default function ChatArea({
     const isChannel = conversation?.type === 'CHANNEL';
     const canPin    = myMember?.role === 'OWNER' || myMember?.role === 'ADMIN';
 
-    // E2E
     const e2e = useE2E();
 
     const decryptFn = otherUserId
@@ -94,7 +88,6 @@ export default function ChatArea({
             ? (data: ArrayBuffer, senderId: number) => e2e.decryptBinaryFromGroup(data, conversation.id, senderId)
             : undefined;
 
-    // Messages hook
     const {
         messages, typingUsers,
         hasMore, hasMoreNewer,
@@ -124,34 +117,28 @@ export default function ChatArea({
         groupMemberIds,
     );
 
-    // Search hook
     const {
         query, setQuery, results, isSearching,
         isOpen: isSearchOpen, setIsOpen: setSearchOpen,
         close: closeSearch, loadedCount,
     } = useSearch(conversation?.id, otherUserId);
 
-    // Auto-scroll to bottom on new messages (skip when in jump mode)
     useEffect(() => {
         if (!messages.length) return;
         const last = messages[messages.length - 1];
-        const id   = last.id ?? (last.createdAt as string);
+        const id = last.id ?? (last.createdAt as string);
         if (id !== lastMsgIdRef.current && !jumpTarget && !hasMoreNewer) {
             messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
             lastMsgIdRef.current = id;
         }
     }, [messages]);
 
-    // Mark as read when other user's message arrives
     useEffect(() => {
         if (!messages.length || !conversation) return;
         const last = messages[messages.length - 1];
-        if (String(last.senderId) !== String(currentUserId)) {
-            onMarkRead?.(conversation.id);
-        }
+        if (String(last.senderId) !== String(currentUserId)) onMarkRead?.(conversation.id);
     }, [messages]);
 
-    // Scroll to jumped message and clear highlight after 2.5s
     useEffect(() => {
         if (jumpTarget === null) return;
         const el = msgRefsMap.current[jumpTarget];
@@ -162,10 +149,8 @@ export default function ChatArea({
         }
     }, [jumpTarget, messages]);
 
-    // Reset search navigation when results change
     useEffect(() => { setSearchNavIdx(0); }, [results]);
 
-    // Keyboard shortcuts - Escape closes edit / reply / search / preview
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
             if (e.key !== 'Escape') return;
@@ -178,7 +163,6 @@ export default function ChatArea({
         return () => document.removeEventListener('keydown', handler);
     }, [editingId, replyTo, isSearchOpen, imagePreview]);
 
-    // Focus edit input when entering edit mode
     useEffect(() => {
         if (editingId !== null) {
             editInputRef.current?.focus();
@@ -187,117 +171,78 @@ export default function ChatArea({
         }
     }, [editingId]);
 
-    // Focus search input when panel opens
     useEffect(() => {
         if (isSearchOpen) setTimeout(() => searchInputRef.current?.focus(), 50);
     }, [isSearchOpen]);
 
-    // Bidirectional infinite scroll
     const handleScroll = async (e: UIEvent<HTMLDivElement>) => {
         const el = e.currentTarget;
-
         if (el.scrollTop <= 1 && hasMore && !isLoadingMore) {
             const prevHeight = el.scrollHeight;
             await loadMoreMessages();
             requestAnimationFrame(() => { el.scrollTop = el.scrollHeight - prevHeight; });
             return;
         }
-
         const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
         if (distanceFromBottom <= 100 && hasMoreNewer && !isLoadingNewer) {
             await loadNewerMessages();
         }
     };
 
-    // Core upload logic — now accepts optional caption for image sends
     const handleFileUpload = useCallback(async (file: File, caption?: string) => {
         if (!file || !conversation) return;
         setUploadError(null);
         setUploadProgress(0);
         const ctrl = new AbortController();
         abortRef.current = ctrl;
-
         try {
             let fileToProcess = file;
-            let displayName   = file.name;
-            let displaySize   = file.size;
-            let displayType   = file.type;
-
-            if (!displayType || displayType === 'application/octet-stream') {
+            let displayMime = file.type || '';
+            if (!displayMime || displayMime === 'application/octet-stream') {
                 const derived = mimeFromFileName(file.name);
-                if (derived) displayType = derived;
+                if (derived) displayMime = derived;
             }
-            if (displayType !== file.type) {
-                fileToProcess = new File([file], file.name, { type: displayType });
+            if (displayMime.startsWith('image/')) {
+                const result = await compressImage(file, { maxWidth: 1920, maxHeight: 1920, quality: 0.75, outputFormat: 'image/jpeg', skipIfSmaller: 100 * 1024 });
+                if (result.wasCompressed) { fileToProcess = result.file; displayMime = result.file.type; }
             }
-
-            if (displayType.startsWith('image/')) {
-                const result = await compressImage(file, {
-                    maxWidth:      1920,
-                    maxHeight:     1920,
-                    quality:       0.75,
-                    outputFormat:  'image/jpeg',
-                    skipIfSmaller: 100 * 1024,
-                });
-                if (result.wasCompressed) {
-                    fileToProcess = result.file;
-                    displayType   = result.file.type;
-                    displaySize   = result.originalSize;
-                }
-            }
-
             const localBlobUrl = URL.createObjectURL(fileToProcess);
-
             let fileToUpload = fileToProcess;
             let encMeta: string | undefined;
-
             if (otherUserId) {
-                const buf    = await fileToProcess.arrayBuffer();
+                const buf = await fileToProcess.arrayBuffer();
                 const encBuf = await e2e.encryptBinary(buf, otherUserId);
                 fileToUpload = new File([encBuf], fileToProcess.name, { type: fileToProcess.type });
-                encMeta      = JSON.stringify({ encrypted: true });
+                encMeta = JSON.stringify({ encrypted: true });
             } else if (conversation?.type === 'GROUP' && conversation?.id) {
-                const buf    = await fileToProcess.arrayBuffer();
+                const buf = await fileToProcess.arrayBuffer();
                 const encBuf = await e2e.encryptBinaryForGroup(buf, conversation.id);
                 fileToUpload = new File([encBuf], fileToProcess.name, { type: fileToProcess.type });
-                encMeta      = JSON.stringify({ encrypted: true });
+                encMeta = JSON.stringify({ encrypted: true });
             }
-
             const r = await uploadFile(fileToUpload, setUploadProgress, ctrl.signal);
             sendFileMessage({
-                fileUrl:       r.url,
-                fileName:      displayName,
-                fileType:      displayType,
-                fileSize:      displaySize,
-                content:       caption?.trim() || undefined,
-                replyToId:     replyTo?.id,
-                metadata:      encMeta,
-                _localBlobUrl: localBlobUrl,
+                fileUrl: r.url, fileName: file.name, fileType: displayMime,
+                fileSize: file.size, content: caption?.trim() || undefined,
+                replyToId: replyTo?.id, metadata: encMeta, _localBlobUrl: localBlobUrl,
             });
             setReplyTo(null);
         } catch (err: any) {
-            if (err.message !== 'Upload cancelled') setUploadError(err.message ?? 'Помилка');
-        } finally {
-            setUploadProgress(null);
-            abortRef.current = null;
-        }
+            if (err.message !== 'Upload cancelled') setUploadError(err.message ?? 'Error');
+        } finally { setUploadProgress(null); abortRef.current = null; }
     }, [conversation, sendFileMessage, replyTo, otherUserId, e2e]);
 
-    // File select — show preview for images, upload directly for other types
     const handleFileSelect = useCallback(async (file: File) => {
         if (!file || !conversation) return;
-
         const displayMime = file.type || mimeFromFileName(file.name) || '';
         if (isImageType(displayMime, file.name)) {
             const url = URL.createObjectURL(file);
             setImagePreview({ file, url });
             return;
         }
-
         await handleFileUpload(file);
     }, [conversation, handleFileUpload]);
 
-    // Confirm send from image preview
     const handleConfirmImageSend = useCallback(async (caption: string) => {
         if (!imagePreview) return;
         const { file, url } = imagePreview;
@@ -306,69 +251,48 @@ export default function ChatArea({
         await handleFileUpload(file, caption);
     }, [imagePreview, handleFileUpload]);
 
-    // Cancel image preview
     const handleCancelImagePreview = useCallback(() => {
         if (imagePreview) URL.revokeObjectURL(imagePreview.url);
         setImagePreview(null);
     }, [imagePreview]);
 
-    // Voice message — encrypts blob before upload
     const mimeToExtension = (m: string) => {
         if (m === 'audio/webm') return 'webm';
         if (m === 'audio/ogg')  return 'ogg';
         if (m === 'audio/mp4')  return 'mp4';
         if (m === 'audio/mpeg') return 'mp3';
-        if (m === 'audio/wav')  return 'wav';
         return 'webm';
     };
 
-    const sendVoiceMessage = useCallback(async (
-        blob: Blob, waveform: number[], duration: number, mimeType: string,
-    ) => {
+    const sendVoiceMessage = useCallback(async (blob: Blob, waveform: number[], duration: number, mimeType: string) => {
         if (!conversation) return;
         setShowVoice(false);
         setUploadError(null);
         setUploadProgress(0);
         const ctrl = new AbortController();
         abortRef.current = ctrl;
-
         try {
             const baseMeta = { waveform, duration, mimeType };
-            let fileToUpload: File;
-            let metaObj: object;
-
+            let fileToUpload: File, metaObj: object;
             if (otherUserId) {
-                const buf = await blob.arrayBuffer();
-                const enc = await e2e.encryptBinary(buf, otherUserId);
+                const enc = await e2e.encryptBinary(await blob.arrayBuffer(), otherUserId);
                 fileToUpload = new File([enc], `voice.${mimeToExtension(mimeType)}`, { type: mimeType });
-                metaObj      = { ...baseMeta, encrypted: true };
+                metaObj = { ...baseMeta, encrypted: true };
             } else if (conversation?.type === 'GROUP' && conversation?.id) {
-                const buf = await blob.arrayBuffer();
-                const enc = await e2e.encryptBinaryForGroup(buf, conversation.id);
+                const enc = await e2e.encryptBinaryForGroup(await blob.arrayBuffer(), conversation.id);
                 fileToUpload = new File([enc], `voice.${mimeToExtension(mimeType)}`, { type: mimeType });
-                metaObj      = { ...baseMeta, encrypted: true };
+                metaObj = { ...baseMeta, encrypted: true };
             } else {
                 fileToUpload = new File([blob], `voice.${mimeToExtension(mimeType)}`, { type: mimeType });
-                metaObj      = baseMeta;
+                metaObj = baseMeta;
             }
-
             const r = await uploadFile(fileToUpload, setUploadProgress, ctrl.signal);
-            sendFileMessage({
-                fileUrl:  r.url,
-                fileName: 'Голосове повідомлення',
-                fileType: mimeType,
-                fileSize: blob.size,
-                metadata: JSON.stringify(metaObj),
-            });
+            sendFileMessage({ fileUrl: r.url, fileName: 'Voice message', fileType: mimeType, fileSize: blob.size, metadata: JSON.stringify(metaObj) });
         } catch (err: any) {
-            if (err.message !== 'Upload cancelled') setUploadError(err.message ?? 'Помилка');
-        } finally {
-            setUploadProgress(null);
-            abortRef.current = null;
-        }
+            if (err.message !== 'Upload cancelled') setUploadError(err.message ?? 'Error');
+        } finally { setUploadProgress(null); abortRef.current = null; }
     }, [conversation, sendFileMessage, otherUserId, e2e]);
 
-    // Socket-based pin / unpin
     const pinMessage = useCallback((msgId: number) => {
         if (!conversation) return;
         socket?.emit('pinMessage', { conversationId: conversation.id, messageId: msgId });
@@ -379,12 +303,10 @@ export default function ChatArea({
         socket?.emit('unpinMessage', { conversationId: conversation.id });
     }, [socket, conversation]);
 
-    // Socket-based forward
     const forwardMessage = useCallback((msgId: number, targetConvId: number) => {
         socket?.emit('forwardMessage', { messageId: msgId, targetConversationId: targetConvId });
     }, [socket]);
 
-    // Drag-and-drop file upload
     const onDragEnter = (e: React.DragEvent) => {
         e.preventDefault();
         setDragCounter(c => c + 1);
@@ -399,21 +321,16 @@ export default function ChatArea({
         });
     };
     const onDrop = (e: React.DragEvent) => {
-        e.preventDefault();
-        setIsDragging(false);
-        setDragCounter(0);
+        e.preventDefault(); setIsDragging(false); setDragCounter(0);
         const f = e.dataTransfer.files[0];
-        if (f) handleFileSelect(f);      // ← now goes through preview for images
+        if (f) handleFileSelect(f);
     };
 
-    // Edit helpers
     const startEdit = (msg: Message) => {
         if (!msg.id || msg.deletedAt || msg.fileUrl) return;
         if (Date.now() - new Date(msg.createdAt).getTime() > EDIT_WINDOW_MS) return;
-        setEditingId(msg.id);
-        setEditingContent(msg.content);
-        setConfirmDelId(null);
-        setPickerKey(null);
+        setEditingId(msg.id); setEditingContent(msg.content);
+        setConfirmDelId(null); setPickerKey(null);
     };
     const cancelEdit = () => { setEditingId(null); setEditingContent(''); };
     const submitEdit = (id: number) => {
@@ -421,7 +338,6 @@ export default function ChatArea({
         cancelEdit();
     };
 
-    // Search result navigation
     const navSearch = (dir: 'prev' | 'next') => {
         if (!results.length) return;
         const next = dir === 'next'
@@ -432,11 +348,7 @@ export default function ChatArea({
         if (msg.id) jumpToMessage(msg.id);
     };
 
-    const handleSubmit = (
-        e: React.FormEvent,
-        scheduledAt?: Date | null,
-        destructAfterSeconds?: number | null,
-    ) => {
+    const handleSubmit = (e: React.FormEvent, scheduledAt?: Date | null, destructAfterSeconds?: number | null) => {
         e.preventDefault();
         if (!inputValue.trim()) return;
         sendMessage(inputValue.trim(), replyTo?.id, scheduledAt, destructAfterSeconds);
@@ -444,52 +356,83 @@ export default function ChatArea({
         setReplyTo(null);
     };
 
-    // Empty state - no conversation selected
+    // ── Empty state ──────────────────────────────────────────────────────────────
     if (!conversation) {
         return (
-            <div className="flex-1 flex flex-col items-center justify-center bg-transparent">
-                <MessageSquarePlaceholder />
-                <p className="text-slate-300 font-medium text-lg mb-1">Ваші повідомлення</p>
-                <p className="text-sm text-slate-500">Оберіть чат для спілкування</p>
+            <div
+                className="flex-1 flex flex-col items-center justify-center"
+                style={{ background: 'var(--bg-base)' }}
+            >
+                <div
+                    className="w-16 h-16 rounded-2xl flex items-center justify-center mb-5"
+                    style={{
+                        background: 'var(--accent-dim)',
+                        border: '1px solid var(--border-accent)',
+                        boxShadow: '0 0 32px var(--accent-glow)',
+                    }}
+                >
+                    <Lock size={24} style={{ color: 'var(--accent-bright)' }} />
+                </div>
+                <p className="text-[15px] font-medium mb-2" style={{ color: 'var(--text-1)' }}>
+                    End-to-end encrypted
+                </p>
+                <p className="text-[13px]" style={{ color: 'var(--text-3)' }}>
+                    Select a conversation to begin
+                </p>
             </div>
         );
     }
 
     return (
         <main
-            className="flex-1 flex flex-col bg-transparent relative min-w-0 transition-colors duration-200"
+            className="flex-1 flex flex-col relative min-w-0"
+            style={{ background: 'var(--bg-base)' }}
             onDragEnter={onDragEnter}
             onDragLeave={onDragLeave}
-            onDragOver={(e) => e.preventDefault()}
+            onDragOver={e => e.preventDefault()}
             onDrop={onDrop}
         >
-            {/* Drag-and-drop overlay */}
+            {/* ── Drag overlay ── */}
             {isDragging && (
-                <div className="absolute inset-0 z-50 bg-indigo-500/10 backdrop-blur-[2px] flex items-center justify-center pointer-events-none">
-                    <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl px-10 py-8 flex flex-col items-center gap-3 border-2 border-dashed border-indigo-400">
-                        <Paperclip size={36} className="text-indigo-400" />
-                        <p className="text-indigo-600 dark:text-indigo-400 font-semibold text-lg">
-                            Відпустіть, щоб надіслати файл
+                <div
+                    className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none backdrop-enter"
+                    style={{ background: 'rgba(124,77,255,0.08)', backdropFilter: 'blur(4px)' }}
+                >
+                    <div
+                        className="flex flex-col items-center gap-3 px-10 py-8 rounded-2xl modal-enter"
+                        style={{
+                            background: 'var(--bg-elevated)',
+                            border: '2px dashed var(--border-accent)',
+                            boxShadow: '0 8px 40px rgba(0,0,0,0.4)',
+                        }}
+                    >
+                        <Paperclip size={28} style={{ color: 'var(--accent-bright)' }} />
+                        <p className="text-[14px] font-semibold" style={{ color: 'var(--text-1)' }}>
+                            Drop to send file
                         </p>
-                        <p className="text-slate-400 text-sm">Максимум 10 МБ</p>
+                        <p className="text-[11px]" style={{ color: 'var(--text-3)' }}>Max 10 MB</p>
                     </div>
                 </div>
             )}
 
-            {/* Floating "back to latest" button */}
+            {/* ── Jump to latest ── */}
             {hasMoreNewer && (
                 <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-20">
                     <button
                         onClick={resetToLatest}
-                        className="flex items-center gap-1.5 px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-semibold rounded-full shadow-lg transition-all cursor-pointer animate-bounce"
+                        className="flex items-center gap-2 px-4 py-2 rounded-full text-[12px] font-semibold text-white cursor-pointer transition-all duration-150 active:scale-95"
+                        style={{
+                            background: 'var(--accent)',
+                            boxShadow: '0 4px 16px rgba(124,77,255,0.4)',
+                        }}
                     >
                         <ArrowDown size={13} />
-                        Перейти до останніх
+                        Jump to latest
                     </button>
                 </div>
             )}
 
-            {/* Chat header */}
+            {/* ── Header ── */}
             <ChatHeader
                 conversation={conversation}
                 currentUser={currentUser}
@@ -500,26 +443,34 @@ export default function ChatArea({
                 onStartCall={onStartCall}
             />
 
-            {/* Pinned message banner */}
+            {/* ── Pinned message ── */}
             {conversation.pinnedMessage && (
-                <div className="bg-amber-50 dark:bg-amber-900/20 border-b border-amber-100 dark:border-amber-900/40 px-4 py-2 flex items-center gap-2 z-10">
-                    <Pin size={13} className="text-amber-500 shrink-0" />
+                <div
+                    className="flex items-center gap-3 px-5 py-2.5 slide-up"
+                    style={{
+                        background: 'rgba(251,191,36,0.05)',
+                        borderBottom: '1px solid rgba(251,191,36,0.1)',
+                    }}
+                >
+                    <Pin size={11} className="text-amber-400 shrink-0" />
                     <button
                         onClick={() => conversation.pinnedMessage?.id && jumpToMessage(conversation.pinnedMessage.id)}
                         className="flex-1 min-w-0 text-left"
                     >
-                        <p className="text-xs font-semibold text-amber-600 dark:text-amber-400 leading-tight">
+                        <p className="text-[11px] font-semibold text-amber-400 leading-tight">
                             {conversation.pinnedMessage.sender.nickname}
                         </p>
-                        <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                            {conversation.pinnedMessage.content || '📎 Файл'}
+                        <p className="text-[11px] truncate" style={{ color: 'var(--text-3)' }}>
+                            {conversation.pinnedMessage.content || '📎 File'}
                         </p>
                     </button>
                     {canPin && (
                         <button
                             onClick={unpinMessage}
-                            className="p-1 text-slate-400 hover:text-red-500 cursor-pointer transition-colors"
-                            title="Відкріпити"
+                            className="p-1 cursor-pointer transition-colors duration-150"
+                            style={{ color: 'var(--text-3)' }}
+                            onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--red)'}
+                            onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-3)'}
                         >
                             <PinOff size={13} />
                         </button>
@@ -527,7 +478,7 @@ export default function ChatArea({
                 </div>
             )}
 
-            {/* Search panel */}
+            {/* ── Search panel ── */}
             {isSearchOpen && (
                 <SearchPanel
                     query={query}
@@ -544,15 +495,23 @@ export default function ChatArea({
                 />
             )}
 
-            {/* Scrollable message list */}
+            {/* ── Messages ── */}
             <div
                 ref={scrollRef}
                 onScroll={handleScroll}
-                className="flex-1 overflow-y-auto px-5 py-5 space-y-1"
+                className="flex-1 overflow-y-auto py-4 chat-scroll"
+                style={{ paddingBottom: '8px' }}
             >
                 {isLoadingMore && (
-                    <div className="flex justify-center py-2">
-                        <Loader2 className="w-5 h-5 animate-spin text-violet-400" />
+                    <div className="flex justify-center py-3">
+                        <div
+                            className="w-4 h-4 rounded-full border-2 border-t-transparent"
+                            style={{
+                                borderColor: 'var(--border-md)',
+                                borderTopColor: 'var(--accent)',
+                                animation: 'spinSlow 0.8s linear infinite',
+                            }}
+                        />
                     </div>
                 )}
 
@@ -593,15 +552,22 @@ export default function ChatArea({
                 ))}
 
                 {isLoadingNewer && (
-                    <div className="flex justify-center py-2">
-                        <Loader2 className="w-5 h-5 animate-spin text-violet-400" />
+                    <div className="flex justify-center py-3">
+                        <div
+                            className="w-4 h-4 rounded-full border-2 border-t-transparent"
+                            style={{
+                                borderColor: 'var(--border-md)',
+                                borderTopColor: 'var(--accent)',
+                                animation: 'spinSlow 0.8s linear infinite',
+                            }}
+                        />
                     </div>
                 )}
 
                 <div ref={messagesEndRef} />
             </div>
 
-            {/* Input bar */}
+            {/* ── Input ── */}
             <ChatInput
                 canPost={!!canPost}
                 inputValue={inputValue}
@@ -625,7 +591,7 @@ export default function ChatArea({
                 notifyTyping={notifyTyping}
             />
 
-            {/* Forward modal */}
+            {/* ── Modals ── */}
             {forwardMsg && (
                 <ForwardModal
                     conversations={conversations}
@@ -633,8 +599,6 @@ export default function ChatArea({
                     onClose={() => setForwardMsg(null)}
                 />
             )}
-
-            {/* Media attachments panel */}
             {showMedia && conversation && (
                 <MediaPanel
                     conversationId={conversation.id}
@@ -643,8 +607,6 @@ export default function ChatArea({
                     decryptFn={decryptFn}
                 />
             )}
-
-            {/* Image send preview modal */}
             {imagePreview && (
                 <ImageSendPreview
                     file={imagePreview.file}
@@ -655,15 +617,5 @@ export default function ChatArea({
                 />
             )}
         </main>
-    );
-}
-
-function MessageSquarePlaceholder() {
-    return (
-        <div className="w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center mb-4">
-            <svg width="32" height="32" fill="none" viewBox="0 0 24 24">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" stroke="#6b7280" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-        </div>
     );
 }

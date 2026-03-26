@@ -5,3 +5,172 @@
 @source "../context";
 
 @custom-variant dark (&:where(.dark, .dark *))
+
+    /* ─── Design Tokens ──────────────────────────────────────────────────────── */
+:root {
+    --bg-base:     #09090f;
+    --bg-surface:  #0e0e16;
+    --bg-elevated: #131320;
+    --bg-hover:    rgba(255,255,255,0.025);
+    --bg-active:   rgba(124,77,255,0.1);
+
+    --border:      rgba(255,255,255,0.055);
+    --border-md:   rgba(255,255,255,0.09);
+    --border-accent: rgba(124,77,255,0.28);
+
+    --accent:        #7c4dff;
+    --accent-bright: #9d77ff;
+    --accent-dim:    rgba(124,77,255,0.14);
+    --accent-glow:   rgba(124,77,255,0.22);
+
+    --msg-mine-bg:     rgba(100,60,255,0.18);
+    --msg-mine-border: rgba(120,80,255,0.28);
+    --msg-them-bg:     rgba(255,255,255,0.045);
+    --msg-them-border: rgba(255,255,255,0.065);
+
+    --text-1: #eeeef5;
+    --text-2: rgba(238,238,245,0.48);
+    --text-3: rgba(238,238,245,0.22);
+
+    --green:  #22d472;
+    --red:    #ff4d6a;
+    --amber:  #fbbf24;
+
+    --radius-xs: 6px;
+    --radius-sm: 10px;
+    --radius-md: 14px;
+    --radius-lg: 18px;
+    --radius-xl: 22px;
+
+    --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+    --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ─── Keyframes ──────────────────────────────────────────────────────────── */
+@keyframes msgSlideUp {
+    0%   { opacity: 0; transform: translateY(12px) scale(0.93); }
+    55%  { transform: translateY(-2px) scale(1.008); }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes modalEnter {
+    from { opacity: 0; transform: scale(0.94) translateY(8px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes backdropFade {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+@keyframes panelSlideRight {
+    from { opacity: 0; transform: translateX(24px); }
+    to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes panelSlideBottom {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeSlideUp {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes shimmerMove {
+    0%   { background-position: -300% 0; }
+    100% { background-position: 300% 0; }
+}
+
+@keyframes spinSlow {
+    to { transform: rotate(360deg); }
+}
+
+@keyframes dotBounce {
+    0%, 80%, 100% { transform: translateY(0); opacity: 0.35; }
+    40%           { transform: translateY(-5px); opacity: 1; }
+}
+
+@keyframes badgePop {
+    0%   { transform: scale(0.5); opacity: 0; }
+    65%  { transform: scale(1.15); }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes pulseGlow {
+    0%, 100% { box-shadow: 0 0 0 0 var(--accent-glow); }
+    50%       { box-shadow: 0 0 0 6px transparent; }
+}
+
+/* ─── Animation Classes ──────────────────────────────────────────────────── */
+.msg-appear {
+    animation: msgSlideUp 240ms var(--ease-spring) both;
+}
+
+.modal-enter {
+    animation: modalEnter 220ms var(--ease-spring) both;
+}
+
+.backdrop-enter {
+    animation: backdropFade 200ms var(--ease-smooth) both;
+}
+
+.panel-enter {
+    animation: panelSlideRight 260ms var(--ease-spring) both;
+}
+
+.slide-up {
+    animation: fadeSlideUp 200ms var(--ease-smooth) both;
+}
+
+.slide-up-stagger > * {
+    animation: fadeSlideUp 200ms var(--ease-smooth) both;
+}
+.slide-up-stagger > *:nth-child(1) { animation-delay: 0ms; }
+.slide-up-stagger > *:nth-child(2) { animation-delay: 40ms; }
+.slide-up-stagger > *:nth-child(3) { animation-delay: 80ms; }
+.slide-up-stagger > *:nth-child(4) { animation-delay: 120ms; }
+.slide-up-stagger > *:nth-child(5) { animation-delay: 160ms; }
+
+/* ─── Skeleton ───────────────────────────────────────────────────────────── */
+.skeleton {
+    background: linear-gradient(
+            90deg,
+            rgba(255,255,255,0.04) 0%,
+            rgba(255,255,255,0.075) 40%,
+            rgba(255,255,255,0.04) 100%
+    );
+    background-size: 300% 100%;
+    animation: shimmerMove 1.8s ease-in-out infinite;
+    border-radius: 6px;
+}
+
+/* ─── Scrollbar ──────────────────────────────────────────────────────────── */
+.chat-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,0.07) transparent;
+}
+.chat-scroll::-webkit-scrollbar { width: 3px; }
+.chat-scroll::-webkit-scrollbar-track { background: transparent; }
+.chat-scroll::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.07);
+    border-radius: 2px;
+}
+.chat-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.14); }
+
+/* ─── Typing Dots ────────────────────────────────────────────────────────── */
+.typing-dot:nth-child(1) { animation: dotBounce 1.2s 0ms infinite; }
+.typing-dot:nth-child(2) { animation: dotBounce 1.2s 160ms infinite; }
+.typing-dot:nth-child(3) { animation: dotBounce 1.2s 320ms infinite; }
+
+/* ─── Utilities ──────────────────────────────────────────────────────────── */
+.glass {
+    background: rgba(14,14,22,0.88);
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+}
+
+.badge-appear {
+    animation: badgePop 300ms var(--ease-spring) both;
+}
