@@ -15,6 +15,11 @@ export const useConversations = (socket: any, activeConversationId?: number) => 
         activeConvIdRef.current = activeConversationId;
     }, [activeConversationId]);
 
+    const convsRef = useRef<Conversation[]>([]);
+    useEffect(() => {
+        convsRef.current = conversations;
+    }, [conversations]);
+
     const e2e = useE2E();
 
     // HELPER: decode lasMessage for one conversation (used on initial fetch)
@@ -74,116 +79,98 @@ export const useConversations = (socket: any, activeConversationId?: number) => 
     useEffect(() => {
         if (!socket) return;
 
-        const onMessage = (msg: Message) => {
+        const onMessage = async (msg: Message) => {
             const isOwnMessage = String(msg.senderId) === String(currentUserId);
             const isCiphertext = msg.content?.length > 20 && /^[A-Za-z0-9_\-]+$/.test(msg.content ?? '');
 
+            // 1. Беремо бесіду з REF — це миттєво, синхронно і не залежить від черг React
+            const targetConv = convsRef.current.find((c) => c.id === msg.conversationId);
+            if (!targetConv) return;
+
+            let plainContent = msg.content;
+
+            // 2. Декриптація
             if (isCiphertext) {
-                setConversations((prev) => {
-                    const conv = prev.find(c => c.id === msg.conversationId);
-                    if (!conv) return prev;
-
-                    let decryptPromise: Promise<string>;
-
-                    if (conv.type === 'DIRECT') {
-                        const otherMember = conv.members.find(m => m.userId !== currentUserId);
-                        if (!otherMember) return prev;
-                        decryptPromise = e2e.decrypt(msg.content, otherMember.userId);
-                    } else if (conv.type === 'GROUP') {
-                        decryptPromise = e2e.decryptFromGroup(msg.content, conv.id, Number(msg.senderId));
-                    } else {
-                        return prev;
+                try {
+                    if (targetConv.type === 'DIRECT') {
+                        const otherMember = targetConv.members.find((m) => m.userId !== currentUserId);
+                        if (otherMember) {
+                            plainContent = await e2e.decrypt(msg.content, otherMember.userId);
+                        }
+                    } else if (targetConv.type === 'GROUP') {
+                        plainContent = await e2e.decryptFromGroup(msg.content, targetConv.id, Number(msg.senderId));
                     }
-
-                    decryptPromise.then(plain => {
-                        setConversations(prevConvs =>
-                            prevConvs
-                                .map(c => c.id !== msg.conversationId ? c : {
-                                    ...c,
-                                    lastMessage: {
-                                        id:        msg.id!,
-                                        content:   plain,
-                                        senderId:  Number(msg.senderId),
-                                        createdAt: msg.createdAt as string,
-                                        fileType:  msg.fileType ?? null,
-                                        fileUrl:   msg.fileUrl  ?? null,
-                                    },
-                                    unreadCount: isOwnMessage || msg.conversationId === activeConvIdRef.current
-                                        ? c.unreadCount
-                                        : c.unreadCount + 1,
-                                    updatedAt:   msg.createdAt as string,
-                                })
-                                .sort((a, b) =>
-                                    new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-                                ),
-                        );
-                    });
-                    return prev;
-                });
-                return;
+                } catch (e) {
+                    console.error('onMessage decrypt error:', e);
+                }
             }
 
-            // Не зашифроване (CHANNEL або plaintext)
+            // 3. Оновлення з урахуванням черговості
             setConversations((prev) =>
-                prev
-                    .map((c) =>
-                        c.id !== msg.conversationId ? c : {
-                            ...c,
-                            lastMessage: {
-                                id:        msg.id!,
-                                content:   msg.content,
-                                senderId:  Number(msg.senderId),
-                                createdAt: msg.createdAt as string,
-                                fileType:  msg.fileType ?? null,
-                                fileUrl:   msg.fileUrl  ?? null,
-                            },
-                            unreadCount: isOwnMessage || c.id === activeConvIdRef.current
-                                ? c.unreadCount
-                                : c.unreadCount + 1,
-                            updatedAt:   msg.createdAt as string,
-                        },
-                    )
-                    .sort((a, b) =>
-                        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-                    ),
+                prev.map((c) => {
+                    if (c.id !== msg.conversationId) return c;
+
+                    // ЗАХИСТ ВІД ПЕРЕГОНІВ (Race condition):
+                    // Перевіряємо, чи це повідомлення новіше за те, що ВЖЕ лежить у state.
+                    // Це важливо, бо довга декриптація старого повідомлення може закінчитись ПІЗНІШЕ за нове.
+                    const isNewer = !c.lastMessage || new Date(msg.createdAt).getTime() >= new Date(c.lastMessage.createdAt).getTime();
+
+                    return {
+                        ...c,
+                        lastMessage: isNewer ? {
+                            id:        msg.id!,
+                            content:   plainContent,
+                            senderId:  Number(msg.senderId),
+                            createdAt: msg.createdAt as string,
+                            fileType:  msg.fileType ?? null,
+                            fileUrl:   msg.fileUrl  ?? null,
+                        } : c.lastMessage,
+                        unreadCount: isOwnMessage || msg.conversationId === activeConvIdRef.current
+                            ? c.unreadCount
+                            : c.unreadCount + 1,
+                        updatedAt: isNewer ? (msg.createdAt as string) : c.updatedAt,
+                    };
+                }).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
             );
         };
 
-        const onEdited = (data: {
+        const onEdited = async (data: {
             messageId: number;
             content: string;
             editedAt: string;
             conversationId: number;
+            senderId?: number;
         }) => {
-            setConversations((prev) =>
-                prev.map((c) => {
-                    if (c.id !== data.conversationId) return c;
-                    if (c.lastMessage?.id !== data.messageId) return c;
+            // Теж дістаємо через REF
+            const targetConv = convsRef.current.find((c) => c.id === data.conversationId);
+            if (!targetConv || targetConv.lastMessage?.id !== data.messageId) return;
 
-                    if (c.type === 'DIRECT') {
-                        const otherMember = c.members.find(m => m.userId !== currentUserId);
+            const isCiphertext = data.content?.length > 20 && /^[A-Za-z0-9_\-]+$/.test(data.content);
+            let plainContent = data.content;
+
+            if (isCiphertext) {
+                const actualSenderId = data.senderId || targetConv.lastMessage.senderId;
+                try {
+                    if (targetConv.type === 'DIRECT') {
+                        const otherMember = targetConv.members.find((m) => m.userId !== currentUserId);
                         if (otherMember) {
-                            e2e.decrypt(data.content, otherMember.userId)
-                                .then(plain => {
-                                    setConversations(prev2 =>
-                                    prev2.map(c2 =>
-                                    c2.id !== data.conversationId ? c2 :
-                                    c2.lastMessage?.id !== data.messageId ? c2 : {
-                                        ...c2,
-                                        lastMessage: { ...c2.lastMessage!, content: plain },
-                                    }
-                                )
-                            );
-                        })
-                            .catch(() => {})
+                            plainContent = await e2e.decrypt(data.content, otherMember.userId);
+                        }
+                    } else if (targetConv.type === 'GROUP') {
+                        plainContent = await e2e.decryptFromGroup(data.content, targetConv.id, Number(actualSenderId));
                     }
-                        return c;
+                } catch (e) {
+                    console.error('onEdited decrypt error:', e);
                 }
-                    return {
-                    ...c,
-                    lastMessage: { ...c.lastMessage!, content: data.content },
-                    };
-                })
+            }
+
+            setConversations((prev) =>
+                prev.map((c) =>
+                    c.id !== data.conversationId ? c : {
+                        ...c,
+                        lastMessage: { ...c.lastMessage!, content: plainContent },
+                    }
+                )
             );
         };
 

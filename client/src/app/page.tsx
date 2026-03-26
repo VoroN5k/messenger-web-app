@@ -102,7 +102,7 @@ function AnimatedLock() {
                 }}
             />
 
-            <svg width="160" height="190" viewBox="0 0 160 190" fill="none" xmlns="http://www.w3.org/2000/svg" className="overflow-visiblejrt">
+            <svg width="160" height="190" viewBox="0 0 160 190" fill="none" xmlns="http://www.w3.org/2000/svg" className="overflow-visible">
                 {/* ── Shackle ── */}
                 <g
                     style={{

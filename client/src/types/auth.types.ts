@@ -6,6 +6,7 @@ export interface User {
     isOnline?: boolean;
     lastSeen?: Date | string;
     avatarUrl?: string | null;
+    statusEmoji?: string;
 }
 
 export interface JwtPayload {
@@ -14,6 +15,7 @@ export interface JwtPayload {
     email: string;
     role: string;
     avatarUrl: string | null;
+    statusEmoji?: string | null;
     iat: number;
     exp: number;
 }

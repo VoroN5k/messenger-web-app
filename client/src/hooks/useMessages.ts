@@ -264,9 +264,19 @@ export const useMessages = (
 
         const onEdited = async (data: { messageId: number; content: string; editedAt: string; conversationId: number; senderId?: number }) => {
             if (data.conversationId !== conversationId) return;
+
+            const existingMsg = messagesRef.current.find(m => m.id === data.messageId);
+            if (!existingMsg) return;
+
+            const actualSenderId = data.senderId || existingMsg.senderId;
+
             let content = data.content;
-            if (looksEncrypted(content) && data.senderId) {
-                try { content = await decryptContent(content, data.senderId); } catch {}
+            if (looksEncrypted(content) && actualSenderId) {
+                try {
+                    content = await decryptContent(content, actualSenderId);
+                } catch {
+                    console.error('[E2E] Помилка декриптації відредагованого повідомлення')
+                }
             }
             setMessages(prev => prev.map(m => m.id === data.messageId ? { ...m, content, editedAt: data.editedAt } : m));
         };
