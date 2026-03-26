@@ -4,7 +4,7 @@
 @source "../app";
 @source "../context";
 
-@custom-variant dark (&:where(.dark, .dark *))
+@custom-variant dark (&:where(.dark, .dark *));
 
     /* ─── Design Tokens ──────────────────────────────────────────────────────── */
 :root {

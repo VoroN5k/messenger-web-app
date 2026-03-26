@@ -4,7 +4,7 @@ import { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import {
     MessageSquare, Users, Search, X, UserPlus, Check, Hash,
-    Settings, Bookmark, Plus, Shield,
+    Settings, Bookmark, Plus, Shield, LogOut, Bell, BellOff, BellRing,
 } from 'lucide-react';
 import { useAuthStore } from '@/src/store/useAuthStore';
 import api from '@/src/lib/axios';
@@ -49,7 +49,6 @@ function isSavedMessages(conv: Conversation, uid?: number) {
     return !!uid && conv.type === 'DIRECT' && conv.members.every(m => m.userId === uid);
 }
 
-// ── Skeletons ─────────────────────────────────────────────────────────────────
 function ConvSkeleton() {
     return (
         <div className="flex items-center gap-3 px-3 py-2.5 mx-2 my-0.5 rounded-xl">
@@ -62,12 +61,12 @@ function ConvSkeleton() {
     );
 }
 
-// ── Main Component ─────────────────────────────────────────────────────────────
 export default function Sidebar(props: Readonly<SidebarProps>) {
     const {
         currentUser, conversations, convsLoading, friends, pendingRequests,
         selectedConvId, socket, onSelectConversation, onAddConversation,
         onSendFriendRequest, onRespondFriendRequest, onRemoveFriend,
+        onLogout, pushPermission, onTogglePush,
     } = props;
 
     const router = useRouter();
@@ -79,8 +78,12 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
     const [showNewGroup, setShowNewGroup] = useState(false);
     const [showNewChan, setShowNewChan] = useState(false);
     const [sendingReq, setSendingReq] = useState<number | null>(null);
+    const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
     const { setAuth, user, accessToken } = useAuthStore();
     const searchTimer = useRef<NodeJS.Timeout | null>(null);
+
+    const notifGranted = pushPermission === 'granted';
+    const notifDenied  = pushPermission === 'denied';
 
     const handleSaveAvatar = async (blob: Blob) => {
         const fd = new FormData(); fd.append('avatar', blob, 'avatar.jpg');
@@ -137,30 +140,33 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
 
     return (
         <aside
-            className="w-[300px] flex flex-col shrink-0 h-full chat-scroll"
+            className="w-[300px] flex flex-col shrink-0 h-full"
             style={{
                 background: 'var(--bg-surface)',
                 borderRight: '1px solid var(--border)',
             }}
         >
             {/* ── Top bar ── */}
-            <div className="px-4 pt-5 pb-4 flex items-center justify-between shrink-0">
+            <div className="px-4 pt-4 pb-3 flex items-center justify-between shrink-0"
+                 style={{ borderBottom: '1px solid var(--border)' }}>
+                {/* User info */}
                 <div
-                    className="flex items-center gap-2.5 min-w-0 cursor-pointer group"
+                    className="flex items-center gap-2.5 min-w-0 cursor-pointer group flex-1"
                     onClick={() => setShowCropModal(true)}
+                    title="Змінити аватар"
                 >
-                    <div className="relative">
+                    <div className="relative shrink-0">
                         {currentUser && <Avatar user={currentUser} size="md" />}
                         <div
                             className="absolute inset-0 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center justify-center"
                             style={{ background: 'rgba(0,0,0,0.55)' }}
                         >
-                            <Plus size={13} className="text-white" />
+                            <Plus size={12} className="text-white" />
                         </div>
                     </div>
-                    <div className="min-w-0">
-                        <p className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-1)' }}>
-                            {currentUser?.nickname}
+                    <div className="min-w-0 flex-1">
+                        <p className="text-[13px] font-semibold truncate leading-tight" style={{ color: 'var(--text-1)' }}>
+                            {currentUser?.nickname ?? '—'}
                         </p>
                         <div className="flex items-center gap-1 mt-0.5">
                             <Shield size={9} style={{ color: 'var(--accent)' }} />
@@ -168,35 +174,47 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
                         </div>
                     </div>
                 </div>
-                <button
-                    onClick={() => router.push('/settings')}
-                    className="w-8 h-8 rounded-xl flex items-center justify-center cursor-pointer transition-all duration-150"
-                    style={{ color: 'var(--text-3)' }}
-                    onMouseEnter={e => {
-                        (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.05)';
-                        (e.currentTarget as HTMLElement).style.color = 'var(--text-2)';
-                    }}
-                    onMouseLeave={e => {
-                        (e.currentTarget as HTMLElement).style.background = 'transparent';
-                        (e.currentTarget as HTMLElement).style.color = 'var(--text-3)';
-                    }}
-                >
-                    <Settings size={15} />
-                </button>
+
+                {/* Action buttons */}
+                <div className="flex items-center gap-0.5 shrink-0">
+                    {/* Notification bell */}
+                    {onTogglePush && !notifDenied && (
+                        <SidebarIconBtn
+                            onClick={onTogglePush}
+                            title={notifGranted ? 'Сповіщення увімкнені' : 'Увімкнути сповіщення'}
+                            active={notifGranted}
+                        >
+                            {notifGranted
+                                ? <BellRing size={15} style={{ color: 'var(--accent-bright)' }} />
+                                : <Bell size={15} />
+                            }
+                        </SidebarIconBtn>
+                    )}
+
+                    {/* Settings */}
+                    <SidebarIconBtn onClick={() => router.push('/settings')} title="Налаштування">
+                        <Settings size={15} />
+                    </SidebarIconBtn>
+
+                    {/* Logout */}
+                    <SidebarIconBtn
+                        onClick={() => setShowLogoutConfirm(true)}
+                        title="Вийти"
+                        danger
+                    >
+                        <LogOut size={15} />
+                    </SidebarIconBtn>
+                </div>
             </div>
 
             {/* ── Search ── */}
-            <div className="px-4 pb-3 shrink-0">
+            <div className="px-4 py-3 shrink-0">
                 <div className="relative flex items-center">
-                    <Search
-                        size={13}
-                        className="absolute left-3 pointer-events-none"
-                        style={{ color: 'var(--text-3)' }}
-                    />
+                    <Search size={13} className="absolute left-3 pointer-events-none" style={{ color: 'var(--text-3)' }} />
                     <input
                         value={searchQuery}
                         onChange={e => handleSearch(e.target.value)}
-                        placeholder="Search…"
+                        placeholder="Пошук..."
                         className="w-full pl-8 pr-8 py-2 text-[13px] outline-none transition-all duration-200"
                         style={{
                             background: 'rgba(255,255,255,0.04)',
@@ -234,14 +252,14 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
                             : { background: 'transparent', color: 'var(--text-3)', border: '1px solid transparent' }
                         }
                     >
-                        {t === 'chats' ? 'Chats' : 'Contacts'}
+                        {t === 'chats' ? 'Чати' : 'Контакти'}
                         {t === 'friends' && pendingRequests.length > 0 && (
                             <span
                                 className="absolute -top-1 -right-1 w-4 h-4 rounded-full text-white text-[9px] flex items-center justify-center font-bold badge-appear"
                                 style={{ background: 'var(--accent)' }}
                             >
-                {pendingRequests.length}
-              </span>
+                                {pendingRequests.length}
+                            </span>
                         )}
                     </button>
                 ))}
@@ -259,13 +277,13 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
                                 onClick={openSaved}
                                 className="w-9 h-9 rounded-xl flex items-center justify-center cursor-pointer transition-all duration-150 shrink-0"
                                 style={{ background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.14)' }}
-                                title="Saved"
+                                title="Збережені"
                             >
                                 <Bookmark size={14} className="text-amber-400" />
                             </button>
                             {[
-                                { icon: <Users size={12} />, label: 'Group', action: () => setShowNewGroup(true) },
-                                { icon: <Hash size={12} />, label: 'Channel', action: () => setShowNewChan(true) },
+                                { icon: <Users size={12} />, label: 'Група', action: () => setShowNewGroup(true) },
+                                { icon: <Hash size={12} />, label: 'Канал', action: () => setShowNewChan(true) },
                             ].map(btn => (
                                 <button
                                     key={btn.label}
@@ -291,117 +309,91 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
                             ))}
                         </div>
 
-                        {/* Divider */}
                         <div className="mx-4 mb-2" style={{ borderTop: '1px solid var(--border)' }} />
 
-                        {/* List */}
+                        {/* Conversation list */}
                         {convsLoading
                             ? Array.from({ length: 5 }).map((_, i) => <ConvSkeleton key={i} />)
-                            : filteredConvs.map(conv => {
-                                const isSelected = conv.id === selectedConvId;
-                                const isSaved = isSavedMessages(conv, currentUser?.id);
+                            : filteredConvs.length === 0
+                                ? (
+                                    <div className="px-4 py-8 text-center">
+                                        <p className="text-[12px]" style={{ color: 'var(--text-3)' }}>
+                                            {searchQuery ? 'Нічого не знайдено' : 'Немає чатів. Додайте друзів!'}
+                                        </p>
+                                    </div>
+                                )
+                                : filteredConvs.map(conv => {
+                                    const isSelected = conv.id === selectedConvId;
+                                    const isSaved = isSavedMessages(conv, currentUser?.id);
 
-                                return (
-                                    <div
-                                        key={conv.id}
-                                        onClick={() => onSelectConversation(conv)}
-                                        className="flex items-center gap-3 px-3 py-2.5 mx-2 my-0.5 rounded-xl cursor-pointer transition-all duration-150"
-                                        style={{
-                                            background: isSelected ? 'var(--bg-active)' : 'transparent',
-                                            border: isSelected ? '1px solid var(--border-accent)' : '1px solid transparent',
-                                        }}
-                                        onMouseEnter={e => {
-                                            if (!isSelected)
-                                                (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)';
-                                        }}
-                                        onMouseLeave={e => {
-                                            if (!isSelected)
-                                                (e.currentTarget as HTMLElement).style.background = 'transparent';
-                                        }}
-                                    >
-                                        {/* Avatar */}
-                                        <div className="relative shrink-0">
-                                            {isSaved ? (
-                                                <div
-                                                    className="w-11 h-11 rounded-full flex items-center justify-center"
-                                                    style={{ background: 'rgba(251,191,36,0.12)' }}
-                                                >
-                                                    <Bookmark size={17} className="text-amber-400" />
-                                                </div>
-                                            ) : conv.avatarUrl || conv.type === 'DIRECT' ? (
-                                                <>
-                                                    <Avatar
-                                                        user={{ nickname: conv.name ?? '?', avatarUrl: conv.avatarUrl }}
-                                                        size="md"
-                                                        className="w-11 h-11"
-                                                    />
-                                                    {conv.type === 'DIRECT' && (
-                                                        <span
-                                                            className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2"
-                                                            style={{
-                                                                background: conv.isOnline ? 'var(--green)' : '#3a3a4a',
-                                                                borderColor: 'var(--bg-surface)',
-                                                            }}
-                                                        />
-                                                    )}
-                                                </>
-                                            ) : (
-                                                <div
-                                                    className="w-11 h-11 rounded-full flex items-center justify-center"
-                                                    style={{
-                                                        background: conv.type === 'GROUP'
-                                                            ? 'rgba(124,77,255,0.12)'
-                                                            : 'rgba(59,130,246,0.12)',
-                                                    }}
-                                                >
-                                                    {conv.type === 'GROUP'
-                                                        ? <Users size={17} style={{ color: 'var(--accent)' }} />
-                                                        : <Hash size={17} className="text-blue-400" />}
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        {/* Text */}
-                                        <div className="min-w-0 flex-1">
-                                            <div className="flex items-center justify-between mb-0.5 gap-2">
-                                                <p
-                                                    className="text-[13px] font-semibold truncate"
-                                                    style={{ color: 'var(--text-1)' }}
-                                                >
-                                                    {isSaved ? 'Saved' : (conv.name ?? 'Chat')}
-                                                </p>
-                                                {conv.lastMessage && (
-                                                    <span
-                                                        className="text-[10px] font-mono shrink-0"
-                                                        style={{ color: 'var(--text-3)' }}
-                                                    >
-                              {formatTime(conv.lastMessage.createdAt)}
-                            </span>
+                                    return (
+                                        <div
+                                            key={conv.id}
+                                            onClick={() => onSelectConversation(conv)}
+                                            className="flex items-center gap-3 px-3 py-2.5 mx-2 my-0.5 rounded-xl cursor-pointer transition-all duration-150"
+                                            style={{
+                                                background: isSelected ? 'var(--bg-active)' : 'transparent',
+                                                border: isSelected ? '1px solid var(--border-accent)' : '1px solid transparent',
+                                            }}
+                                            onMouseEnter={e => {
+                                                if (!isSelected) (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)';
+                                            }}
+                                            onMouseLeave={e => {
+                                                if (!isSelected) (e.currentTarget as HTMLElement).style.background = 'transparent';
+                                            }}
+                                        >
+                                            {/* Avatar */}
+                                            <div className="relative shrink-0">
+                                                {isSaved ? (
+                                                    <div className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: 'rgba(251,191,36,0.12)' }}>
+                                                        <Bookmark size={17} className="text-amber-400" />
+                                                    </div>
+                                                ) : conv.avatarUrl || conv.type === 'DIRECT' ? (
+                                                    <>
+                                                        <Avatar user={{ nickname: conv.name ?? '?', avatarUrl: conv.avatarUrl }} size="md" className="w-11 h-11" />
+                                                        {conv.type === 'DIRECT' && (
+                                                            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2"
+                                                                  style={{ background: conv.isOnline ? 'var(--green)' : '#3a3a4a', borderColor: 'var(--bg-surface)' }} />
+                                                        )}
+                                                    </>
+                                                ) : (
+                                                    <div className="w-11 h-11 rounded-full flex items-center justify-center"
+                                                         style={{ background: conv.type === 'GROUP' ? 'rgba(124,77,255,0.12)' : 'rgba(59,130,246,0.12)' }}>
+                                                        {conv.type === 'GROUP' ? <Users size={17} style={{ color: 'var(--accent)' }} /> : <Hash size={17} className="text-blue-400" />}
+                                                    </div>
                                                 )}
                                             </div>
-                                            <div className="flex items-center justify-between gap-2">
-                                                <p
-                                                    className="text-[12px] truncate"
-                                                    style={{
+
+                                            {/* Text */}
+                                            <div className="min-w-0 flex-1">
+                                                <div className="flex items-center justify-between mb-0.5 gap-2">
+                                                    <p className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-1)' }}>
+                                                        {isSaved ? 'Збережені' : (conv.name ?? 'Чат')}
+                                                    </p>
+                                                    {conv.lastMessage && (
+                                                        <span className="text-[10px] font-mono shrink-0" style={{ color: 'var(--text-3)' }}>
+                                                            {formatTime(conv.lastMessage.createdAt)}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <p className="text-[12px] truncate" style={{
                                                         color: conv.unreadCount > 0 ? 'var(--text-2)' : 'var(--text-3)',
                                                         fontWeight: conv.unreadCount > 0 ? 500 : 400,
-                                                    }}
-                                                >
-                                                    {conv.lastMessage?.content || (conv.lastMessage?.fileType ? '📎 File' : '…')}
-                                                </p>
-                                                {conv.unreadCount > 0 && (
-                                                    <span
-                                                        className="shrink-0 min-w-[18px] h-[18px] rounded-full text-[10px] font-semibold text-white px-1.5 flex items-center justify-center badge-appear"
-                                                        style={{ background: 'var(--accent)' }}
-                                                    >
-                              {conv.unreadCount}
-                            </span>
-                                                )}
+                                                    }}>
+                                                        {conv.lastMessage?.content || (conv.lastMessage?.fileType ? '📎 Файл' : '…')}
+                                                    </p>
+                                                    {conv.unreadCount > 0 && (
+                                                        <span className="shrink-0 min-w-[18px] h-[18px] rounded-full text-[10px] font-semibold text-white px-1.5 flex items-center justify-center badge-appear"
+                                                              style={{ background: 'var(--accent)' }}>
+                                                            {conv.unreadCount}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
-                                    </div>
-                                );
-                            })}
+                                    );
+                                })}
                     </>
                 )}
 
@@ -411,34 +403,24 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
                         {/* Pending requests */}
                         {pendingRequests.length > 0 && (
                             <section className="slide-up">
-                                <p
-                                    className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest"
-                                    style={{ color: 'var(--text-3)' }}
-                                >
-                                    Requests
+                                <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-3)' }}>
+                                    Запити
                                 </p>
                                 {pendingRequests.map(req => (
-                                    <div
-                                        key={req.id}
-                                        className="flex items-center gap-3 px-3 py-2.5 rounded-xl mb-1"
-                                        style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)' }}
-                                    >
+                                    <div key={req.id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl mb-1"
+                                         style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)' }}>
                                         <Avatar user={req.sender!} size="md" />
                                         <p className="flex-1 text-[13px] font-medium truncate" style={{ color: 'var(--text-1)' }}>
                                             {req.sender?.nickname}
                                         </p>
-                                        <button
-                                            onClick={() => onRespondFriendRequest(req.id, 'ACCEPTED')}
-                                            className="w-8 h-8 rounded-xl flex items-center justify-center cursor-pointer transition-all duration-150"
-                                            style={{ background: 'rgba(34,212,114,0.12)', border: '1px solid rgba(34,212,114,0.18)' }}
-                                        >
+                                        <button onClick={() => onRespondFriendRequest(req.id, 'ACCEPTED')}
+                                                className="w-8 h-8 rounded-xl flex items-center justify-center cursor-pointer transition-all duration-150"
+                                                style={{ background: 'rgba(34,212,114,0.12)', border: '1px solid rgba(34,212,114,0.18)' }}>
                                             <Check size={13} className="text-green-400" />
                                         </button>
-                                        <button
-                                            onClick={() => onRespondFriendRequest(req.id, 'DECLINED')}
-                                            className="w-8 h-8 rounded-xl flex items-center justify-center cursor-pointer transition-all duration-150"
-                                            style={{ background: 'rgba(255,77,106,0.1)', border: '1px solid rgba(255,77,106,0.15)' }}
-                                        >
+                                        <button onClick={() => onRespondFriendRequest(req.id, 'DECLINED')}
+                                                className="w-8 h-8 rounded-xl flex items-center justify-center cursor-pointer transition-all duration-150"
+                                                style={{ background: 'rgba(255,77,106,0.1)', border: '1px solid rgba(255,77,106,0.15)' }}>
                                             <X size={13} className="text-red-400" />
                                         </button>
                                     </div>
@@ -449,82 +431,50 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
                         {/* Search results */}
                         {searchQuery.trim().length >= 2 && (
                             <section>
-                                <p
-                                    className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest"
-                                    style={{ color: 'var(--text-3)' }}
-                                >
-                                    People
+                                <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-3)' }}>
+                                    Користувачі
                                 </p>
                                 {isSearching ? (
                                     <div className="flex justify-center py-8">
-                                        <div
-                                            className="w-5 h-5 rounded-full border-2 border-t-transparent"
-                                            style={{
-                                                borderColor: 'rgba(124,77,255,0.3)',
-                                                borderTopColor: 'var(--accent)',
-                                                animation: 'spinSlow 0.8s linear infinite',
-                                            }}
-                                        />
+                                        <div className="w-5 h-5 rounded-full border-2 border-t-transparent"
+                                             style={{ borderColor: 'rgba(124,77,255,0.3)', borderTopColor: 'var(--accent)', animation: 'spinSlow 0.8s linear infinite' }} />
                                     </div>
                                 ) : searchResults.length === 0 ? (
-                                    <p className="px-3 py-4 text-[12px]" style={{ color: 'var(--text-3)' }}>
-                                        No results
-                                    </p>
+                                    <p className="px-3 py-4 text-[12px]" style={{ color: 'var(--text-3)' }}>Нікого не знайдено</p>
                                 ) : (
                                     searchResults.map(u => (
-                                        <div
-                                            key={u.id}
-                                            className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-150 mb-0.5 cursor-pointer"
-                                            onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
-                                            onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
-                                        >
+                                        <div key={u.id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-150 mb-0.5 cursor-pointer"
+                                             onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
+                                             onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
                                             <div className="relative shrink-0">
                                                 <Avatar user={u} size="md" />
-                                                <span
-                                                    className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2"
-                                                    style={{
-                                                        background: u.isOnline ? 'var(--green)' : '#3a3a4a',
-                                                        borderColor: 'var(--bg-surface)',
-                                                    }}
-                                                />
+                                                <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2"
+                                                      style={{ background: u.isOnline ? 'var(--green)' : '#3a3a4a', borderColor: 'var(--bg-surface)' }} />
                                             </div>
                                             <div className="flex-1 min-w-0">
-                                                <p className="text-[13px] font-medium truncate" style={{ color: 'var(--text-1)' }}>
-                                                    {u.nickname}
-                                                </p>
+                                                <p className="text-[13px] font-medium truncate" style={{ color: 'var(--text-1)' }}>{u.nickname}</p>
                                                 <p className="text-[11px]" style={{ color: u.isOnline ? 'var(--green)' : 'var(--text-3)' }}>
-                                                    {u.isOnline ? 'Online' : 'Offline'}
+                                                    {u.isOnline ? 'В мережі' : 'Офлайн'}
                                                 </p>
                                             </div>
                                             {u.friendshipStatus === 'ACCEPTED' ? (
-                                                <button
-                                                    onClick={() => openDirect(u.id)}
-                                                    className="text-[11px] font-medium px-3 py-1.5 rounded-lg cursor-pointer transition-all duration-150"
-                                                    style={{
-                                                        background: 'var(--accent-dim)',
-                                                        color: 'var(--accent-bright)',
-                                                        border: '1px solid var(--border-accent)',
-                                                    }}
-                                                >
-                                                    Message
+                                                <button onClick={() => openDirect(u.id)}
+                                                        className="text-[11px] font-medium px-3 py-1.5 rounded-lg cursor-pointer transition-all duration-150"
+                                                        style={{ background: 'var(--accent-dim)', color: 'var(--accent-bright)', border: '1px solid var(--border-accent)' }}>
+                                                    Написати
                                                 </button>
                                             ) : u.friendshipStatus === 'PENDING' && u.isRequester ? (
-                                                <span className="text-[11px]" style={{ color: 'var(--text-3)' }}>Sent</span>
+                                                <span className="text-[11px]" style={{ color: 'var(--text-3)' }}>Надіслано</span>
                                             ) : u.friendshipStatus === 'PENDING' ? (
-                                                <button
-                                                    onClick={() => onRespondFriendRequest(u.friendshipId!, 'ACCEPTED')}
-                                                    className="w-8 h-8 rounded-xl flex items-center justify-center cursor-pointer"
-                                                    style={{ background: 'rgba(34,212,114,0.1)', border: '1px solid rgba(34,212,114,0.15)' }}
-                                                >
+                                                <button onClick={() => onRespondFriendRequest(u.friendshipId!, 'ACCEPTED')}
+                                                        className="w-8 h-8 rounded-xl flex items-center justify-center cursor-pointer"
+                                                        style={{ background: 'rgba(34,212,114,0.1)', border: '1px solid rgba(34,212,114,0.15)' }}>
                                                     <Check size={13} className="text-green-400" />
                                                 </button>
                                             ) : (
-                                                <button
-                                                    onClick={() => handleSendRequest(u.id)}
-                                                    disabled={sendingReq === u.id}
-                                                    className="w-8 h-8 rounded-xl flex items-center justify-center cursor-pointer transition-all duration-150 disabled:opacity-40"
-                                                    style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-accent)' }}
-                                                >
+                                                <button onClick={() => handleSendRequest(u.id)} disabled={sendingReq === u.id}
+                                                        className="w-8 h-8 rounded-xl flex items-center justify-center cursor-pointer transition-all duration-150 disabled:opacity-40"
+                                                        style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-accent)' }}>
                                                     <UserPlus size={13} style={{ color: 'var(--accent-bright)' }} />
                                                 </button>
                                             )}
@@ -537,57 +487,37 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
                         {/* Friends list */}
                         {friends.length > 0 && searchQuery.trim().length < 2 && (
                             <section>
-                                <p
-                                    className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest"
-                                    style={{ color: 'var(--text-3)' }}
-                                >
-                                    Contacts · {friends.length}
+                                <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-3)' }}>
+                                    Контакти · {friends.length}
                                 </p>
                                 {friends.map(f => (
-                                    <div
-                                        key={f.friendshipId}
-                                        className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-150 mb-0.5 cursor-pointer group"
-                                        onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
-                                        onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
-                                    >
+                                    <div key={f.friendshipId} className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-150 mb-0.5 cursor-pointer group"
+                                         onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
+                                         onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
                                         <div className="relative shrink-0">
                                             <Avatar user={f.friend} size="md" />
-                                            <span
-                                                className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2"
-                                                style={{
-                                                    background: f.friend.isOnline ? 'var(--green)' : '#3a3a4a',
-                                                    borderColor: 'var(--bg-surface)',
-                                                }}
-                                            />
+                                            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2"
+                                                  style={{ background: f.friend.isOnline ? 'var(--green)' : '#3a3a4a', borderColor: 'var(--bg-surface)' }} />
                                         </div>
                                         <div className="flex-1 min-w-0">
-                                            <p className="text-[13px] font-medium truncate" style={{ color: 'var(--text-1)' }}>
-                                                {f.friend.nickname}
+                                            <p className="text-[13px] font-medium truncate" style={{ color: 'var(--text-1)' }}>{f.friend.nickname}</p>
+                                            <p className="text-[11px]" style={{ color: f.friend.isOnline ? 'var(--green)' : 'var(--text-3)' }}>
+                                                {f.friend.isOnline ? 'В мережі' : 'Офлайн'}
                                             </p>
                                         </div>
                                         <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-                                            <button
-                                                onClick={() => openDirect(f.friend.id)}
-                                                className="w-7 h-7 rounded-lg flex items-center justify-center cursor-pointer transition-all duration-150"
-                                                style={{ color: 'var(--text-2)' }}
-                                                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(124,77,255,0.1)'}
-                                                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
-                                            >
+                                            <button onClick={() => openDirect(f.friend.id)}
+                                                    className="w-7 h-7 rounded-lg flex items-center justify-center cursor-pointer transition-all duration-150"
+                                                    style={{ color: 'var(--text-2)' }}
+                                                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(124,77,255,0.1)'}
+                                                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
                                                 <MessageSquare size={13} />
                                             </button>
-                                            <button
-                                                onClick={() => onRemoveFriend(f.friend.id)}
-                                                className="w-7 h-7 rounded-lg flex items-center justify-center cursor-pointer transition-all duration-150"
-                                                style={{ color: 'var(--text-3)' }}
-                                                onMouseEnter={e => {
-                                                    (e.currentTarget as HTMLElement).style.background = 'rgba(255,77,106,0.1)';
-                                                    (e.currentTarget as HTMLElement).style.color = 'var(--red)';
-                                                }}
-                                                onMouseLeave={e => {
-                                                    (e.currentTarget as HTMLElement).style.background = 'transparent';
-                                                    (e.currentTarget as HTMLElement).style.color = 'var(--text-3)';
-                                                }}
-                                            >
+                                            <button onClick={() => onRemoveFriend(f.friend.id)}
+                                                    className="w-7 h-7 rounded-lg flex items-center justify-center cursor-pointer transition-all duration-150"
+                                                    style={{ color: 'var(--text-3)' }}
+                                                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,77,106,0.1)'; (e.currentTarget as HTMLElement).style.color = 'var(--red)'; }}
+                                                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--text-3)'; }}>
                                                 <X size={13} />
                                             </button>
                                         </div>
@@ -595,14 +525,20 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
                                 ))}
                             </section>
                         )}
+
+                        {friends.length === 0 && searchQuery.trim().length < 2 && (
+                            <div className="px-4 py-8 text-center">
+                                <p className="text-[12px]" style={{ color: 'var(--text-3)' }}>
+                                    Немає контактів. Знайдіть людей вище!
+                                </p>
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
 
             {/* ── Modals ── */}
-            {showCropModal && (
-                <AvatarCropModal onClose={() => setShowCropModal(false)} onSave={handleSaveAvatar} />
-            )}
+            {showCropModal && <AvatarCropModal onClose={() => setShowCropModal(false)} onSave={handleSaveAvatar} />}
             {showNewGroup && (
                 <CreateGroupModal
                     friends={friends}
@@ -625,6 +561,86 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
                     }}
                 />
             )}
+
+            {/* ── Logout confirm modal ── */}
+            {showLogoutConfirm && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                    <div className="w-full max-w-xs rounded-2xl overflow-hidden modal-enter"
+                         style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-md)', boxShadow: '0 24px 60px rgba(0,0,0,0.5)' }}>
+                        <div className="px-6 py-5 text-center">
+                            <div className="w-12 h-12 rounded-full mx-auto mb-4 flex items-center justify-center"
+                                 style={{ background: 'rgba(255,77,106,0.1)', border: '1px solid rgba(255,77,106,0.2)' }}>
+                                <LogOut size={20} style={{ color: 'var(--red)' }} />
+                            </div>
+                            <h3 className="text-[15px] font-semibold mb-1" style={{ color: 'var(--text-1)' }}>Вийти з акаунту?</h3>
+                            <p className="text-[12px] mb-5" style={{ color: 'var(--text-3)' }}>
+                                Ваші повідомлення залишаться зашифрованими на сервері.
+                            </p>
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={() => setShowLogoutConfirm(false)}
+                                    className="flex-1 py-2.5 rounded-xl text-[13px] font-medium cursor-pointer transition-all duration-150"
+                                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border)', color: 'var(--text-2)' }}
+                                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.07)'}
+                                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.04)'}
+                                >
+                                    Скасувати
+                                </button>
+                                <button
+                                    onClick={() => { setShowLogoutConfirm(false); onLogout(); }}
+                                    className="flex-1 py-2.5 rounded-xl text-[13px] font-semibold cursor-pointer transition-all duration-150 flex items-center justify-center gap-1.5"
+                                    style={{ background: 'rgba(255,77,106,0.15)', border: '1px solid rgba(255,77,106,0.25)', color: 'var(--red)' }}
+                                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(255,77,106,0.22)'}
+                                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'rgba(255,77,106,0.15)'}
+                                >
+                                    <LogOut size={13} />
+                                    Вийти
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </aside>
+    );
+}
+
+// ── Reusable icon button ──────────────────────────────────────────────────────
+function SidebarIconBtn({
+                            children, onClick, title, active, danger,
+                        }: {
+    children: React.ReactNode;
+    onClick: () => void;
+    title?: string;
+    active?: boolean;
+    danger?: boolean;
+}) {
+    return (
+        <button
+            onClick={onClick}
+            title={title}
+            className="w-8 h-8 rounded-xl flex items-center justify-center cursor-pointer transition-all duration-150"
+            style={{
+                background: active ? 'var(--accent-dim)' : 'transparent',
+                color: active ? 'var(--accent-bright)' : 'var(--text-3)',
+                border: active ? '1px solid var(--border-accent)' : '1px solid transparent',
+            }}
+            onMouseEnter={e => {
+                if (!active) {
+                    (e.currentTarget as HTMLElement).style.background = danger
+                        ? 'rgba(255,77,106,0.1)'
+                        : 'rgba(255,255,255,0.05)';
+                    (e.currentTarget as HTMLElement).style.color = danger ? 'var(--red)' : 'var(--text-2)';
+                }
+            }}
+            onMouseLeave={e => {
+                if (!active) {
+                    (e.currentTarget as HTMLElement).style.background = 'transparent';
+                    (e.currentTarget as HTMLElement).style.color = 'var(--text-3)';
+                }
+            }}
+        >
+            {children}
+        </button>
     );
 }
