@@ -447,16 +447,17 @@ export default function ChatArea({
     // Empty state - no conversation selected
     if (!conversation) {
         return (
-            <div className="flex-1 flex items-center justify-center bg-slate-50 dark:bg-slate-900 text-slate-400 font-medium flex-col gap-3 transition-colors duration-200">
+            <div className="flex-1 flex flex-col items-center justify-center bg-transparent text-slate-500 font-mono text-xs uppercase tracking-widest">
                 <MessageSquarePlaceholder />
-                <p>Оберіть чат або знайдіть друзів</p>
+                <p>[ AWAITING_CONNECTION ]</p>
+                <p className="text-[10px] text-slate-600 mt-2">Select a channel to decrypt</p>
             </div>
         );
     }
 
     return (
         <main
-            className="flex-1 flex flex-col bg-slate-50 dark:bg-slate-900 relative min-w-0 transition-colors duration-200"
+            className="flex-1 flex flex-col bg-transparent relative min-w-0 transition-colors duration-200"
             onDragEnter={onDragEnter}
             onDragLeave={onDragLeave}
             onDragOver={(e) => e.preventDefault()}
@@ -659,9 +660,15 @@ export default function ChatArea({
 
 function MessageSquarePlaceholder() {
     return (
-        <svg width="56" height="56" viewBox="0 0 56 56" fill="none" className="text-slate-200 dark:text-slate-700">
-            <rect width="56" height="56" rx="28" fill="currentColor"/>
-            <path d="M14 18h28M14 26h20M14 34h14" stroke="#94a3b8" strokeWidth="2.5" strokeLinecap="round"/>
-        </svg>
+        <div className="relative w-24 h-24 mb-4 flex items-center justify-center">
+            {/* Анімація радару */}
+            <div className="absolute inset-0 rounded-full border border-violet-500/20 animate-[ping_3s_cubic-bezier(0,0,0.2,1)_infinite]" />
+            <div className="absolute inset-4 rounded-full border border-violet-500/10 animate-[ping_3s_cubic-bezier(0,0,0.2,1)_infinite_1s]" />
+            <div className="relative w-12 h-12 rounded-xl bg-violet-500/10 border border-violet-500/30 flex items-center justify-center backdrop-blur-md shadow-[0_0_30px_rgba(139,92,246,0.15)]">
+                <svg width="24" height="24" fill="none" viewBox="0 0 24 24">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" stroke="rgba(196,181,253,0.9)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+            </div>
+        </div>
     );
 }

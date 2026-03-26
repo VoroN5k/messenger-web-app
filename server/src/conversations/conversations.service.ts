@@ -447,7 +447,13 @@ export class ConversationsService {
         }
         const existing = isSelf
             ? await this.prisma.conversation.findFirst({
-                where: { type: 'DIRECT', members: { every: { userId } } },
+                where: {
+                    type: 'DIRECT',
+                    members: {
+                        some: { userId },
+                        every: { userId }
+                    }
+                },
                 include: { members: { include: { user: { select: MEMBER_USER_SELECT } } } },
             })
             : await this.prisma.conversation.findFirst({
