@@ -8,7 +8,7 @@ import { useFriends }             from '@/src/hooks/useFriends';
 import { usePushNotifications }   from '@/src/hooks/usePushNotifications';
 import api, { refreshAccessToken } from '@/src/lib/axios';
 import { jwtDecode }              from 'jwt-decode';
-import { Bell, KeyRound, X, ShieldAlert } from 'lucide-react';
+import { Bell, X, ShieldAlert }   from 'lucide-react';
 import Sidebar                    from '@/src/components/chat/SideBar';
 import ChatArea                   from '@/src/components/chat/ChatArea';
 import { Conversation }           from '@/src/types/conversation.types';
@@ -18,7 +18,6 @@ import { ActiveCallOverlay }      from '@/src/components/call/ActiveCallOverlay'
 import { useE2E }                 from '@/src/hooks/useE2E';
 import { RecoveryUnlockModal }    from "@/src/components/chat/RecoveryUnlockModal";
 import { useRouter }              from "next/navigation";
-import { GridLines, NoiseOverlay } from "@/src/components/ui/BackgroundFx";
 
 export default function ChatPage() {
     const { user, logout } = useAuthStore();
@@ -70,7 +69,6 @@ export default function ChatPage() {
 
     const { isSupported, permission, requestPermission } = usePushNotifications(!!user);
 
-    // Push banner
     useEffect(() => {
         if (!isSupported) return;
         const dismissed = localStorage.getItem('push-banner-dismissed');
@@ -81,7 +79,6 @@ export default function ChatPage() {
         return () => clearTimeout(t);
     }, [isSupported]);
 
-    // Silent token refresh
     useEffect(() => {
         let tid: ReturnType<typeof setTimeout>;
         const schedule = (token: string | null) => {
@@ -116,41 +113,37 @@ export default function ChatPage() {
     if (!isLoaded) return null;
 
     return (
-        <div className="flex h-screen flex-col overflow-hidden text-slate-200 selection:bg-violet-500/30 relative"
-             style={{ background: '#05030f', fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
+        // Жодних орбів, сіток і фонових ефектів. Чистий майже-чорний колір #050505
+        <div className="flex h-screen flex-col overflow-hidden text-slate-200 bg-[#050505] selection:bg-violet-500/30">
 
-            <NoiseOverlay />
-            <GridLines />
-
-            {/* Кібер-банер сповіщень */}
             {showBanner && (
-                <div className="relative z-50 flex items-center justify-between gap-3 px-6 py-3 border-b border-indigo-500/30 bg-indigo-900/20 backdrop-blur-md">
+                <div className="relative z-50 flex items-center justify-between gap-3 px-6 py-3 bg-violet-600/10 border-b border-violet-500/20">
                     <div className="flex items-center gap-3">
-                        <div className="p-1.5 rounded bg-indigo-500/20 text-indigo-400">
-                            <Bell size={14} />
+                        <div className="p-1.5 rounded-full bg-violet-500/20 text-violet-400">
+                            <Bell size={16} />
                         </div>
-                        <span className="text-xs font-mono tracking-wide text-indigo-200">
-                            [СИСТЕМА] Увімкніть Push-сповіщення для фонового отримання пакетів даних.
+                        <span className="text-sm font-medium text-slate-200">
+                            Увімкніть Push-сповіщення, щоб не пропускати повідомлення у фоновому режимі.
                         </span>
                     </div>
                     <div className="flex items-center gap-4 shrink-0">
                         <button
                             onClick={async () => { setShowBanner(false); await requestPermission(); }}
-                            className="text-xs font-mono uppercase tracking-widest text-indigo-300 hover:text-indigo-100 transition-colors"
+                            className="text-sm font-semibold text-violet-400 hover:text-violet-300 transition-colors cursor-pointer"
                         >
-                            [ ДОЗВОЛИТИ ]
+                            Увімкнути
                         </button>
                         <button
                             onClick={() => { setShowBanner(false); localStorage.setItem('push-banner-dismissed', '1'); }}
-                            className="text-slate-500 hover:text-slate-300 transition-colors"
+                            className="text-slate-500 hover:text-slate-300 transition-colors cursor-pointer p-1"
                         >
-                            <X size={16} />
+                            <X size={18} />
                         </button>
                     </div>
                 </div>
             )}
 
-            <div className="flex flex-1 overflow-hidden relative z-10">
+            <div className="flex flex-1 overflow-hidden">
                 <Sidebar
                     currentUser={user}
                     conversations={conversations}
@@ -181,55 +174,35 @@ export default function ChatPage() {
             </div>
 
             {callState.status === 'incoming' && callState.incomingData && (
-                <IncomingCallModal
-                    data={callState.incomingData}
-                    onAccept={acceptCall}
-                    onReject={rejectCall}
-                />
+                <IncomingCallModal data={callState.incomingData} onAccept={acceptCall} onReject={rejectCall} />
             )}
 
             {(['calling','connecting','active','ended'] as const).includes(callState.status as any) && (
                 <ActiveCallOverlay
-                    callState={callState}
-                    localStream={localStream}
-                    remoteStream={remoteStream}
-                    isMuted={isMuted}
-                    isCameraOff={isCameraOff}
-                    peerName={
-                        callState.incomingData?.callerName ??
-                        conversations.find(c => c.id === callState.conversationId)?.name ??
-                        'UNKNOWN_ENTITY'
-                    }
-                    peerAvatar={
-                        callState.incomingData?.callerAvatar ??
-                        conversations.find(c => c.id === callState.conversationId)?.avatarUrl ??
-                        null
-                    }
-                    onEnd={endCall}
-                    onToggleMute={toggleMute}
-                    onToggleCamera={toggleCamera}
+                    callState={callState} localStream={localStream} remoteStream={remoteStream}
+                    isMuted={isMuted} isCameraOff={isCameraOff}
+                    peerName={callState.incomingData?.callerName ?? conversations.find(c => c.id === callState.conversationId)?.name ?? 'Користувач'}
+                    peerAvatar={callState.incomingData?.callerAvatar ?? conversations.find(c => c.id === callState.conversationId)?.avatarUrl ?? null}
+                    onEnd={endCall} onToggleMute={toggleMute} onToggleCamera={toggleCamera}
                 />
             )}
 
-            {needsRecovery && (
-                <RecoveryUnlockModal onUnlock={unlockWithPin} />
-            )}
+            {needsRecovery && <RecoveryUnlockModal onUnlock={unlockWithPin} />}
 
-            {/* Кібер-банер налаштування Recovery PIN */}
             {needsRecoverySetup && (
-                <div className="fixed bottom-6 right-6 z-50 max-w-sm w-full bg-[#0a0714]/90 backdrop-blur-xl rounded-2xl shadow-[0_0_40px_rgba(139,92,246,0.15)] border border-amber-500/30 p-5 flex items-start gap-4 animate-in slide-in-from-bottom-8">
-                    <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
-                        <ShieldAlert size={18} className="text-amber-400" />
+                <div className="fixed bottom-6 right-6 z-50 max-w-sm w-full bg-[#111114] rounded-2xl shadow-2xl border border-amber-500/20 p-5 flex items-start gap-4 animate-in slide-in-from-bottom-8">
+                    <div className="w-10 h-10 rounded-full bg-amber-500/10 flex items-center justify-center shrink-0">
+                        <ShieldAlert size={20} className="text-amber-500" />
                     </div>
                     <div className="flex-1 min-w-0">
-                        <p className="text-[11px] font-mono uppercase tracking-widest text-amber-500 mb-1">
-                            Критичне сповіщення
+                        <p className="text-sm font-semibold text-slate-100 mb-1">
+                            Ключі не захищені
                         </p>
-                        <p className="text-xs text-slate-300 font-mono leading-relaxed">
-                            Ваші ключі E2E не захищені резервним PIN-кодом. При втраті сесії чати будуть знищені.
+                        <p className="text-xs text-slate-400 leading-relaxed mb-3">
+                            Встановіть Recovery PIN, інакше ви втратите історію чатів при виході з акаунту.
                         </p>
-                        <button onClick={() => router.push('/auth/setup-recovery')} className="mt-3 text-[10px] font-mono tracking-widest uppercase text-violet-400 hover:text-violet-300 transition-colors inline-flex items-center gap-1">
-                            [ INITIATE_SETUP ]
+                        <button onClick={() => router.push('/auth/setup-recovery')} className="text-sm font-semibold text-violet-400 hover:text-violet-300 transition-colors cursor-pointer">
+                            Налаштувати зараз
                         </button>
                     </div>
                 </div>
