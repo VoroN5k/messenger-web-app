@@ -93,7 +93,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
             for (const m of members) {
                 this.push.sendToUser(m.userId, {
                     title: 'Нове повідомлення',
-                    body: bodyText.length > 100 ? bodyText.slice(0, 97) + '…' : bodyText,
+                    body: '🔒 Зашифроване повідомлення',
                     senderId: Number(msg.senderId),
                     url: '/chat',
                 }).catch(() => {});
@@ -229,14 +229,17 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
                     where: { conversationId: data.conversationId, userId: { not: userId } },
                     select: { userId: true },
                 });
-                const bodyText = data.fileUrl
+
+                const pushBody = data.fileUrl
                     ? `📎 ${data.fileName ?? 'Файл'}`
-                    : (data.content!.length > 100 ? data.content!.slice(0, 97) + '…' : data.content!);
+                    : '🔒 Зашифроване повідомлення';
                 for (const m of members) {
                     this.push.sendToUser(m.userId, {
-                        title: client.data.user.nickname, body: bodyText,
-                        senderId: userId, url: '/chat',
-                    }).catch(() => {});
+                        title: client.data.user.nickname,
+                        body: pushBody,
+                        senderId: userId,
+                        url: '/chat',
+                    }, this.server).catch(() => {});
                 }
             }
         } catch (e: any) {

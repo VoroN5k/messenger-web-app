@@ -42,7 +42,11 @@ export class PushService {
         });
     }
 
-    async sendToUser(userId: number, payload: PushPayload): Promise<void> {
+    async sendToUser(
+        userId: number,
+        payload: PushPayload,
+        server?: import('socket.io').Server,
+    ): Promise<void> {
         const subs = await this.prisma.pushSubscription.findMany({
             where: { userId },
         });
@@ -57,11 +61,22 @@ export class PushService {
                         JSON.stringify(payload),
                     )
                     .catch(async (err: any) => {
-                        // 410 Gone — підписка більше не валідна, видаляємо
+                        // 410 / 404 Gone — підписка більше не валідна, видаляємо
                         if (err.statusCode === 410 || err.statusCode === 404) {
+                            this.logger.warn(
+                                `Push: removing stale subscription ${sub.id} for user ${userId} (${err.statusCode})`,
+                            );
                             await this.prisma.pushSubscription
                                 .delete({ where: { id: sub.id } })
                                 .catch(() => {});
+
+                            server?.to(`user?${userId}`).emit('pushResubscribe');
+                        } else {
+                            // Log full error details to diagnose VAPID/auth issues
+                            this.logger.error(
+                                `Push: sendNotification failed for sub ${sub.id} (user ${userId}): ` +
+                                `status=${err.statusCode} body=${JSON.stringify(err.body)} msg=${err.message}`,
+                            );
                         }
                         throw err;
                     }),
@@ -70,7 +85,7 @@ export class PushService {
 
         const failed = results.filter((r) => r.status === 'rejected').length;
         if (failed) {
-            this.logger.warn(`Push: ${failed}/${subs.length} failed for user ${userId}`);
+            this.logger.warn(`Push: ${failed}/${subs.length} deliveries failed for user ${userId}`);
         }
     }
 }

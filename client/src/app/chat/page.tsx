@@ -52,7 +52,7 @@ export default function ChatPage() {
         conversations, isLoading: convsLoading,
         fetchConversations, markConversationRead,
         addConversation, updateConversation,
-    } = useConversations(socket);
+    } = useConversations(socket, selectedConv?.id);
 
     const {
         friends, pendingRequests,
@@ -159,7 +159,7 @@ export default function ChatPage() {
                     onRemoveFriend={removeFriend}
                     onLogout={handleLogout}
                     pushPermission={permission}
-                    onTogglePush={permission === 'granted' ? undefined : requestPermission}
+                    onTogglePush={requestPermission}
                 />
 
                 <ChatArea

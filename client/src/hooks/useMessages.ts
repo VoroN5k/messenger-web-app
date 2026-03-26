@@ -115,6 +115,8 @@ export const useMessages = (
             return;
         }
 
+        if (!e2e.isReady) return;
+
         setMessages([]); setTypingUsers([]);
         setHasMoreNewer(false); setFirstUnreadId(null);
 
@@ -150,7 +152,7 @@ export const useMessages = (
         })();
 
         return () => ctrl.abort();
-    }, [conversationId, socket]);
+    }, [conversationId, socket, e2e.isReady]);
 
     const deduplicateMessages = (msgs: Message[]): Message[] => {
         const seen = new Set<number | string>();

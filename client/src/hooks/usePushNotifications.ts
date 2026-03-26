@@ -108,6 +108,28 @@ export const usePushNotifications = (isAuthenticated: boolean) => {
         return () => unsubscribe();
     }, [isSupported, isAuthenticated, ensureSubscription]);
 
+    useEffect(() => {
+        if (!isSupported || !isAuthenticated) return;
+
+        // Import socket dynamically to avoid circular deps
+        const handleResubscribe = async () => {
+            const reg = registrationRef.current;
+            if (!reg) return;
+
+            const existing = await reg.pushManager.getSubscription().catch(() => null);
+            if (existing) {
+                await existing.unsubscribe().catch(() => {});
+            }
+            subscribedRef.current = false;
+            await ensureSubscription(reg).catch(() => {});
+        };
+
+        // Listen via BroadcastChannel from sw.js, or directly via socket
+        // We use a custom window event dispatched by SocketContext
+        window.addEventListener('push-resubscribe', handleResubscribe);
+        return () => window.removeEventListener('push-resubscribe', handleResubscribe);
+    }, [isSupported, isAuthenticated, ensureSubscription]);
+
     // ── 4. Запит дозволу ─────────────────────────────────────────────────────
     const requestPermission = useCallback(async (): Promise<boolean> => {
         if (!isSupported) return false;

@@ -17,11 +17,9 @@ self.addEventListener('push', (event) => {
             .matchAll({ type: 'window', includeUncontrolled: true })
             .then((clients) => {
                 const hasVisibleTab = clients.some(
-                    (c) => c.visibilityState === 'visible',
+                    (c) => c.visibilityState === 'visible' && c.focused,
                 );
 
-                // Якщо вкладка активна — не показуємо сповіщення
-                // (користувач вже бачить повідомлення в чаті)
                 if (hasVisibleTab) return;
 
                 return self.registration.showNotification(payload.title ?? 'Новe повідомлення', {

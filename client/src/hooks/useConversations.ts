@@ -1,14 +1,19 @@
-import { useState, useEffect, useCallback } from 'react';
+import {useState, useEffect, useCallback, useRef} from 'react';
 import api from '@/src/lib/axios';
 import { useAuthStore } from '@/src/store/useAuthStore';
 import { Conversation, Message } from '@/src/types/conversation.types';
 import {useE2E} from "@/src/hooks/useE2E";
 
-export const useConversations = (socket: any) => {
+export const useConversations = (socket: any, activeConversationId?: number) => {
     const [conversations, setConversations] = useState<Conversation[]>([]);
     const [isLoading,     setIsLoading]     = useState(false);
     const accessToken = useAuthStore((s) => s.accessToken);
     const currentUserId = useAuthStore((s) => s.user?.id);
+
+    const activeConvIdRef = useRef<number | undefined>(activeConversationId)
+    useEffect(() => {
+        activeConvIdRef.current = activeConversationId;
+    }, [activeConversationId]);
 
     const e2e = useE2E();
 
@@ -103,7 +108,9 @@ export const useConversations = (socket: any) => {
                                         fileType:  msg.fileType ?? null,
                                         fileUrl:   msg.fileUrl  ?? null,
                                     },
-                                    unreadCount: isOwnMessage ? c.unreadCount : c.unreadCount + 1,
+                                    unreadCount: isOwnMessage || msg.conversationId === activeConvIdRef.current
+                                        ? c.unreadCount
+                                        : c.unreadCount + 1,
                                     updatedAt:   msg.createdAt as string,
                                 })
                                 .sort((a, b) =>
@@ -130,7 +137,9 @@ export const useConversations = (socket: any) => {
                                 fileType:  msg.fileType ?? null,
                                 fileUrl:   msg.fileUrl  ?? null,
                             },
-                            unreadCount: isOwnMessage ? c.unreadCount : c.unreadCount + 1,
+                            unreadCount: isOwnMessage || c.id === activeConvIdRef.current
+                                ? c.unreadCount
+                                : c.unreadCount + 1,
                             updatedAt:   msg.createdAt as string,
                         },
                     )

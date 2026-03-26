@@ -56,8 +56,12 @@ export const useSearch = (
                 ? `/conversations/${convId}/messages?cursor=${cursor}`
                 : `/conversations/${convId}/messages`;
 
-            const { data }: { data: Message[] } = await api.get(url, { signal });
+            const res = await api.get(url, { signal });
             if (signal.aborted) break;
+
+            const raw = res.data;
+            const data: Message[] = Array.isArray(raw) ? raw : (raw?.messages ?? []);
+
             if (!data.length) break;
             if (data.length < 30) hasMore = false;
 

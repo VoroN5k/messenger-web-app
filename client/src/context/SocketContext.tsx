@@ -44,6 +44,12 @@ export function SocketProvider({ children }: { children: ReactNode}) {
     useEffect(() => {
         if (!socket) return;
 
+        const handlePushSubscription = () => {
+            window.dispatchEvent(new Event('push-resubscribe'));
+        };
+
+        socket.on('pushResubscribe', handlePushSubscription);
+
         const handleTokenUpdated = ({ success }: { success: boolean }) => {
             if (!success) {
                 console.warn('[Socket] Token rejected, reconnecting...');
@@ -52,7 +58,10 @@ export function SocketProvider({ children }: { children: ReactNode}) {
         };
 
         socket.on('tokenUpdated', handleTokenUpdated);
-        return () => { socket.off('tokenUpdated', handleTokenUpdated); };
+        return () => {
+            socket.off('tokenUpdated', handleTokenUpdated);
+            socket.off('pushResubscribe', handlePushSubscription);
+        };
     }, [socket]);
 
     return (
