@@ -1,5 +1,5 @@
 import {
-    Body, Controller, Delete, Get, Param,
+    Body, Controller, Delete, forwardRef, Get, Inject, Param,
     ParseIntPipe, Post, Put, Query, UseGuards,
 } from '@nestjs/common';
 import { Throttle, SkipThrottle } from '@nestjs/throttler';
@@ -11,11 +11,16 @@ import {
     UpdateConversationDto, AddMemberDto, PinMessageDto,
     ForwardMessageDto, SetSenderKeysDto,
 } from './dto/conversation.dto.js';
+import {ChatGateway} from "../chat/chat.gateway.js";
 
 @Controller('conversations')
 @UseGuards(JwtAuthGuard)
 export class ConversationsController {
-    constructor(private readonly conversationsService: ConversationsService) {}
+    constructor(
+        private readonly conversationsService: ConversationsService,
+        @Inject(forwardRef(() => ChatGateway))
+        private readonly chatGateway: ChatGateway,
+    ) {}
 
     @SkipThrottle()
     @Get()
@@ -31,8 +36,16 @@ export class ConversationsController {
 
     @Throttle({ default: { ttl: 60_000, limit: 10 } })
     @Post('group')
-    createGroup(@CurrentUser('sub') userId: number, @Body() dto: CreateGroupDto) {
-        return this.conversationsService.createGroup(userId, dto);
+    async createGroup(@CurrentUser('sub') userId: number, @Body() dto: CreateGroupDto) {
+        const conv = await this.conversationsService.createGroup(userId, dto);
+
+        const otherMembers = conv.members
+            .filter(m => m.userId !== userId)
+            .map(m => m.userId);
+        for (const memberId of otherMembers) {
+            await this.chatGateway.notifyUserJoinRoom(memberId, conv.id);
+        }
+        return conv;
     }
 
     @Throttle({ default: { ttl: 60_000, limit: 10 } })
@@ -92,12 +105,14 @@ export class ConversationsController {
 
     @Throttle({ default: { ttl: 60_000, limit: 20 } })
     @Post(':id/members')
-    addMember(
+    async addMember(
         @CurrentUser('sub') userId: number,
         @Param('id', ParseIntPipe) id: number,
         @Body() dto: AddMemberDto,
     ) {
-        return this.conversationsService.addMember(userId, id, dto.userId);
+        const member = await this.conversationsService.addMember(userId, id, dto.userId);
+        await this.chatGateway.notifyUserJoinRoom(dto.userId, id);
+        return member;
     }
 
     @Throttle({ default: { ttl: 60_000, limit: 20 } })

@@ -197,7 +197,25 @@ export const useConversations = (socket: any, activeConversationId?: number) => 
             // But update for other users if needed in future
         };
 
-        const onAdded = () => fetchConversations();
+        const onDeleted = (data: { messageId: number; conversationId: number }) => {
+            setConversations((prev) =>
+                prev.map(c => {
+                    if (c.id !== data.conversationId) return c;
+                    if (c.lastMessage?.id === data.messageId) {
+                        return { ...c, lastMessage: null };
+                    }
+                    return c;
+                }),
+            );
+        };
+
+        const onAdded = (data?: { conversationId: number}) => {
+            fetchConversations();
+
+            if (data?.conversationId) {
+                socket.emit('joinConversation', { conversationId: data.conversationId });
+            }
+        }
 
         const onPinned = (data: { conversationId: number; pinnedMessageId: number; pinnedMessage: any }) => {
             setConversations(prev => prev.map(c =>
@@ -219,6 +237,7 @@ export const useConversations = (socket: any, activeConversationId?: number) => 
         socket.on('messageEdited',       onEdited);
         socket.on('userStatusChanged',   onUserStatus);
         socket.on('conversationRead',    onRead);
+        socket.on('messageDeleted', onDeleted);
         socket.on('addedToConversation', onAdded);
         socket.on('messagePinned', onPinned);
         socket.on('messageUnpinned', onUnpinned);
@@ -228,6 +247,7 @@ export const useConversations = (socket: any, activeConversationId?: number) => 
             socket.off('messageEdited',       onEdited);
             socket.off('userStatusChanged',   onUserStatus);
             socket.off('conversationRead',    onRead);
+            socket.off('messageDeleted', onDeleted);
             socket.off('addedToConversation', onAdded);
             socket.off('messagePinned', onPinned);
             socket.off('messageUnpinned', onUnpinned);

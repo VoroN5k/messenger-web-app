@@ -1,10 +1,11 @@
-import { Module }                   from '@nestjs/common';
+import {forwardRef, Module} from '@nestjs/common';
 import { ConversationsService }     from './conversations.service.js';
 import { ConversationsController }  from './conversations.controller.js';
 import {UploadModule} from "../upload/upload.module.js";
+import {ChatModule} from "../chat/chat.module.js";
 
 @Module({
-    imports: [UploadModule],
+    imports: [UploadModule, forwardRef(() => ChatModule)],
     controllers: [ConversationsController],
     providers:   [ConversationsService],
     exports:     [ConversationsService],

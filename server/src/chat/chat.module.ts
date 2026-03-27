@@ -1,4 +1,4 @@
-import { Module }       from '@nestjs/common';
+import {forwardRef, Module} from '@nestjs/common';
 import { ChatGateway }  from './chat.gateway.js';
 import { JwtModule }    from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -9,6 +9,7 @@ import {FriendsModule} from "../friends/friends.module.js";  // ← додати
 
 @Module({
     imports: [
+        forwardRef(() => ConversationsModule), // Додайте forwardRef для уникнення циклічної залежності
         PrismaModule,
         ConversationsModule,
         FriendsModule,
