@@ -14,16 +14,18 @@ export function EmojiPicker({ onSelect, onClose, align = 'right' }: EmojiPickerP
     const ref = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
-        // Затримка щоб не закрити одразу після відкриття
+        let handler: ((e: MouseEvent) => void) | null = null;
         const timeout = setTimeout(() => {
-            const handler = (e: MouseEvent) => {
+            handler = (e: MouseEvent) => {
                 if (ref.current && !ref.current.contains(e.target as Node)) onClose();
             };
             document.addEventListener('mousedown', handler);
-            return () => document.removeEventListener('mousedown', handler);
         }, 80);
 
-        return () => clearTimeout(timeout);
+        return () => {
+            clearTimeout(timeout);
+            if (handler) document.removeEventListener('mousedown', handler);
+        };
     }, [onClose]);
 
     return (
