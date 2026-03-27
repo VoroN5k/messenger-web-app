@@ -22,7 +22,7 @@ import { ImageSendPreview }  from './ImageSendPreview';
 import { Conversation, Message } from '@/src/types/conversation.types';
 import { User }                  from '@/src/types/auth.types';
 import { Socket }                from 'socket.io-client';
-import { EDIT_WINDOW_MS }        from '@/src/lib/chatFormatters';
+import {EDIT_WINDOW_MS, looksEncrypted} from '@/src/lib/chatFormatters';
 
 interface ChatAreaProps {
     currentUser:           User | null;
@@ -325,9 +325,73 @@ export default function ChatArea({
         socket?.emit('unpinMessage', { conversationId: conversation.id });
     }, [socket, conversation]);
 
-    const forwardMessage = useCallback((msgId: number, targetConvId: number) => {
-        socket?.emit('forwardMessage', { messageId: msgId, targetConversationId: targetConvId });
-    }, [socket]);
+    const forwardMessage = useCallback(
+        async (msgId: number, targetConvId: number) => {
+            if (!socket) return;
+
+            // 1. Find the original message in local state
+            const original = messages.find(m => m.id === msgId);
+            if (!original) return;
+
+            // 2. Decrypt the content if it looks like ciphertext
+            let plainContent = original.content;
+
+            if (looksEncrypted(original.content)) {
+                try {
+                    if (otherUserId) {
+                        // DIRECT conversation — decrypt with the peer's shared key
+                        plainContent = await e2e.decrypt(original.content, otherUserId);
+                    } else if (conversation?.type === 'GROUP' && conversation.id) {
+                        // GROUP conversation — decrypt with sender's key
+                        plainContent = await e2e.decryptFromGroup(
+                            original.content,
+                            conversation.id,
+                            Number(original.senderId),
+                        );
+                    }
+                } catch {
+                    // If decrypt fails keep the raw content —
+                    // server will forward it as-is (better than silently dropping)
+                }
+            }
+
+            // 3. Re-encrypt for the target conversation
+            const targetConv = conversations.find(c => c.id === targetConvId);
+            let reEncrypted  = plainContent;
+
+            try {
+                if (targetConv?.type === 'DIRECT') {
+                    const targetOther = targetConv.members.find(
+                        m => m.userId !== currentUserId,
+                    );
+                    if (targetOther) {
+                        reEncrypted = await e2e.encrypt(plainContent, targetOther.userId);
+                    }
+                } else if (targetConv?.type === 'GROUP') {
+                    reEncrypted = await e2e.encryptForGroup(plainContent, targetConvId);
+                }
+                // CHANNEL — no E2E, send plaintext
+            } catch {
+                // Encryption failed — send plaintext so the message is not lost
+                reEncrypted = plainContent;
+            }
+
+            socket.emit('forwardMessage', {
+                messageId:            msgId,
+                targetConversationId: targetConvId,
+                reEncryptedContent:   reEncrypted,
+            });
+        },
+        [
+            socket,
+            messages,
+            conversation,
+            conversations,
+            currentUserId,
+            otherUserId,
+            e2e,
+        ],
+    );
 
     const onDragEnter = (e: React.DragEvent) => {
         e.preventDefault();

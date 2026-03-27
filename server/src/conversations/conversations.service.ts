@@ -422,13 +422,15 @@ export class ConversationsService {
     }
 
     // ── Forward ───────────────────────────────────────────────────────────────
-    async forwardMessage(userId: number, messageId: number, targetConversationId: number) {
+    async forwardMessage(userId: number, messageId: number, targetConversationId: number, reEncryptedContent?: string) {
         await this.assertMember(userId, targetConversationId);
         const original = await this.prisma.message.findUnique({ where: { id: messageId } });
         if (!original) throw new NotFoundException('Message not found');
+
+        const contentToStore = reEncryptedContent ?? original.content;
         const msg = await this.prisma.message.create({
             data: {
-                content: original.content, senderId: userId, conversationId: targetConversationId,
+                content: contentToStore, senderId: userId, conversationId: targetConversationId,
                 fileUrl: original.fileUrl, fileName: original.fileName, fileType: original.fileType, fileSize: original.fileSize,
                 forwardedFromId: original.id, forwardedFromUserId: original.senderId,
             },

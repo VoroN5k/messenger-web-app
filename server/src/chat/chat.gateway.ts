@@ -574,13 +574,20 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     @SubscribeMessage('forwardMessage')
     async handleForwardMessage(
         @ConnectedSocket() client: Socket,
-        @MessageBody() data: { messageId: number; targetConversationId: number },
+        @MessageBody() data: {
+            messageId: number;
+            targetConversationId: number;
+            reEncryptedContent?: string;
+        },
     ) {
         if (!this.rateLimit(client, this.forwardLimiter, 'forwardMessage')) return;
 
         try {
             const msg = await this.convService.forwardMessage(
-                client.data.user.id, data.messageId, data.targetConversationId,
+                client.data.user.id,
+                data.messageId,
+                data.targetConversationId,
+                data.reEncryptedContent,
             );
             this.server.to(`conv_${data.targetConversationId}`).emit('onMessage', msg);
         } catch (e: any) {

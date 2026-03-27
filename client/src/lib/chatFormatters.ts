@@ -27,3 +27,6 @@ export function formatLastSeen(lastSeen?: string | Date | null): string {
 }
 
 export const escReg = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+export const looksEncrypted = (s?: string | null): boolean =>
+    !!s && s.length > 20 && /^[A-Za-z0-9_\-]+$/.test(s);
