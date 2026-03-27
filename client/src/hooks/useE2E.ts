@@ -493,14 +493,14 @@ export function useE2E() {
         if (!myUserId) return;
 
         try {
-            const { data } = await api.get<{ senderId: number; encryptedKey: string }[]>(
+            const {data} = await api.get<{ senderId: number; encryptedKey: string }[]>(
                 `/conversations/${conversationId}/sender-keys/for-me`,
             );
 
             let hasMySenderKey = false;
 
             await Promise.all(
-                data.map(async ({ senderId, encryptedKey }) => {
+                data.map(async ({senderId, encryptedKey}) => {
                     const cacheKey = `${conversationId}:${senderId}`;
                     if (peerSenderKeys.has(cacheKey)) return;
 
@@ -511,7 +511,7 @@ export function useE2E() {
                         const aesKey = await crypto.subtle.importKey(
                             'raw',
                             rawKey.buffer.slice(rawKey.byteOffset, rawKey.byteOffset + rawKey.byteLength) as ArrayBuffer,
-                            { name: 'AES-GCM' },
+                            {name: 'AES-GCM'},
                             false,
                             ['encrypt', 'decrypt'],
                         );
@@ -522,7 +522,8 @@ export function useE2E() {
                             mySenderKeys.set(conversationId, aesKey);
                             hasMySenderKey = true;
                         }
-                    } catch {}
+                    } catch {
+                    }
                 }),
             );
 
@@ -530,7 +531,7 @@ export function useE2E() {
 
             if (decryptFailCount > 0) {
                 await Promise.all(
-                    data.map(async ({ senderId, encryptedKey }) => {
+                    data.map(async ({senderId, encryptedKey}) => {
                         const cacheKey = `${conversationId}:${senderId}`;
                         if (peerSenderKeys.has(cacheKey)) return;
                         try {
@@ -540,21 +541,52 @@ export function useE2E() {
                             const aesKey = await crypto.subtle.importKey(
                                 'raw',
                                 rawKey.buffer.slice(rawKey.byteOffset, rawKey.byteOffset + rawKey.byteLength) as ArrayBuffer,
-                                { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'],
+                                {name: 'AES-GCM'}, false, ['encrypt', 'decrypt'],
                             );
                             peerSenderKeys.set(cacheKey, aesKey);
                             if (senderId === myUserId) {
                                 mySenderKeys.set(conversationId, aesKey);
                                 hasMySenderKey = true;
                             }
-                        } catch {}
+                        } catch {
+                        }
                     }),
                 );
             }
 
             // Якщо мого ключа немає на сервері — генеруємо і розповсюджуємо
-            if (!hasMySenderKey) {
+            const mySenderKeyExistsOnServer = data.some(({senderId}) => senderId === myUserId);
+
+            if (!hasMySenderKey && !mySenderKeyExistsOnServer) {
+                // Ключа немає взагалі — новий учасник або перший вхід у групу
                 await distributeMySenderKey(conversationId, memberUserIds);
+            } else if (!hasMySenderKey && mySenderKeyExistsOnServer) {
+                // Ключ є на сервері але не вдалось розшифрувати.
+                // Можлива причина: зміна ключової пари або мережева помилка.
+                // Пробуємо force-refresh сесійного ключа і повторну спробу.
+                try {
+                    const myEntry = data.find(({senderId}) => senderId === myUserId);
+                    if (myEntry) {
+                        const freshSessionKey = await getSessionKey(myUserId, true /* forceRefresh */);
+                        if (freshSessionKey) {
+                            const rawKey = await aesDecryptRaw(freshSessionKey, myEntry.encryptedKey);
+                            const aesKey = await crypto.subtle.importKey(
+                                'raw',
+                                rawKey.buffer.slice(rawKey.byteOffset, rawKey.byteOffset + rawKey.byteLength) as ArrayBuffer,
+                                {name: 'AES-GCM'},
+                                false,
+                                ['encrypt', 'decrypt'],
+                            );
+                            peerSenderKeys.set(`${conversationId}:${myUserId}`, aesKey);
+                            mySenderKeys.set(conversationId, aesKey);
+                        }
+                    }
+                } catch {
+                    // Якщо й після force-refresh не вдалось — розповсюджуємо новий ключ
+                    // (це остання опція; старі повідомлення стануть нечитабельними, але нові будуть OK)
+                    console.warn(`[E2E] Cannot decrypt own sender key for conv ${conversationId}, distributing new key`);
+                    await distributeMySenderKey(conversationId, memberUserIds);
+                }
             }
         } catch (err) {
             console.warn(`[E2E] prefetchGroupSenderKeys failed for conv ${conversationId}:`, err);

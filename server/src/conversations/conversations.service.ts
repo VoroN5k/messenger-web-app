@@ -534,15 +534,31 @@ export class ConversationsService {
         return this.prisma.conversation.update({ where: { id: conversationId }, data: dto });
     }
 
-    async setSenderKey(requesterId: number, conversationId: number, keys: Array<{ recipientId: number; encryptedKey: string }>) {
+    async setSenderKey(
+        requesterId: number,
+        conversationId: number,
+        keys: Array<{ recipientId: number; encryptedKey: string }>,
+    ) {
         await this.assertMember(requesterId, conversationId);
-        await Promise.all(keys.map(({ recipientId, encryptedKey }) =>
-            this.prisma.groupSenderKey.upsert({
-                where: { conversationId_senderId_recipientId: { conversationId, senderId: requesterId, recipientId } },
-                create: { conversationId, senderId: requesterId, recipientId, encryptedKey },
-                update: { encryptedKey },
+
+        // Завантажуємо існуючі ключі для цього відправника
+        const existingKeys = await this.prisma.groupSenderKey.findMany({
+            where: { conversationId, senderId: requesterId },
+            select: { recipientId: true },
+        });
+        const existingRecipients = new Set(existingKeys.map(k => k.recipientId));
+
+        await Promise.all(
+            keys.map(({ recipientId, encryptedKey }) => {
+                if (existingRecipients.has(recipientId)) {
+                    return Promise.resolve();
+                }
+                return this.prisma.groupSenderKey.create({
+                    data: { conversationId, senderId: requesterId, recipientId, encryptedKey },
+                });
             }),
-        ));
+        );
+
         return { ok: true };
     }
 

@@ -329,20 +329,16 @@ export default function ChatArea({
         async (msgId: number, targetConvId: number) => {
             if (!socket) return;
 
-            // 1. Find the original message in local state
             const original = messages.find(m => m.id === msgId);
             if (!original) return;
 
-            // 2. Decrypt the content if it looks like ciphertext
+            // 1. Decrypt the original message
             let plainContent = original.content;
-
             if (looksEncrypted(original.content)) {
                 try {
                     if (otherUserId) {
-                        // DIRECT conversation — decrypt with the peer's shared key
                         plainContent = await e2e.decrypt(original.content, otherUserId);
                     } else if (conversation?.type === 'GROUP' && conversation.id) {
-                        // GROUP conversation — decrypt with sender's key
                         plainContent = await e2e.decryptFromGroup(
                             original.content,
                             conversation.id,
@@ -350,29 +346,37 @@ export default function ChatArea({
                         );
                     }
                 } catch {
-                    // If decrypt fails keep the raw content —
-                    // server will forward it as-is (better than silently dropping)
+                    // Keep original ciphertext — will show as-is on recipient side
                 }
             }
 
-            // 3. Re-encrypt for the target conversation
+            // 2. Re-encrypt for the target conversation
             const targetConv = conversations.find(c => c.id === targetConvId);
             let reEncrypted  = plainContent;
 
             try {
                 if (targetConv?.type === 'DIRECT') {
-                    const targetOther = targetConv.members.find(
-                        m => m.userId !== currentUserId,
-                    );
+                    const targetOther = targetConv.members.find(m => m.userId !== currentUserId);
                     if (targetOther) {
                         reEncrypted = await e2e.encrypt(plainContent, targetOther.userId);
                     }
                 } else if (targetConv?.type === 'GROUP') {
+                    const targetMemberIds = targetConv.members.map(m => m.userId);
+
+                    // ВАЖЛИВО: завжди prefetch ключі для цільової групи перед шифруванням.
+                    // Це гарантує, що або існуючий ключ завантажений, або новий розповсюджений.
+                    await e2e.prefetchGroupSenderKeys(targetConvId, targetMemberIds);
+
                     reEncrypted = await e2e.encryptForGroup(plainContent, targetConvId);
+
+                    // Якщо ключ не знайдено (повернули plaintext) — явно розповсюджуємо і повторюємо
+                    if (reEncrypted === plainContent) {
+                        await e2e.distributeMySenderKey(targetConvId, targetMemberIds);
+                        reEncrypted = await e2e.encryptForGroup(plainContent, targetConvId);
+                    }
                 }
-                // CHANNEL — no E2E, send plaintext
+                // CHANNEL — no E2E encryption needed
             } catch {
-                // Encryption failed — send plaintext so the message is not lost
                 reEncrypted = plainContent;
             }
 
@@ -382,15 +386,7 @@ export default function ChatArea({
                 reEncryptedContent:   reEncrypted,
             });
         },
-        [
-            socket,
-            messages,
-            conversation,
-            conversations,
-            currentUserId,
-            otherUserId,
-            e2e,
-        ],
+        [socket, messages, conversation, conversations, currentUserId, otherUserId, e2e],
     );
 
     const onDragEnter = (e: React.DragEvent) => {
