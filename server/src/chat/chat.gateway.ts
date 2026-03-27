@@ -209,13 +209,25 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
             replyToId?: number; metadata?: string; scheduledAt?: string | null;
         },
     ) {
+        const MAX_SCHEDULE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
         if (!this.rateLimit(client, this.msgLimiter, 'sendMessage')) return;
         const userId = client.data.user.id as number;
         if (!data?.conversationId) return;
         if (!data.content?.trim() && !data.fileUrl) return;
 
+        const rawScheduled = data.scheduledAt ? new Date(data.scheduledAt) : null;
+        if (rawScheduled && isNaN(rawScheduled.getTime())) {
+            client.emit('messageFailed', { error: 'Invalid scheduledAt' });
+            return;
+        }
+        if (rawScheduled && rawScheduled.getTime() - Date.now() > MAX_SCHEDULE_MS) {
+            client.emit('messageFailed', { error: 'scheduledAt too far in the future (max 30 days)' });
+            return;
+        }
+
         try {
-            const scheduledAt = data.scheduledAt ? new Date(data.scheduledAt) : null;
+            const scheduledAt = rawScheduled && rawScheduled > new Date() ? rawScheduled : null;
             const isScheduled = scheduledAt && scheduledAt > new Date();
 
             const message = await this.convService.saveMessage(userId, data.conversationId, {
