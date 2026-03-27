@@ -101,7 +101,7 @@ npx prisma migrate dev
 npm run start:dev
 ```
 
-⚖️ Legal & Safe Harbor
+## ⚖️ Legal & Safe Harbor
 
 Vesper is developed purely as a technological tool to protect the legitimate privacy of digital communications. The authors and contributors:
 
@@ -113,7 +113,7 @@ Vesper is developed purely as a technological tool to protect the legitimate pri
 
 If you host a public instance of Vesper, you are responsible for managing Abuse Reports and complying with the local laws of your jurisdiction regarding public, unencrypted channels.
 
-🤝 Contributing
+## 🤝 Contributing
 
 Security relies on peer review. We welcome contributions, bug reports, and security audits from the community.
 
@@ -127,6 +127,6 @@ Security relies on peer review. We welcome contributions, bug reports, and secur
 
     Open a Pull Request
 
-📄 License
+## 📄 License
 
 Distributed under the MIT License. See LICENSE for more information.
