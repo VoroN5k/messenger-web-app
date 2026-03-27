@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
 import api from '@/src/lib/axios';
 import Link from 'next/link';
+import {TosModal} from "@/src/components/auth/TosModal";
 
 // ── Shared background components ──────────────────────────────────────────────
 function GridLines() {
@@ -246,6 +247,8 @@ export default function RegisterPage() {
     const [globalError, setGlobalError] = useState('');
     const [mounted, setMounted] = useState(false);
     const [step, setStep] = useState(0); // 0 = identity, 1 = credentials, 2 = confirm
+    const [tosAccepted, setTosAccepted] = useState(false);
+    const [showTos, setShowTos] = useState(false);
     const router = useRouter();
 
     const { register, handleSubmit, watch, trigger, formState: { errors } } = useForm({ mode: 'onChange' });
@@ -527,6 +530,38 @@ export default function RegisterPage() {
                                             </p>
                                         </div>
 
+                                        <label
+                                            className="flex items-start gap-3 cursor-pointer group rounded-xl px-4 py-3 transition-colors"
+                                            style={{ background: 'rgba(109,40,217,0.05)', border: '1px solid rgba(109,40,217,0.15)' }}
+                                        >
+                                            <div className="relative flex items-center justify-center mt-0.5 shrink-0">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={tosAccepted}
+                                                    onChange={e => setTosAccepted(e.target.checked)}
+                                                    className="peer appearance-none w-4 h-4 border-2 border-slate-600 rounded bg-transparent
+                               checked:bg-violet-500 checked:border-violet-500 transition-all cursor-pointer"
+                                                />
+                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"
+                                                     className="absolute pointer-events-none opacity-0 peer-checked:opacity-100 transition-opacity">
+                                                    <polyline points="20 6 9 17 4 12"/>
+                                                </svg>
+                                            </div>
+                                            <p className="text-[11px] font-mono leading-relaxed" style={{ color: 'rgba(148,163,184,0.8)' }}>
+                                                Я погоджуюсь з{' '}
+                                                <button
+                                                    type="button"
+                                                    onClick={e => { e.preventDefault(); setShowTos(true); }}
+                                                    className="underline transition-colors cursor-pointer"
+                                                    style={{ color: 'rgba(139,92,246,0.9)' }}
+                                                    onMouseEnter={e => (e.currentTarget.style.color = 'rgba(196,181,253,1)')}
+                                                    onMouseLeave={e => (e.currentTarget.style.color = 'rgba(139,92,246,0.9)')}
+                                                >
+                                                    Умовами використання та Політикою конфіденційності
+                                                </button>
+                                            </p>
+                                        </label>
+
                                         {globalError && (
                                             <div className="flex items-start gap-2.5 rounded-lg px-4 py-3" style={{
                                                 background: 'rgba(239,68,68,0.07)',
@@ -575,7 +610,7 @@ export default function RegisterPage() {
                                             <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: 'rgba(255,255,255,0.05)' }} />
                                         </button>
                                     ) : (
-                                        <button type="submit" disabled={isLoading}
+                                        <button type="submit" disabled={isLoading || !tosAccepted}
                                                 className="flex-1 relative py-3 rounded-xl text-xs font-mono tracking-widest uppercase text-white overflow-hidden group transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                                                 style={{
                                                     background: 'linear-gradient(135deg, rgba(109,40,217,0.85) 0%, rgba(79,70,229,0.85) 100%)',
@@ -627,6 +662,8 @@ export default function RegisterPage() {
                     </p>
                 </div>
             </div>
+
+            {showTos && <TosModal onClose={() => setShowTos(false)} />}
         </div>
     );
 }

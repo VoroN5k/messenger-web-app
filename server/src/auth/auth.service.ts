@@ -34,6 +34,10 @@ export class AuthService {
     async register(dto: RegisterDto, meta: SessionMeta) {
         const { email, password, confirmPassword, nickname } = dto;
 
+        if(!dto.tosAccepted) {
+            throw new BadRequestException('You must accept the Terms of Service');
+        }
+
         if (password !== confirmPassword) {
             throw new BadRequestException('Passwords do not match');
         }
@@ -57,6 +61,7 @@ export class AuthService {
                     password:        hashedPassword,
                     isEmailVerified: false,
                     emailVerifyToken: hashToken(verifyToken),
+                    tosAcceptedAt: new Date(),
                 },
             });
 

@@ -48,6 +48,8 @@ model User {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
+  tosAcceptedAt    DateTime?
+
   sessions  Session[]
   pushSubscriptions PushSubscription[]
   conversationMembers ConversationMember[]
