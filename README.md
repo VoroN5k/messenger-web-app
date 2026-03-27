@@ -6,7 +6,7 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#contributing)
 [![100% Open Source](https://img.shields.io/badge/100%25-Open_Source-blue.svg)](#manifesto)
 
-Vesper is built on a simple premise: **Privacy is a fundamental human right.** Unlike mainstream messengers that hold the keys to your data on their servers, Vesper is built on a strict **Zero-Knowledge Architecture**. The server acts only as a blind courier—it routes encrypted packets but physically cannot read your messages, view your files, or access your private keys.
+Vesper is built on a simple premise: **Privacy is a fundamental human right.** Unlike mainstream messengers that hold the keys to your data on their servers, Vesper is built on a strict **Zero-Knowledge Architecture**. The server acts only as a blind courier - it routes encrypted packets but physically cannot read your messages, view your files, or access your private keys.
 
 ## 🛡️ The Manifesto
 
