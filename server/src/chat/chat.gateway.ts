@@ -158,6 +158,15 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
         const userId = client.data.userId as number | undefined;
         if (!userId) return;
 
+        for (const [callId, call] of this.activeCalls.entries()) {
+            if (call.callerId === userId || call.calleeId === userId) {
+                const remoteId = call.callerId === userId ? call.calleeId : call.callerId;
+                this.server.to(`user_${remoteId}`).emit('callEnded', { callId });
+                this.activeCalls.delete(callId);
+                this.logger.log(`Call ${callId} ended due to disconnect of user ${userId}`);
+            }
+        }
+
         const sockets = this.activeUsers.get(userId);
         if (sockets) {
             sockets.delete(client.id);
