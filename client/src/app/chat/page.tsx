@@ -34,7 +34,7 @@ export default function ChatPage() {
             sessionStorage.removeItem('freshLogin');
             router.push('/auth/setup-recovery');
         }
-    }, [needsRecoverySetup, router]);
+    }, [needsRecoverySetup]);
 
     useEffect(() => {
         if (user !== undefined) setIsLoaded(true);
