@@ -410,11 +410,11 @@ export function useE2E() {
         const cached = mySenderKeys.get(conversationId);
         if (cached) return cached;
 
+        const myUserId = useAuthStore.getState().user?.id;
+        if (!myUserId) return null;
+
         // Спочатку пробуємо завантажити з сервера (ключ може вже існувати на іншому пристрої)
         try {
-            const myUserId = useAuthStore.getState().user?.id;
-            if (!myUserId) return null;
-
             const { data } = await api.get<{ senderId: number; encryptedKey: string }[]>(
                 `/conversations/${conversationId}/sender-keys/for-me`,
             );
@@ -617,14 +617,25 @@ export function useE2E() {
     const encryptBinaryForGroup = useCallback(async (
         data: ArrayBuffer,
         conversationId: number,
+        memberIds?: number[],
     ): Promise<ArrayBuffer> => {
         let key = mySenderKeys.get(conversationId);
         if (!key) {
             key = await getOrCreateMySenderKey(conversationId) ?? undefined;
         }
-        if (!key) return data;
+
+        if (!key && memberIds?.length) {
+            await distributeMySenderKey(conversationId, memberIds);
+            key = mySenderKeys.get(conversationId);
+        }
+
+        if (!key) {
+            console.error('[E2E] No sender key for group', conversationId);
+            return data;
+        }
+
         return encryptFile(key, data);
-    }, [getOrCreateMySenderKey]);
+    }, [getOrCreateMySenderKey, distributeMySenderKey]);
 
     const decryptBinaryFromGroup = useCallback(async (
         data: ArrayBuffer,

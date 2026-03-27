@@ -80,7 +80,21 @@ export default function ChatArea({
     const isChannel = conversation?.type === 'CHANNEL';
     const canPin    = myMember?.role === 'OWNER' || myMember?.role === 'ADMIN';
 
+    const [groupKeysReady, setGroupKeysReady] = useState(!isGroup);
+
     const e2e = useE2E();
+
+    useEffect(() => {
+        const conversationId = conversation?.id;
+        if (!isGroup || !conversationId || !groupMemberIds?.length) {
+            setGroupKeysReady(true);
+            return;
+        }
+        setGroupKeysReady(false);
+        e2e.prefetchGroupSenderKeys(conversationId, groupMemberIds)
+            .then(() => setGroupKeysReady(true))
+            .catch(() => setGroupKeysReady(true)); // Навіть якщо не вдалося отримати ключі, дозволяємо користувачу бачити повідомлення (хоча вони будуть зашифровані)
+    }, []);
 
     const decryptFn = otherUserId
         ? (data: ArrayBuffer, _: number) => e2e.decryptBinary(data, otherUserId)
@@ -216,7 +230,15 @@ export default function ChatArea({
                 encMeta = JSON.stringify({ encrypted: true });
             } else if (conversation?.type === 'GROUP' && conversation?.id) {
                 const buf = await fileToProcess.arrayBuffer();
-                const encBuf = await e2e.encryptBinaryForGroup(buf, conversation.id);
+                const encBuf = await e2e.encryptBinaryForGroup(
+                    buf,
+                    conversation.id,
+                    groupMemberIds,
+                );
+
+                if (encBuf === buf) {
+                    throw new Error('Не вдалося зашифрувати файл для групи')
+                }
                 fileToUpload = new File([encBuf], fileToProcess.name, { type: fileToProcess.type });
                 encMeta = JSON.stringify({ encrypted: true });
             }
@@ -569,7 +591,7 @@ export default function ChatArea({
 
             {/* ── Input ── */}
             <ChatInput
-                canPost={!!canPost}
+                canPost={canPost && groupKeysReady}
                 inputValue={inputValue}
                 replyTo={replyTo}
                 typingUsers={typingUsers}

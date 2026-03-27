@@ -25,9 +25,20 @@ export interface CallState {
 }
 
 const ICE_SERVERS: RTCIceServer[] = [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: "stun:stun.l.google.com:19302" },
+
+    { urls: "stun:stun.relay.metered.ca:80" },
+
+    {
+        urls: [
+            "turn:global.relay.metered.ca:80",
+            "turn:global.relay.metered.ca:80?transport=tcp",
+            "turn:global.relay.metered.ca:443",
+            "turns:global.relay.metered.ca:443?transport=tcp"
+        ],
+        username: "ae9cc6ddc8b03bb71663a872",
+        credential: "qjgGIvEE2jLHOFgD",
+    }
 ];
 
 function createRingtone() {
