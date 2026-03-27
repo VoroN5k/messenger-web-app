@@ -15,39 +15,37 @@ export class WsJwtGuard implements CanActivate {
 
     async canActivate(context: ExecutionContext): Promise<boolean> {
         const client: Socket = context.switchToWs().getClient();
-
         try {
-            // Пріоритет: client.data.currentToken
-            // Fallback: handshake token
-           const token =
-               client.data.currentToken ||
-               client.handshake.auth?.token ||
-               client.handshake.query?.token;
+            const token = client.data.currentToken
+                || client.handshake.auth?.token
+                || client.handshake.query?.token;
 
-            if (!token) throw new WsException("Unauthorized: No token provided");
+            if (!token) throw new WsException('Unauthorized: No token provided');
 
-            // Перевіряємо токен
-            const payload = this.jwtService.verify(token);
+            let payload: any;
+            try {
+                payload = this.jwtService.verify(token);
+            } catch (err: any) {
 
-            if (!client.data.user) throw new WsException("Unauthorized: User not found");
+                if (err.name === 'TokenExpiredError') {
+                    client.emit('auth_error', { code: 'TOKEN_EXPIRED', message: 'Token expired' });
+                } else {
+                    client.emit('auth_error', { code: 'INVALID_TOKEN', message: 'Invalid token' });
+                }
+                throw new WsException(err.message);
+            }
+
+            if (!client.data.user) throw new WsException('Unauthorized: User not found');
 
             client.data.user = {
-                id: payload.sub,
+                id:       payload.sub,
                 nickname: payload.nickname,
-                email: payload.email,
-                role: payload.role,
+                email:    payload.email,
+                role:     payload.role,
             };
-
             return true;
         } catch (err) {
-            this.logger.error(`Ws Auth Error: ${err.message}`);
-
-            client.emit('auth_error', {
-                message: err.message || 'Unauthorized',
-                statusCode: 401
-            });
-
-            throw new WsException(err.message || "Unauthorized");
+            throw new WsException(err.message || 'Unauthorized');
         }
     }
 }
