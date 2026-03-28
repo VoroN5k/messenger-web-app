@@ -68,6 +68,9 @@ model User {
   // Sender Key relations
   ownedSenderKeys     GroupSenderKey[] @relation("SenderKeyOwner")
   receivedSenderKeys  GroupSenderKey[] @relation("SenderKeyRecipient")
+
+  // Pinned messages (pinned by this user)
+  pinnedMessages      PinnedMessage[]
 }
 
 model Session {
@@ -90,13 +93,15 @@ model Conversation {
   description String?
   avatarUrl   String?
   createdById Int?
+  // Legacy single pinnedMessageId kept for backward compat — superseded by PinnedMessage table
   pinnedMessageId Int?
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
-  members    ConversationMember[]
-  messages   Message[]
-  senderKeys GroupSenderKey[]
+  members       ConversationMember[]
+  messages      Message[]
+  senderKeys    GroupSenderKey[]
+  pinnedMessages PinnedMessage[]
 
   @@index([createdById])
 }
@@ -108,12 +113,31 @@ model ConversationMember {
   role           MemberRole @default(MEMBER)
   joinedAt       DateTime   @default(now())
   lastReadAt     DateTime   @default(now())
+  isPinned       Boolean    @default(false)
+  isArchived     Boolean    @default(false)
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([conversationId, userId])
   @@index([userId])
+  @@index([conversationId])
+  @@index([userId, isPinned])
+  @@index([userId, isArchived])
+}
+
+model PinnedMessage {
+  id             Int      @id @default(autoincrement())
+  conversationId Int
+  messageId      Int
+  pinnedById     Int
+  pinnedAt       DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  message      Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  pinnedBy     User         @relation(fields: [pinnedById], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, messageId])
   @@index([conversationId])
 }
 
@@ -141,8 +165,9 @@ model Message {
   replies      Message[]    @relation("MessageReplies")
   forwardedFrom Message?    @relation("MessageForwards", fields: [forwardedFromId], references: [id])
   forwards      Message[]    @relation("MessageForwards")
-  forwardedFromUser User?       @relation("MessageForwardUser", fields: [forwardedFromUserId], references: [id])
+  forwardedFromUser User?   @relation("MessageForwardUser", fields: [forwardedFromUserId], references: [id])
   reactions    Reaction[]
+  pinnedIn     PinnedMessage[]
 
   @@index([conversationId])
   @@index([senderId])

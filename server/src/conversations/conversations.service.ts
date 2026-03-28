@@ -5,11 +5,11 @@ import {
 import { PrismaService } from '../prisma/prisma.service.js';
 import { validateAndNormalizeMetadata } from './metadata.validator.js';
 import { UploadService } from '../upload/upload.service.js';
-import {ReactionUser} from "./interfaces/reactionUser.interface.js";
+import { ReactionUser } from './interfaces/reactionUser.interface.js';
 
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
 const ALLOWED_EMOJIS = ['👍','❤️','😂','😮','😢','😡','🔥','👏','🎉','💯'];
-
+const MAX_PINNED_MESSAGES = 20;
 
 const MSG_SELECT = {
     id: true, content: true, createdAt: true, editedAt: true, deletedAt: true,
@@ -32,8 +32,7 @@ const MSG_SELECT = {
     },
     reactions: {
         select: {
-            emoji: true,
-            userId: true,
+            emoji: true, userId: true,
             user: { select: { id: true, nickname: true, avatarUrl: true } },
         },
         orderBy: { createdAt: 'asc' as const },
@@ -53,11 +52,7 @@ export class ConversationsService {
 
     // Helpers
 
-    private groupReactions(reactions: Array<{
-        emoji: string;
-        userId: number;
-        user: ReactionUser;
-    }>) {
+    private groupReactions(reactions: Array<{ emoji: string; userId: number; user: ReactionUser }>) {
         const map = new Map<string, { userIds: number[]; users: ReactionUser[] }>();
         for (const r of reactions) {
             const slot = map.get(r.emoji) ?? { userIds: [], users: [] };
@@ -66,10 +61,7 @@ export class ConversationsService {
             map.set(r.emoji, slot);
         }
         return Array.from(map.entries()).map(([emoji, slot]) => ({
-            emoji,
-            count:   slot.userIds.length,
-            userIds: slot.userIds,
-            users:   slot.users,
+            emoji, count: slot.userIds.length, userIds: slot.userIds, users: slot.users,
         }));
     }
 
@@ -85,18 +77,15 @@ export class ConversationsService {
     ) {
         const { reactions, ...rest } = msg;
         const msgTime = new Date(rest.createdAt).getTime();
-
         let isRead = false;
         const readBy: { userId: number; nickname: string }[] = [];
-
-        for (const [userId, { lastReadAt, nickname }] of otherMembersLastRead.entries()) {
+        for (const [uid, { lastReadAt, nickname }] of otherMembersLastRead.entries()) {
             if (lastReadAt.getTime() >= msgTime) {
-                readBy.push({ userId, nickname });
+                readBy.push({ userId: uid, nickname });
                 if (String(rest.senderId) === String(currentUserId)) isRead = true;
             }
         }
         if (String(rest.senderId) !== String(currentUserId)) isRead = true;
-
         return { ...rest, isRead, readBy, reactions: this.groupReactions(reactions) };
     }
 
@@ -114,23 +103,16 @@ export class ConversationsService {
         return m;
     }
 
-    private async getOtherMembersLastRead(
-        conversationId: number,
-        currentUserId: number,
-    ): Promise<Map<number, { lastReadAt: Date; nickname: string }>> {
+    private async getOtherMembersLastRead(conversationId: number, currentUserId: number) {
         const members = await this.prisma.conversationMember.findMany({
             where: { conversationId, userId: { not: currentUserId } },
             select: { userId: true, lastReadAt: true, user: { select: { nickname: true } } },
         });
         const map = new Map<number, { lastReadAt: Date; nickname: string }>();
-        for (const m of members) {
-            map.set(m.userId, { lastReadAt: m.lastReadAt, nickname: m.user.nickname });
-        }
+        for (const m of members) map.set(m.userId, { lastReadAt: m.lastReadAt, nickname: m.user.nickname });
         return map;
     }
 
-    // Scheduled message filter
-    // Hides messages with future scheduledAt from non-senders
     private scheduledFilter(userId: number) {
         return {
             OR: [
@@ -141,29 +123,34 @@ export class ConversationsService {
         };
     }
 
-    // My conversations
-    async getMyConversations(userId: number, skip = 0, take = 20): Promise<{
-        conversations: any[];
-        hasMore: boolean;
-    }> {
+    // My conversations (paginated, with pin/archive)
+
+    async getMyConversations(userId: number, skip = 0, take = 20, showArchived = false) {
         const TAKE = Math.min(take, 50);
 
         const memberships = await this.prisma.conversationMember.findMany({
-            where: { userId },
+            where: {
+                userId,
+                isArchived: showArchived ? true : false,
+            },
             include: {
                 conversation: {
                     include: {
-                        members: { include: { user: { select: MEMBER_USER_SELECT } } },
+                        members:  { include: { user: { select: MEMBER_USER_SELECT } } },
                         messages: {
-                            where: { deletedAt: null, ...this.scheduledFilter(userId) },
+                            where:   { deletedAt: null, ...this.scheduledFilter(userId) },
                             orderBy: { id: 'desc' },
-                            take: 1,
-                            select: { id: true, content: true, senderId: true, createdAt: true, fileType: true, fileUrl: true },
+                            take:    1,
+                            select:  { id: true, content: true, senderId: true, createdAt: true, fileType: true, fileUrl: true },
                         },
                     },
                 },
             },
-            orderBy: { conversation: { updatedAt: 'desc' } },
+            // Pinned chats first, then by conversation updatedAt
+            orderBy: [
+                { isPinned:    'desc' },
+                { conversation: { updatedAt: 'desc' } },
+            ],
             skip,
             take: TAKE + 1,
         });
@@ -174,9 +161,18 @@ export class ConversationsService {
         const conversations = await Promise.all(page.map(async (m) => {
             const conv = m.conversation;
 
-            const convFull = await this.prisma.conversation.findUnique({
-                where:  { id: conv.id },
-                select: { pinnedMessageId: true },
+            // Fetch latest pinned message for the banner
+            const latestPinned = await this.prisma.pinnedMessage.findFirst({
+                where:   { conversationId: conv.id },
+                orderBy: { pinnedAt: 'desc' },
+                select:  {
+                    messageId: true,
+                    message: { select: { id: true, content: true, sender: { select: { id: true, nickname: true } } } },
+                },
+            });
+
+            const pinnedCount = await this.prisma.pinnedMessage.count({
+                where: { conversationId: conv.id },
             });
 
             const unreadCount = await this.prisma.message.count({
@@ -204,42 +200,117 @@ export class ConversationsService {
                 }
             }
 
-            const pinnedMessageId = convFull?.pinnedMessageId ?? null;
-            const pinnedMessage   = pinnedMessageId
-                ? await this.prisma.message.findUnique({
-                    where:  { id: pinnedMessageId },
-                    select: { id: true, content: true, sender: { select: { id: true, nickname: true } } },
-                })
-                : null;
-
             return {
                 id: conv.id, type: conv.type, name: displayName, avatarUrl: displayAvatar,
                 description: conv.description, isOnline, myRole: m.role,
-                lastMessage: conv.messages[0] ?? null, unreadCount,
-                members: conv.members.map(mem => ({ userId: mem.userId, role: mem.role, joinedAt: mem.joinedAt, user: mem.user })),
-                updatedAt: conv.updatedAt, pinnedMessageId, pinnedMessage,
+                lastMessage:  conv.messages[0] ?? null,
+                unreadCount,
+                members:      conv.members.map(mem => ({ userId: mem.userId, role: mem.role, joinedAt: mem.joinedAt, user: mem.user })),
+                updatedAt:    conv.updatedAt,
+                isPinned:     m.isPinned,
+                isArchived:   m.isArchived,
+                // Latest pinned message for the banner (null if nothing pinned)
+                pinnedMessage: latestPinned?.message ?? null,
+                pinnedCount,
             };
         }));
 
         return { conversations, hasMore };
     }
 
+    // Pin / Archive chat (sidebar, per-user)
+
+    async setChatPinned(userId: number, conversationId: number, isPinned: boolean) {
+        await this.assertMember(userId, conversationId);
+        await this.prisma.conversationMember.update({
+            where: { conversationId_userId: { conversationId, userId } },
+            data:  { isPinned },
+        });
+        return { isPinned };
+    }
+
+    async setChatArchived(userId: number, conversationId: number, isArchived: boolean) {
+        await this.assertMember(userId, conversationId);
+        await this.prisma.conversationMember.update({
+            where: { conversationId_userId: { conversationId, userId } },
+            data:  { isArchived, ...(isArchived ? { isPinned: false } : {}) },
+        });
+        return { isArchived };
+    }
+
+    // Multi-pin messages
+
+    async addPinnedMessage(userId: number, conversationId: number, messageId: number) {
+        await this.assertAdmin(userId, conversationId);
+
+        const msg = await this.prisma.message.findUnique({ where: { id: messageId } });
+        if (!msg || msg.conversationId !== conversationId) throw new NotFoundException('Message not found');
+        if (msg.deletedAt) throw new BadRequestException('Cannot pin a deleted message');
+
+        const currentCount = await this.prisma.pinnedMessage.count({ where: { conversationId } });
+        if (currentCount >= MAX_PINNED_MESSAGES) {
+            throw new BadRequestException(`Cannot pin more than ${MAX_PINNED_MESSAGES} messages`);
+        }
+
+        const pinned = await this.prisma.pinnedMessage.upsert({
+            where:  { conversationId_messageId: { conversationId, messageId } },
+            create: { conversationId, messageId, pinnedById: userId },
+            update: { pinnedAt: new Date(), pinnedById: userId },
+            select: {
+                messageId: true, pinnedAt: true,
+                message: { select: { id: true, content: true, sender: { select: { id: true, nickname: true } } } },
+            },
+        });
+
+        const pinnedCount = await this.prisma.pinnedMessage.count({ where: { conversationId } });
+        return { pinned, pinnedCount };
+    }
+
+    async removePinnedMessage(userId: number, conversationId: number, messageId: number) {
+        await this.assertAdmin(userId, conversationId);
+
+        await this.prisma.pinnedMessage.deleteMany({ where: { conversationId, messageId } });
+
+        const pinnedCount = await this.prisma.pinnedMessage.count({ where: { conversationId } });
+        // Return the new "current" pinned message (latest remaining)
+        const latest = await this.prisma.pinnedMessage.findFirst({
+            where:   { conversationId },
+            orderBy: { pinnedAt: 'desc' },
+            select:  {
+                messageId: true,
+                message: { select: { id: true, content: true, sender: { select: { id: true, nickname: true } } } },
+            },
+        });
+
+        return { unpinnedMessageId: messageId, pinnedCount, latestPinnedMessage: latest?.message ?? null };
+    }
+
+    async getPinnedMessages(userId: number, conversationId: number) {
+        await this.assertMember(userId, conversationId);
+        return this.prisma.pinnedMessage.findMany({
+            where:   { conversationId },
+            orderBy: { pinnedAt: 'desc' },
+            select:  {
+                id: true, messageId: true, pinnedAt: true,
+                pinnedBy: { select: { id: true, nickname: true } },
+                message:  { select: { id: true, content: true, fileType: true, fileUrl: true, sender: { select: { id: true, nickname: true } } } },
+            },
+        });
+    }
+
     // Messages
 
-    /** Returns { messages, meta: { firstUnreadId } } for initial load */
     async getMessages(userId: number, conversationId: number, cursor?: number) {
         await this.assertMember(userId, conversationId);
-
-        // Fetch member's lastReadAt for unread divider (only on initial load, no cursor)
         const member = !cursor
             ? await this.prisma.conversationMember.findUnique({
-                where: { conversationId_userId: { conversationId, userId } },
+                where:  { conversationId_userId: { conversationId, userId } },
                 select: { lastReadAt: true },
             })
             : null;
 
         const msgs = await this.prisma.message.findMany({
-            where: { conversationId, ...this.scheduledFilter(userId) },
+            where:   { conversationId, ...this.scheduledFilter(userId) },
             select:  MSG_SELECT,
             take:    30,
             ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
@@ -249,7 +320,6 @@ export class ConversationsService {
         const otherMembersLastRead = await this.getOtherMembersLastRead(conversationId, userId);
         const ordered = msgs.reverse();
 
-        // Find the first unread message from others (for the red divider)
         const firstUnreadMsg = !cursor && member?.lastReadAt
             ? ordered.find(m =>
                 String(m.senderId) !== String(userId) &&
@@ -258,19 +328,15 @@ export class ConversationsService {
             : null;
 
         const messages = ordered.map(msg => this.mapMessageWithRead(msg, userId, otherMembersLastRead));
-
-        if (cursor) return messages; // paginated: plain array for backward compat
-
+        if (cursor) return messages;
         return { messages, meta: { firstUnreadId: firstUnreadMsg?.id ?? null } };
     }
 
     async getMessagesAround(userId: number, conversationId: number, around: number) {
         await this.assertMember(userId, conversationId);
         const msgs = await this.prisma.message.findMany({
-            where:   { conversationId, id: { lte: around }, ...this.scheduledFilter(userId) },
-            select:  MSG_SELECT,
-            take:    30,
-            orderBy: { id: 'desc' },
+            where: { conversationId, id: { lte: around }, ...this.scheduledFilter(userId) },
+            select: MSG_SELECT, take: 30, orderBy: { id: 'desc' },
         });
         const otherMembersLastRead = await this.getOtherMembersLastRead(conversationId, userId);
         return msgs.reverse().map(msg => this.mapMessageWithRead(msg, userId, otherMembersLastRead));
@@ -279,10 +345,8 @@ export class ConversationsService {
     async getMessagesAfter(userId: number, conversationId: number, after: number) {
         await this.assertMember(userId, conversationId);
         const msgs = await this.prisma.message.findMany({
-            where:   { conversationId, id: { gt: after }, ...this.scheduledFilter(userId) },
-            select:  MSG_SELECT,
-            take:    30,
-            orderBy: { id: 'asc' },
+            where: { conversationId, id: { gt: after }, ...this.scheduledFilter(userId) },
+            select: MSG_SELECT, take: 30, orderBy: { id: 'asc' },
         });
         const otherMembersLastRead = await this.getOtherMembersLastRead(conversationId, userId);
         return msgs.map(msg => this.mapMessageWithRead(msg, userId, otherMembersLastRead));
@@ -298,9 +362,7 @@ export class ConversationsService {
                 content: { contains: q, mode: 'insensitive' },
                 ...this.scheduledFilter(userId),
             },
-            select: MSG_SELECT,
-            orderBy: { id: 'desc' },
-            take: 30,
+            select: MSG_SELECT, orderBy: { id: 'desc' }, take: 30,
         });
         const otherMembersLastRead = await this.getOtherMembersLastRead(conversationId, userId);
         return msgs.reverse().map(msg => this.mapMessageWithRead(msg, userId, otherMembersLastRead));
@@ -315,12 +377,10 @@ export class ConversationsService {
                 fileSize: true, metadata: true, createdAt: true, senderId: true,
                 sender: { select: { id: true, nickname: true } },
             },
-            orderBy: { id: 'desc' },
-            take: 200,
+            orderBy: { id: 'desc' }, take: 200,
         });
     }
 
-    /** Used by gateway to fetch a scheduled message just before emitting it */
     async getMessageById(messageId: number) {
         const msg = await this.prisma.message.findUnique({ where: { id: messageId }, select: MSG_SELECT });
         if (!msg) return null;
@@ -328,6 +388,7 @@ export class ConversationsService {
     }
 
     // Save message
+
     async saveMessage(userId: number, conversationId: number, dto: {
         content?: string; fileUrl?: string; fileName?: string;
         fileType?: string; fileSize?: number; replyToId?: number;
@@ -336,7 +397,8 @@ export class ConversationsService {
         const member = await this.assertMember(userId, conversationId);
         const conv   = await this.prisma.conversation.findUnique({ where: { id: conversationId } });
         if (!conv) throw new NotFoundException('Conversation not found');
-        if (conv.type === 'CHANNEL' && member.role === 'MEMBER') throw new ForbiddenException('Only admins can post in channels');
+        if (conv.type === 'CHANNEL' && member.role === 'MEMBER')
+            throw new ForbiddenException('Only admins can post in channels');
 
         const msg = await this.prisma.message.create({
             data: {
@@ -354,15 +416,10 @@ export class ConversationsService {
             select: MSG_SELECT,
         });
 
-        await this.prisma.conversation.update({
-            where: { id: conversationId },
-            data:  { updatedAt: new Date() },
-        });
-
+        await this.prisma.conversation.update({ where: { id: conversationId }, data: { updatedAt: new Date() } });
         return { ...this.mapMessage(msg), isRead: false };
     }
 
-    // Mark as read
     async markAsRead(userId: number, conversationId: number) {
         await this.prisma.conversationMember.updateMany({
             where: { conversationId, userId },
@@ -371,6 +428,7 @@ export class ConversationsService {
     }
 
     // Delete / Edit / React
+
     async deleteMessage(messageId: number, userId: number) {
         const msg = await this.prisma.message.findUnique({ where: { id: messageId } });
         if (!msg) throw new NotFoundException('Message not found');
@@ -383,7 +441,9 @@ export class ConversationsService {
         if (msg.deletedAt) return msg;
         const deleted = await this.prisma.message.update({ where: { id: messageId }, data: { deletedAt: new Date() } });
         if (msg.fileUrl) {
-            const otherRefs = await this.prisma.message.count({ where: { fileUrl: msg.fileUrl, deletedAt: null, id: { not: messageId } } });
+            const otherRefs = await this.prisma.message.count({
+                where: { fileUrl: msg.fileUrl, deletedAt: null, id: { not: messageId } },
+            });
             if (otherRefs === 0) this.upload.deleteFile(msg.fileUrl).catch(() => {});
         }
         return deleted;
@@ -407,7 +467,9 @@ export class ConversationsService {
         if (!msg) throw new NotFoundException('Not found');
         if (msg.deletedAt) throw new BadRequestException('Cannot react to deleted message');
         await this.assertMember(userId, msg.conversationId);
-        const existing = await this.prisma.reaction.findUnique({ where: { userId_messageId_emoji: { userId, messageId, emoji } } });
+        const existing = await this.prisma.reaction.findUnique({
+            where: { userId_messageId_emoji: { userId, messageId, emoji } },
+        });
         if (existing) await this.prisma.reaction.delete({ where: { id: existing.id } });
         else          await this.prisma.reaction.create({ data: { emoji, userId, messageId } });
         const reactions = await this.prisma.reaction.findMany({
@@ -418,22 +480,8 @@ export class ConversationsService {
         return { grouped: this.groupReactions(reactions), conversationId: msg.conversationId };
     }
 
-    // ── Pin / Unpin ───────────────────────────────────────────────────────────
-    async pinMessage(userId: number, conversationId: number, messageId: number) {
-        await this.assertAdmin(userId, conversationId);
-        const msg = await this.prisma.message.findUnique({ where: { id: messageId } });
-        if (!msg || msg.conversationId !== conversationId) throw new NotFoundException('Message not found');
-        await this.prisma.conversation.update({ where: { id: conversationId }, data: { pinnedMessageId: messageId } });
-        return { pinnedMessageId: messageId, message: this.mapMessage(msg) };
-    }
+    // Forward
 
-    async unpinMessage(userId: number, conversationId: number) {
-        await this.assertAdmin(userId, conversationId);
-        await this.prisma.conversation.update({ where: { id: conversationId }, data: { pinnedMessageId: null } });
-        return { pinnedMessageId: null };
-    }
-
-    // ── Forward ───────────────────────────────────────────────────────────────
     async forwardMessage(userId: number, messageId: number, targetConversationId: number, reEncryptedContent?: string) {
         await this.assertMember(userId, targetConversationId);
         const original = await this.prisma.message.findUnique({ where: { id: messageId } });
@@ -443,7 +491,8 @@ export class ConversationsService {
         const msg = await this.prisma.message.create({
             data: {
                 content: contentToStore, senderId: userId, conversationId: targetConversationId,
-                fileUrl: original.fileUrl, fileName: original.fileName, fileType: original.fileType, fileSize: original.fileSize,
+                fileUrl: original.fileUrl, fileName: original.fileName,
+                fileType: original.fileType, fileSize: original.fileSize,
                 forwardedFromId: original.id, forwardedFromUserId: original.senderId,
             },
             select: MSG_SELECT,
@@ -452,7 +501,8 @@ export class ConversationsService {
         return { ...this.mapMessage(msg), isRead: false };
     }
 
-    // ── Direct / Group / Channel ──────────────────────────────────────────────
+    // Direct / Group / Channel
+
     async getOrCreateDirect(userId: number, targetId: number) {
         const isSelf = userId === targetId;
         if (!isSelf) {
@@ -461,13 +511,7 @@ export class ConversationsService {
         }
         const existing = isSelf
             ? await this.prisma.conversation.findFirst({
-                where: {
-                    type: 'DIRECT',
-                    members: {
-                        some: { userId },
-                        every: { userId }
-                    }
-                },
+                where: { type: 'DIRECT', members: { some: { userId }, every: { userId } } },
                 include: { members: { include: { user: { select: MEMBER_USER_SELECT } } } },
             })
             : await this.prisma.conversation.findFirst({
@@ -478,7 +522,10 @@ export class ConversationsService {
         return this.prisma.conversation.create({
             data: {
                 type: 'DIRECT', createdById: userId,
-                members: { create: isSelf ? [{ userId, role: 'MEMBER' }] : [{ userId, role: 'MEMBER' }, { userId: targetId, role: 'MEMBER' }] },
+                members: { create: isSelf
+                        ? [{ userId, role: 'MEMBER' }]
+                        : [{ userId, role: 'MEMBER' }, { userId: targetId, role: 'MEMBER' }]
+                },
             },
             include: { members: { include: { user: { select: MEMBER_USER_SELECT } } } },
         });
@@ -508,7 +555,7 @@ export class ConversationsService {
     async getConversation(userId: number, conversationId: number) {
         await this.assertMember(userId, conversationId);
         return this.prisma.conversation.findUnique({
-            where: { id: conversationId },
+            where:   { id: conversationId },
             include: { members: { include: { user: { select: MEMBER_USER_SELECT } } } },
         });
     }
@@ -517,9 +564,14 @@ export class ConversationsService {
         const conv = await this.prisma.conversation.findUnique({ where: { id: conversationId } });
         if (conv?.type === 'DIRECT') throw new BadRequestException('Cannot add to direct chats');
         await this.assertAdmin(adminId, conversationId);
-        const exists = await this.prisma.conversationMember.findUnique({ where: { conversationId_userId: { conversationId, userId: targetUserId } } });
+        const exists = await this.prisma.conversationMember.findUnique({
+            where: { conversationId_userId: { conversationId, userId: targetUserId } },
+        });
         if (exists) throw new ConflictException('Already a member');
-        return this.prisma.conversationMember.create({ data: { conversationId, userId: targetUserId, role: 'MEMBER' }, include: { user: { select: MEMBER_USER_SELECT } } });
+        return this.prisma.conversationMember.create({
+            data: { conversationId, userId: targetUserId, role: 'MEMBER' },
+            include: { user: { select: MEMBER_USER_SELECT } },
+        });
     }
 
     async removeMember(adminId: number, conversationId: number, targetUserId: number) {
@@ -527,18 +579,27 @@ export class ConversationsService {
         if (conv?.type === 'DIRECT') throw new BadRequestException('Cannot remove from direct chats');
         if (adminId !== targetUserId) {
             await this.assertAdmin(adminId, conversationId);
-            const target = await this.prisma.conversationMember.findUnique({ where: { conversationId_userId: { conversationId, userId: targetUserId } } });
+            const target = await this.prisma.conversationMember.findUnique({
+                where: { conversationId_userId: { conversationId, userId: targetUserId } },
+            });
             if (target?.role === 'OWNER') throw new ForbiddenException('Cannot remove owner');
         }
         await this.prisma.groupSenderKey.deleteMany({ where: { conversationId, senderId: targetUserId } });
-        await this.prisma.conversationMember.delete({ where: { conversationId_userId: { conversationId, userId: targetUserId } } });
+        await this.prisma.conversationMember.delete({
+            where: { conversationId_userId: { conversationId, userId: targetUserId } },
+        });
         return { removed: targetUserId };
     }
 
     async setMemberRole(ownerId: number, conversationId: number, targetUserId: number, role: 'ADMIN' | 'MEMBER') {
-        const owner = await this.prisma.conversationMember.findUnique({ where: { conversationId_userId: { conversationId, userId: ownerId } } });
+        const owner = await this.prisma.conversationMember.findUnique({
+            where: { conversationId_userId: { conversationId, userId: ownerId } },
+        });
         if (owner?.role !== 'OWNER') throw new ForbiddenException('Owner only');
-        return this.prisma.conversationMember.update({ where: { conversationId_userId: { conversationId, userId: targetUserId } }, data: { role } });
+        return this.prisma.conversationMember.update({
+            where: { conversationId_userId: { conversationId, userId: targetUserId } },
+            data:  { role },
+        });
     }
 
     async updateConversation(userId: number, conversationId: number, dto: { name?: string; description?: string; avatarUrl?: string }) {
@@ -546,49 +607,37 @@ export class ConversationsService {
         return this.prisma.conversation.update({ where: { id: conversationId }, data: dto });
     }
 
-    async setSenderKey(
-        requesterId: number,
-        conversationId: number,
-        keys: Array<{ recipientId: number; encryptedKey: string }>,
-    ) {
-        await this.assertMember(requesterId, conversationId);
+    // Sender keys
 
-        // Завантажуємо існуючі ключі для цього відправника
+    async setSenderKey(requesterId: number, conversationId: number, keys: Array<{ recipientId: number; encryptedKey: string }>) {
+        await this.assertMember(requesterId, conversationId);
         const existingKeys = await this.prisma.groupSenderKey.findMany({
             where: { conversationId, senderId: requesterId },
             select: { recipientId: true },
         });
         const existingRecipients = new Set(existingKeys.map(k => k.recipientId));
-
         await Promise.all(
             keys.map(({ recipientId, encryptedKey }) => {
-                if (existingRecipients.has(recipientId)) {
-                    return Promise.resolve();
-                }
+                if (existingRecipients.has(recipientId)) return Promise.resolve();
                 return this.prisma.groupSenderKey.create({
                     data: { conversationId, senderId: requesterId, recipientId, encryptedKey },
                 });
             }),
         );
-
         return { ok: true };
     }
 
     async getSenderKeysForMe(userId: number, conversationId: number) {
         await this.assertMember(userId, conversationId);
         return this.prisma.groupSenderKey.findMany({
-            where: { conversationId, recipientId: userId },
+            where:  { conversationId, recipientId: userId },
             select: { senderId: true, encryptedKey: true },
         });
     }
 
-    /** Load all pending scheduled messages (called on server start) */
     async getPendingScheduledMessages() {
         return this.prisma.message.findMany({
-            where: {
-                scheduledAt: { gt: new Date() },
-                deletedAt: null,
-            },
+            where:  { scheduledAt: { gt: new Date() }, deletedAt: null },
             select: { id: true, conversationId: true, scheduledAt: true, senderId: true },
         });
     }
