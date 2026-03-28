@@ -1,7 +1,7 @@
 'use client';
 
 import { RefObject, useState, useRef } from 'react';
-import { Send, Paperclip, Mic, Loader2, X, WifiOff, Calendar, Timer } from 'lucide-react';
+import { Send, Paperclip, Mic, Loader2, X, WifiOff, Calendar, Timer, Forward } from 'lucide-react';
 import { VoiceRecorder }  from '@/src/components/chat/VoiceRecorder';
 import { ScheduleModal }  from '@/src/components/chat/ScheduleModal';
 import { Message }        from '@/src/types/conversation.types';
@@ -18,6 +18,8 @@ interface Props {
     canPost:           boolean;
     inputValue:        string;
     replyTo:           Message | null;
+    pendingForward:    Message | null;
+    onClearPendingForward: () => void;
     typingUsers:       { userId: number; nickname: string }[];
     showVoice:         boolean;
     uploadProgress:    number | null;
@@ -38,13 +40,14 @@ interface Props {
 }
 
 export function ChatInput({
-                              canPost, inputValue, replyTo, typingUsers, showVoice,
+                              canPost, inputValue, replyTo, pendingForward, onClearPendingForward,
+                              typingUsers, showVoice,
                               uploadProgress, uploadError, isOnline, socketConnected, offlineQueueCount,
                               fileInputRef, onInputChange, onSubmit, onFileSelect, onSendVoice, onCancelUpload,
                               onClearError, onSetReplyTo, onSetShowVoice, notifyTyping,
                           }: Readonly<Props>) {
-    const [showScheduleModal, setShowScheduleModal]     = useState(false);
-    const [showDestructPicker, setShowDestructPicker]   = useState(false);
+    const [showScheduleModal,   setShowScheduleModal]   = useState(false);
+    const [showDestructPicker,  setShowDestructPicker]  = useState(false);
     const [destructAfterSeconds, setDestructAfterSeconds] = useState<number | null>(null);
     const [focused, setFocused] = useState(false);
 
@@ -53,16 +56,11 @@ export function ChatInput({
         onSubmit(e, null, destructAfterSeconds);
     };
 
-    // Explicit click handler for the send button — ensures sending
-    // works regardless of how the form submit event propagates.
     const handleSendClick = (e: React.MouseEvent<HTMLButtonElement>) => {
         e.preventDefault();
         e.stopPropagation();
-        if (!inputValue.trim()) return;
-        // Create a synthetic event compatible with the onSubmit signature
-        const syntheticEvent = {
-            preventDefault: () => {},
-        } as React.FormEvent;
+        if (!inputValue.trim() && !pendingForward) return;
+        const syntheticEvent = { preventDefault: () => {} } as React.FormEvent;
         onSubmit(syntheticEvent, null, destructAfterSeconds);
     };
 
@@ -75,26 +73,27 @@ export function ChatInput({
         ? DESTRUCT_OPTIONS.find(o => o.value === destructAfterSeconds)?.label
         : null;
 
-    const hasText = inputValue.trim().length > 0;
-    const isOffline = !isOnline || !socketConnected;
+    const hasText     = inputValue.trim().length > 0;
+    const hasFwd      = !!pendingForward;
+    const canSend     = hasText || hasFwd;
+    const isOffline   = !isOnline || !socketConnected;
+
+    // Sender name for the pending forward banner
+    const fwdSenderName = pendingForward?.sender?.nickname
+        ?? pendingForward?.forwardedFrom?.sender?.nickname
+        ?? 'Невідомий';
+    const fwdContent = pendingForward?.fileUrl
+        ? (pendingForward.fileType?.startsWith('audio/') ? '🎤 Голосове' : '📎 Файл')
+        : (pendingForward?.content ?? '');
 
     return (
-        <div
-            className="shrink-0 relative"
-            style={{
-                background: 'var(--bg-surface)',
-                borderTop: '1px solid var(--border)',
-            }}
-        >
+        <div className="shrink-0 relative"
+             style={{ background: 'var(--bg-surface)', borderTop: '1px solid var(--border)' }}>
+
             {/* ── Offline banner ── */}
             {isOffline && (
-                <div
-                    className="flex items-center gap-2.5 px-5 py-2 slide-up"
-                    style={{
-                        background: 'rgba(251,191,36,0.07)',
-                        borderBottom: '1px solid rgba(251,191,36,0.12)',
-                    }}
-                >
+                <div className="flex items-center gap-2.5 px-5 py-2 slide-up"
+                     style={{ background: 'rgba(251,191,36,0.07)', borderBottom: '1px solid rgba(251,191,36,0.12)' }}>
                     <WifiOff size={12} className="text-amber-400 shrink-0" />
                     <span className="text-[11px]" style={{ color: 'rgba(251,191,36,0.8)' }}>
                         Немає з'єднання — повідомлення надішлються автоматично
@@ -105,17 +104,12 @@ export function ChatInput({
 
             {/* ── Typing indicator ── */}
             {typingUsers.length > 0 && (
-                <div
-                    className="flex items-center gap-2.5 px-5 py-2 slide-up"
-                    style={{ borderBottom: '1px solid var(--border)' }}
-                >
+                <div className="flex items-center gap-2.5 px-5 py-2 slide-up"
+                     style={{ borderBottom: '1px solid var(--border)' }}>
                     <div className="flex items-center gap-0.5">
                         {[0, 1, 2].map(i => (
-                            <span
-                                key={i}
-                                className="typing-dot w-1 h-1 rounded-full"
-                                style={{ background: 'var(--accent)', display: 'inline-block' }}
-                            />
+                            <span key={i} className="typing-dot w-1 h-1 rounded-full"
+                                  style={{ background: 'var(--accent)', display: 'inline-block' }} />
                         ))}
                     </div>
                     <span className="text-[11px]" style={{ color: 'var(--text-3)' }}>
@@ -127,24 +121,21 @@ export function ChatInput({
 
             {/* ── Upload progress ── */}
             {uploadProgress !== null && (
-                <div
-                    className="px-5 py-2.5 flex items-center gap-3 slide-up"
-                    style={{ borderBottom: '1px solid var(--border)' }}
-                >
-                    <div className="flex-1 h-0.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                <div className="px-5 py-2.5 flex items-center gap-3 slide-up"
+                     style={{ borderBottom: '1px solid var(--border)' }}>
+                    <div className="flex-1 h-0.5 rounded-full overflow-hidden"
+                         style={{ background: 'rgba(255,255,255,0.06)' }}>
                         <div className="h-full rounded-full transition-all duration-300"
                              style={{ width: `${uploadProgress}%`, background: 'var(--accent)' }} />
                     </div>
-                    <span className="text-[10px] font-mono w-8 text-right shrink-0" style={{ color: 'var(--text-3)' }}>
+                    <span className="text-[10px] font-mono w-8 text-right shrink-0"
+                          style={{ color: 'var(--text-3)' }}>
                         {uploadProgress}%
                     </span>
-                    <button
-                        onClick={onCancelUpload}
-                        className="cursor-pointer transition-colors duration-150"
-                        style={{ color: 'var(--text-3)' }}
-                        onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--red)'}
-                        onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-3)'}
-                    >
+                    <button onClick={onCancelUpload} className="cursor-pointer transition-colors duration-150"
+                            style={{ color: 'var(--text-3)' }}
+                            onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--red)'}
+                            onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-3)'}>
                         <X size={13} />
                     </button>
                 </div>
@@ -152,10 +143,8 @@ export function ChatInput({
 
             {/* ── Upload error ── */}
             {uploadError && (
-                <div
-                    className="flex items-center justify-between px-5 py-2 slide-up"
-                    style={{ background: 'rgba(255,77,106,0.07)', borderBottom: '1px solid rgba(255,77,106,0.12)' }}
-                >
+                <div className="flex items-center justify-between px-5 py-2 slide-up"
+                     style={{ background: 'rgba(255,77,106,0.07)', borderBottom: '1px solid rgba(255,77,106,0.12)' }}>
                     <span className="text-[11px]" style={{ color: 'var(--red)' }}>{uploadError}</span>
                     <button onClick={onClearError} className="cursor-pointer" style={{ color: 'var(--red)' }}>
                         <X size={13} />
@@ -163,14 +152,14 @@ export function ChatInput({
                 </div>
             )}
 
-            {/* ── Reply / Destruct banners ── */}
-            {(replyTo || destructLabel) && (
-                <div
-                    className="px-5 py-2 flex items-center gap-3 slide-up"
-                    style={{ borderBottom: '1px solid var(--border)' }}
-                >
+            {/* ── Reply / Pending Forward / Destruct banners ── */}
+            {(replyTo || pendingForward || destructLabel) && (
+                <div className="px-5 py-2 flex flex-col gap-1.5 slide-up"
+                     style={{ borderBottom: '1px solid var(--border)' }}>
+
+                    {/* Reply banner */}
                     {replyTo && (
-                        <div className="flex-1 flex items-center gap-2.5 min-w-0">
+                        <div className="flex items-center gap-2.5">
                             <div className="w-0.5 h-7 rounded-full shrink-0" style={{ background: 'var(--accent)' }} />
                             <div className="min-w-0 flex-1">
                                 <p className="text-[11px] font-medium" style={{ color: 'var(--accent-bright)' }}>
@@ -180,28 +169,51 @@ export function ChatInput({
                                     {replyTo.deletedAt ? 'Повідомлення видалено' : replyTo.content || 'Файл'}
                                 </p>
                             </div>
-                            <button
-                                onClick={() => onSetReplyTo(null)}
-                                className="cursor-pointer ml-auto shrink-0 transition-colors duration-150"
-                                style={{ color: 'var(--text-3)' }}
-                                onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-2)'}
-                                onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-3)'}
-                            >
+                            <button onClick={() => onSetReplyTo(null)}
+                                    className="cursor-pointer ml-auto shrink-0 transition-colors duration-150"
+                                    style={{ color: 'var(--text-3)' }}
+                                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-2)'}
+                                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-3)'}>
                                 <X size={14} />
                             </button>
                         </div>
                     )}
+
+                    {/* ── Pending forward banner ── */}
+                    {pendingForward && (
+                        <div className="flex items-center gap-2.5">
+                            {/* Left colored bar — blue-ish to distinguish from reply */}
+                            <div className="w-0.5 h-8 rounded-full shrink-0"
+                                 style={{ background: 'rgba(99,179,237,0.8)' }} />
+                            <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                <Forward size={11} style={{ color: 'rgba(99,179,237,0.8)', flexShrink: 0 }} />
+                                <div className="min-w-0">
+                                    <p className="text-[11px] font-medium" style={{ color: 'rgba(99,179,237,0.9)' }}>
+                                        Пересилання від {fwdSenderName}
+                                    </p>
+                                    <p className="text-[11px] truncate" style={{ color: 'var(--text-3)' }}>
+                                        {fwdContent || '…'}
+                                    </p>
+                                </div>
+                            </div>
+                            <button onClick={onClearPendingForward}
+                                    className="cursor-pointer ml-auto shrink-0 transition-colors duration-150"
+                                    style={{ color: 'var(--text-3)' }}
+                                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-2)'}
+                                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-3)'}>
+                                <X size={14} />
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Self-destruct label */}
                     {destructLabel && (
-                        <div
-                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg ml-auto shrink-0"
-                            style={{ background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.14)' }}
-                        >
+                        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg self-end shrink-0"
+                             style={{ background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.14)' }}>
                             <Timer size={11} className="text-amber-400" />
                             <span className="text-[11px] text-amber-400">{destructLabel}</span>
-                            <button
-                                onClick={() => setDestructAfterSeconds(null)}
-                                className="cursor-pointer text-amber-400/60 hover:text-amber-400 transition-colors ml-0.5"
-                            >
+                            <button onClick={() => setDestructAfterSeconds(null)}
+                                    className="cursor-pointer text-amber-400/60 hover:text-amber-400 transition-colors ml-0.5">
                                 <X size={11} />
                             </button>
                         </div>
@@ -268,12 +280,9 @@ export function ChatInput({
                                     handleSend(e as any);
                                 }
                             }}
-                            placeholder="Повідомлення…"
+                            placeholder={pendingForward ? 'Напишіть щось перед пересиланням…' : 'Повідомлення…'}
                             className="flex-1 bg-transparent outline-none text-[14px] py-2.5 min-w-0"
-                            style={{
-                                color: 'var(--text-1)',
-                                caretColor: 'var(--accent)',
-                            }}
+                            style={{ color: 'var(--text-1)', caretColor: 'var(--accent)' }}
                         />
 
                         {/* Schedule button */}
@@ -323,11 +332,10 @@ export function ChatInput({
                             </button>
 
                             {showDestructPicker && (
-                                <div
-                                    className="absolute bottom-full right-0 mb-2 py-1.5 rounded-xl shadow-2xl modal-enter z-50 min-w-[160px]"
-                                    style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-md)' }}
-                                >
-                                    <p className="px-3 py-1.5 text-[9px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-3)' }}>
+                                <div className="absolute bottom-full right-0 mb-2 py-1.5 rounded-xl shadow-2xl modal-enter z-50 min-w-[160px]"
+                                     style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-md)' }}>
+                                    <p className="px-3 py-1.5 text-[9px] font-semibold uppercase tracking-widest"
+                                       style={{ color: 'var(--text-3)' }}>
                                         Самознищення
                                     </p>
                                     {DESTRUCT_OPTIONS.map(opt => (
@@ -357,20 +365,26 @@ export function ChatInput({
                         </div>
                     </div>
 
-                    {/* Send / Mic button */}
-                    {hasText ? (
+                    {/* Send button — shown when has text OR has pending forward */}
+                    {canSend ? (
                         <button
                             type="submit"
                             onClick={handleSendClick}
-                            disabled={!inputValue.trim()}
+                            disabled={!canSend}
                             className="w-9 h-9 rounded-xl flex items-center justify-center cursor-pointer transition-all duration-150 shrink-0 active:scale-95 disabled:opacity-40"
-                            style={{ background: 'var(--accent)' }}
-                            onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = '#9060ff'}
-                            onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'var(--accent)'}
+                            style={{ background: hasFwd && !hasText ? 'rgba(99,179,237,0.2)' : 'var(--accent)' }}
+                            onMouseEnter={e => (e.currentTarget as HTMLElement).style.background =
+                                hasFwd && !hasText ? 'rgba(99,179,237,0.35)' : '#9060ff'}
+                            onMouseLeave={e => (e.currentTarget as HTMLElement).style.background =
+                                hasFwd && !hasText ? 'rgba(99,179,237,0.2)' : 'var(--accent)'}
                         >
-                            <Send size={15} className="text-white ml-0.5" />
+                            {hasFwd && !hasText
+                                ? <Forward size={15} style={{ color: 'rgba(99,179,237,0.9)' }} />
+                                : <Send size={15} className="text-white ml-0.5" />
+                            }
                         </button>
                     ) : (
+                        /* Mic button when no text and no pending forward */
                         <button
                             type="button"
                             onClick={() => onSetShowVoice(true)}

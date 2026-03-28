@@ -142,7 +142,12 @@ export class ConversationsService {
     }
 
     // My conversations
-    async getMyConversations(userId: number) {
+    async getMyConversations(userId: number, skip = 0, take = 20): Promise<{
+        conversations: any[];
+        hasMore: boolean;
+    }> {
+        const TAKE = Math.min(take, 50);
+
         const memberships = await this.prisma.conversationMember.findMany({
             where: { userId },
             include: {
@@ -159,9 +164,14 @@ export class ConversationsService {
                 },
             },
             orderBy: { conversation: { updatedAt: 'desc' } },
+            skip,
+            take: TAKE + 1,
         });
 
-        return Promise.all(memberships.map(async (m) => {
+        const hasMore = memberships.length > TAKE;
+        const page    = hasMore ? memberships.slice(0, TAKE) : memberships;
+
+        const conversations = await Promise.all(page.map(async (m) => {
             const conv = m.conversation;
 
             const convFull = await this.prisma.conversation.findUnique({
@@ -210,6 +220,8 @@ export class ConversationsService {
                 updatedAt: conv.updatedAt, pinnedMessageId, pinnedMessage,
             };
         }));
+
+        return { conversations, hasMore };
     }
 
     // Messages

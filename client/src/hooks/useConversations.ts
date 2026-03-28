@@ -4,25 +4,28 @@ import { useAuthStore } from '@/src/store/useAuthStore';
 import { Conversation, Message } from '@/src/types/conversation.types';
 import {useE2E} from "@/src/hooks/useE2E";
 
+const PAGE_SIZE = 20;
+
 export const useConversations = (socket: any, activeConversationId?: number) => {
     const [conversations, setConversations] = useState<Conversation[]>([]);
     const [isLoading,     setIsLoading]     = useState(false);
+    const [isLoadingMore, setIsLoadingMore] = useState(false);
+    const [hasMore,       setHasMore]       = useState(false);
     const accessToken = useAuthStore((s) => s.accessToken);
     const currentUserId = useAuthStore((s) => s.user?.id);
 
-    const activeConvIdRef = useRef<number | undefined>(activeConversationId)
-    useEffect(() => {
-        activeConvIdRef.current = activeConversationId;
-    }, [activeConversationId]);
+    const activeConvIdRef = useRef<number | undefined>(activeConversationId);
+    useEffect(() => { activeConvIdRef.current = activeConversationId; }, [activeConversationId]);
 
     const convsRef = useRef<Conversation[]>([]);
-    useEffect(() => {
-        convsRef.current = conversations;
-    }, [conversations]);
+    useEffect(() => { convsRef.current = conversations; }, [conversations]);
+
+    // Track how many we've loaded for "load more"
+    const loadedCountRef = useRef(0);
 
     const e2e = useE2E();
 
-    // HELPER: decode lasMessage for one conversation (used on initial fetch)
+    // HELPER: decrypt lastMessage for one conversation
     const decryptLastMessage = useCallback(async (conv: Conversation): Promise<Conversation> => {
         if (!conv.lastMessage?.content || !conv.lastMessage.content.trim()) return conv;
 
@@ -51,12 +54,17 @@ export const useConversations = (socket: any, activeConversationId?: number) => 
         }
     }, [currentUserId, e2e]);
 
+    // Fetch initial page
     const fetchConversations = useCallback(async () => {
         setIsLoading(true);
         try {
-            const res = await api.get<Conversation[]>('/conversations');
-            const decrypted = await Promise.all(res.data.map(decryptLastMessage));
+            const res = await api.get<{ conversations: Conversation[]; hasMore: boolean }>(
+                `/conversations?skip=0&take=${PAGE_SIZE}`,
+            );
+            const decrypted = await Promise.all(res.data.conversations.map(decryptLastMessage));
             setConversations(decrypted);
+            setHasMore(res.data.hasMore);
+            loadedCountRef.current = decrypted.length;
         } catch (e) {
             console.error('fetchConversations:', e);
         } finally {
@@ -64,18 +72,44 @@ export const useConversations = (socket: any, activeConversationId?: number) => 
         }
     }, [decryptLastMessage]);
 
-    // ── 1. Завантажуємо одразу коли є токен (не чекаємо E2E) ─────────────────
+    // Load next page
+    const loadMore = useCallback(async () => {
+        if (isLoadingMore || !hasMore) return;
+        setIsLoadingMore(true);
+        try {
+            const skip = loadedCountRef.current;
+            const res  = await api.get<{ conversations: Conversation[]; hasMore: boolean }>(
+                `/conversations?skip=${skip}&take=${PAGE_SIZE}`,
+            );
+            const decrypted = await Promise.all(res.data.conversations.map(decryptLastMessage));
+            setConversations(prev => {
+                // Deduplicate by id
+                const existingIds = new Set(prev.map(c => c.id));
+                const fresh = decrypted.filter(c => !existingIds.has(c.id));
+                return [...prev, ...fresh];
+            });
+            setHasMore(res.data.hasMore);
+            loadedCountRef.current += decrypted.length;
+        } catch (e) {
+            console.error('loadMore conversations:', e);
+        } finally {
+            setIsLoadingMore(false);
+        }
+    }, [isLoadingMore, hasMore, decryptLastMessage]);
+
+    // 1. Завантажуємо одразу коли є токен
     useEffect(() => {
         if (!accessToken) return;
         fetchConversations();
     }, [accessToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // ── 2. Коли E2E готовий — ре-декриптуємо lastMessages ────────────────────
+    // 2. Коли E2E готовий - ре-декриптуємо lastMessages
     useEffect(() => {
         if (!e2e.isReady || !accessToken) return;
         fetchConversations();
-    }, [e2e.isReady]);
+    }, [e2e.isReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    // Socket events
     useEffect(() => {
         if (!socket) return;
 
@@ -83,13 +117,15 @@ export const useConversations = (socket: any, activeConversationId?: number) => 
             const isOwnMessage = String(msg.senderId) === String(currentUserId);
             const isCiphertext = msg.content?.length > 20 && /^[A-Za-z0-9_\-]+$/.test(msg.content ?? '');
 
-            // 1. Беремо бесіду з REF — це миттєво, синхронно і не залежить від черг React
             const targetConv = convsRef.current.find((c) => c.id === msg.conversationId);
-            if (!targetConv) return;
+            if (!targetConv) {
+                // New conversation from socket — refetch to get it
+                fetchConversations();
+                return;
+            }
 
             let plainContent = msg.content;
 
-            // 2. Декриптація
             if (isCiphertext) {
                 try {
                     if (targetConv.type === 'DIRECT') {
@@ -105,16 +141,10 @@ export const useConversations = (socket: any, activeConversationId?: number) => 
                 }
             }
 
-            // 3. Оновлення з урахуванням черговості
             setConversations((prev) =>
                 prev.map((c) => {
                     if (c.id !== msg.conversationId) return c;
-
-                    // ЗАХИСТ ВІД ПЕРЕГОНІВ (Race condition):
-                    // Перевіряємо, чи це повідомлення новіше за те, що ВЖЕ лежить у state.
-                    // Це важливо, бо довга декриптація старого повідомлення може закінчитись ПІЗНІШЕ за нове.
                     const isNewer = !c.lastMessage || new Date(msg.createdAt).getTime() >= new Date(c.lastMessage.createdAt).getTime();
-
                     return {
                         ...c,
                         lastMessage: isNewer ? {
@@ -135,13 +165,9 @@ export const useConversations = (socket: any, activeConversationId?: number) => 
         };
 
         const onEdited = async (data: {
-            messageId: number;
-            content: string;
-            editedAt: string;
-            conversationId: number;
-            senderId?: number;
+            messageId: number; content: string;
+            editedAt: string; conversationId: number; senderId?: number;
         }) => {
-            // Теж дістаємо через REF
             const targetConv = convsRef.current.find((c) => c.id === data.conversationId);
             if (!targetConv || targetConv.lastMessage?.id !== data.messageId) return;
 
@@ -153,15 +179,11 @@ export const useConversations = (socket: any, activeConversationId?: number) => 
                 try {
                     if (targetConv.type === 'DIRECT') {
                         const otherMember = targetConv.members.find((m) => m.userId !== currentUserId);
-                        if (otherMember) {
-                            plainContent = await e2e.decrypt(data.content, otherMember.userId);
-                        }
+                        if (otherMember) plainContent = await e2e.decrypt(data.content, otherMember.userId);
                     } else if (targetConv.type === 'GROUP') {
                         plainContent = await e2e.decryptFromGroup(data.content, targetConv.id, Number(actualSenderId));
                     }
-                } catch (e) {
-                    console.error('onEdited decrypt error:', e);
-                }
+                } catch {}
             }
 
             setConversations((prev) =>
@@ -182,7 +204,7 @@ export const useConversations = (socket: any, activeConversationId?: number) => 
                     return {
                         ...c,
                         isOnline: data.isOnline,
-                        members:  c.members.map((m) =>
+                        members: c.members.map((m) =>
                             m.userId === data.userId
                                 ? { ...m, user: { ...m.user, isOnline: data.isOnline } }
                                 : m,
@@ -192,30 +214,20 @@ export const useConversations = (socket: any, activeConversationId?: number) => 
             );
         };
 
-        const onRead = (data: { userId: number; conversationId: number }) => {
-            // Don't reset OUR unread here — handled by markConversationRead
-            // But update for other users if needed in future
-        };
-
         const onDeleted = (data: { messageId: number; conversationId: number }) => {
             setConversations((prev) =>
                 prev.map(c => {
                     if (c.id !== data.conversationId) return c;
-                    if (c.lastMessage?.id === data.messageId) {
-                        return { ...c, lastMessage: null };
-                    }
+                    if (c.lastMessage?.id === data.messageId) return { ...c, lastMessage: null };
                     return c;
                 }),
             );
         };
 
-        const onAdded = (data?: { conversationId: number}) => {
+        const onAdded = (data?: { conversationId: number }) => {
             fetchConversations();
-
-            if (data?.conversationId) {
-                socket.emit('joinConversation', { conversationId: data.conversationId });
-            }
-        }
+            if (data?.conversationId) socket.emit('joinConversation', { conversationId: data.conversationId });
+        };
 
         const onPinned = (data: { conversationId: number; pinnedMessageId: number; pinnedMessage: any }) => {
             setConversations(prev => prev.map(c =>
@@ -236,23 +248,21 @@ export const useConversations = (socket: any, activeConversationId?: number) => 
         socket.on('onMessage',           onMessage);
         socket.on('messageEdited',       onEdited);
         socket.on('userStatusChanged',   onUserStatus);
-        socket.on('conversationRead',    onRead);
-        socket.on('messageDeleted', onDeleted);
+        socket.on('messageDeleted',      onDeleted);
         socket.on('addedToConversation', onAdded);
-        socket.on('messagePinned', onPinned);
-        socket.on('messageUnpinned', onUnpinned);
+        socket.on('messagePinned',       onPinned);
+        socket.on('messageUnpinned',     onUnpinned);
 
         return () => {
             socket.off('onMessage',           onMessage);
             socket.off('messageEdited',       onEdited);
             socket.off('userStatusChanged',   onUserStatus);
-            socket.off('conversationRead',    onRead);
-            socket.off('messageDeleted', onDeleted);
+            socket.off('messageDeleted',      onDeleted);
             socket.off('addedToConversation', onAdded);
-            socket.off('messagePinned', onPinned);
-            socket.off('messageUnpinned', onUnpinned);
+            socket.off('messagePinned',       onPinned);
+            socket.off('messageUnpinned',     onUnpinned);
         };
-    }, [socket, fetchConversations]);
+    }, [socket, fetchConversations]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const markConversationRead = useCallback((conversationId: number) => {
         setConversations((prev) =>
@@ -263,6 +273,7 @@ export const useConversations = (socket: any, activeConversationId?: number) => 
     const addConversation = useCallback((conv: Conversation) => {
         setConversations((prev) => {
             if (prev.some((c) => c.id === conv.id)) return prev;
+            loadedCountRef.current += 1;
             return [conv, ...prev];
         });
     }, []);
@@ -276,7 +287,10 @@ export const useConversations = (socket: any, activeConversationId?: number) => 
     return {
         conversations,
         isLoading,
+        isLoadingMore,
+        hasMore,
         fetchConversations,
+        loadMore,
         markConversationRead,
         addConversation,
         updateConversation,

@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import {
     MessageSquare, Users, Search, X, UserPlus, Check, Hash,
     Settings, Bookmark, Plus, Shield, LogOut, Bell, BellOff, BellRing,
+    Loader2,
 } from 'lucide-react';
 import { useAuthStore } from '@/src/store/useAuthStore';
 import api from '@/src/lib/axios';
@@ -23,6 +24,8 @@ interface SidebarProps {
     currentUser: User | null;
     conversations: Conversation[];
     convsLoading: boolean;
+    convsLoadingMore?: boolean;
+    convsHasMore?: boolean;
     friends: FriendItem[];
     pendingRequests: Friendship[];
     selectedConvId?: number;
@@ -33,6 +36,7 @@ interface SidebarProps {
     onRespondFriendRequest: (id: number, action: 'ACCEPTED' | 'DECLINED') => Promise<void>;
     onRemoveFriend: (friendId: number) => Promise<void>;
     onLogout: () => void;
+    onLoadMoreConvs?: () => void;
     pushPermission?: string;
     onTogglePush?: () => void;
 }
@@ -61,12 +65,54 @@ function ConvSkeleton() {
     );
 }
 
+// Sentinel component for IntersectionObserver
+function LoadMoreSentinel({
+                              onIntersect,
+                              isLoading,
+                          }: {
+    onIntersect: () => void;
+    isLoading: boolean;
+}) {
+    const sentinelRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const el = sentinelRef.current;
+        if (!el) return;
+
+        const observer = new IntersectionObserver(
+            (entries) => {
+                if (entries[0].isIntersecting && !isLoading) {
+                    onIntersect();
+                }
+            },
+            { threshold: 0.1 },
+        );
+
+        observer.observe(el);
+        return () => observer.disconnect();
+    }, [onIntersect, isLoading]);
+
+    return (
+        <div ref={sentinelRef} className="flex items-center justify-center py-3">
+            {isLoading && (
+                <div className="flex items-center gap-2" style={{ color: 'var(--text-3)' }}>
+                    <Loader2 size={13} className="animate-spin" />
+                    <span className="text-[11px]">Завантаження...</span>
+                </div>
+            )}
+        </div>
+    );
+}
+
 export default function Sidebar(props: Readonly<SidebarProps>) {
     const {
-        currentUser, conversations, convsLoading, friends, pendingRequests,
+        currentUser, conversations, convsLoading,
+        convsLoadingMore = false, convsHasMore = false,
+        friends, pendingRequests,
         selectedConvId, socket, onSelectConversation, onAddConversation,
         onSendFriendRequest, onRespondFriendRequest, onRemoveFriend,
-        onLogout, pushPermission, onTogglePush,
+        onLogout, onLoadMoreConvs,
+        pushPermission, onTogglePush,
     } = props;
 
     const router = useRouter();
@@ -133,26 +179,21 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
         } finally { setSendingReq(null); }
     };
 
-    const filteredConvs = conversations.filter(c => {
-        if (!searchQuery.trim() || tab !== 'chats') return true;
-        return c.name?.toLowerCase().includes(searchQuery.toLowerCase());
-    });
+    // Filter conversations by local search query (client-side for loaded items)
+    const isSearchingConvs = tab === 'chats' && searchQuery.trim().length >= 2;
+    const filteredConvs = isSearchingConvs
+        ? conversations.filter(c => c.name?.toLowerCase().includes(searchQuery.toLowerCase()))
+        : conversations;
 
     return (
         <aside
             className="w-[300px] flex flex-col shrink-0 h-full"
-            style={{
-                background: 'var(--bg-surface)',
-                borderRight: '1px solid var(--border)',
-            }}
+            style={{ background: 'var(--bg-surface)', borderRight: '1px solid var(--border)' }}
         >
             {/* ── Top bar ── */}
             <div className="px-4 pt-4 pb-3 flex items-center justify-between shrink-0"
                  style={{ borderBottom: '1px solid var(--border)' }}>
-                {/* User info */}
                 <div className="flex items-center gap-2.5 min-w-0 flex-1">
-
-                    {/* Аватарка (ТІЛЬКИ вона тепер клікабельна і викликає модалку) */}
                     <div
                         className="relative shrink-0 cursor-pointer group"
                         onClick={() => setShowCropModal(true)}
@@ -166,8 +207,6 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
                             <Plus size={12} className="text-white" />
                         </div>
                     </div>
-
-                    {/* Текст (нікнейм), він більше не розтягує клікабельну зону */}
                     <div className="min-w-0 flex-1">
                         <p className="text-[13px] font-semibold truncate leading-tight" style={{ color: 'var(--text-1)' }}>
                             {currentUser?.nickname ?? '—'}
@@ -179,9 +218,7 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
                     </div>
                 </div>
 
-                {/* Action buttons */}
                 <div className="flex items-center gap-0.5 shrink-0">
-                    {/* Notification bell (Тепер не зникає, а стає неактивним (disabled) та показує BellOff) */}
                     {onTogglePush && (
                         <SidebarIconBtn
                             onClick={notifDenied ? () => {} : onTogglePush}
@@ -195,18 +232,10 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
                             }
                         </SidebarIconBtn>
                     )}
-
-                    {/* Settings */}
                     <SidebarIconBtn onClick={() => router.push('/settings')} title="Налаштування">
                         <Settings size={15} />
                     </SidebarIconBtn>
-
-                    {/* Logout */}
-                    <SidebarIconBtn
-                        onClick={() => setShowLogoutConfirm(true)}
-                        title="Вийти"
-                        danger
-                    >
+                    <SidebarIconBtn onClick={() => setShowLogoutConfirm(true)} title="Вийти" danger>
                         <LogOut size={15} />
                     </SidebarIconBtn>
                 </div>
@@ -308,8 +337,7 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
                                         (e.currentTarget as HTMLElement).style.color = 'var(--text-3)';
                                     }}
                                 >
-                                    {btn.icon}
-                                    {btn.label}
+                                    {btn.icon}{btn.label}
                                 </button>
                             ))}
                         </div>
@@ -327,85 +355,106 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
                                         </p>
                                     </div>
                                 )
-                                : filteredConvs.map(conv => {
-                                    const isSelected = conv.id === selectedConvId;
-                                    const isSaved = isSavedMessages(conv, currentUser?.id);
+                                : (
+                                    <>
+                                        {filteredConvs.map(conv => {
+                                            const isSelected = conv.id === selectedConvId;
+                                            const isSaved = isSavedMessages(conv, currentUser?.id);
 
-                                    return (
-                                        <div
-                                            key={conv.id}
-                                            onClick={() => onSelectConversation(conv)}
-                                            className="flex items-center gap-3 px-3 py-2.5 mx-2 my-0.5 rounded-xl cursor-pointer transition-all duration-150"
-                                            style={{
-                                                background: isSelected ? 'var(--bg-active)' : 'transparent',
-                                                border: isSelected ? '1px solid var(--border-accent)' : '1px solid transparent',
-                                            }}
-                                            onMouseEnter={e => {
-                                                if (!isSelected) (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)';
-                                            }}
-                                            onMouseLeave={e => {
-                                                if (!isSelected) (e.currentTarget as HTMLElement).style.background = 'transparent';
-                                            }}
-                                        >
-                                            {/* Avatar */}
-                                            <div className="relative shrink-0">
-                                                {isSaved ? (
-                                                    <div className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: 'rgba(251,191,36,0.12)' }}>
-                                                        <Bookmark size={17} className="text-amber-400" />
-                                                    </div>
-                                                ) : conv.avatarUrl || conv.type === 'DIRECT' ? (
-                                                    <>
-                                                        <Avatar user={{ nickname: conv.name ?? '?', avatarUrl: conv.avatarUrl }} size="md" className="w-11 h-11" />
-                                                        {conv.type === 'DIRECT' && (
-                                                            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2"
-                                                                  style={{ background: conv.isOnline ? 'var(--green)' : '#3a3a4a', borderColor: 'var(--bg-surface)' }} />
+                                            return (
+                                                <div
+                                                    key={conv.id}
+                                                    onClick={() => onSelectConversation(conv)}
+                                                    className="flex items-center gap-3 px-3 py-2.5 mx-2 my-0.5 rounded-xl cursor-pointer transition-all duration-150"
+                                                    style={{
+                                                        background: isSelected ? 'var(--bg-active)' : 'transparent',
+                                                        border: isSelected ? '1px solid var(--border-accent)' : '1px solid transparent',
+                                                    }}
+                                                    onMouseEnter={e => {
+                                                        if (!isSelected) (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)';
+                                                    }}
+                                                    onMouseLeave={e => {
+                                                        if (!isSelected) (e.currentTarget as HTMLElement).style.background = 'transparent';
+                                                    }}
+                                                >
+                                                    {/* Avatar */}
+                                                    <div className="relative shrink-0">
+                                                        {isSaved ? (
+                                                            <div className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: 'rgba(251,191,36,0.12)' }}>
+                                                                <Bookmark size={17} className="text-amber-400" />
+                                                            </div>
+                                                        ) : conv.avatarUrl || conv.type === 'DIRECT' ? (
+                                                            <>
+                                                                <Avatar user={{ nickname: conv.name ?? '?', avatarUrl: conv.avatarUrl }} size="md" className="w-11 h-11" />
+                                                                {conv.type === 'DIRECT' && (
+                                                                    <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2"
+                                                                          style={{ background: conv.isOnline ? 'var(--green)' : '#3a3a4a', borderColor: 'var(--bg-surface)' }} />
+                                                                )}
+                                                            </>
+                                                        ) : (
+                                                            <div className="w-11 h-11 rounded-full flex items-center justify-center"
+                                                                 style={{ background: conv.type === 'GROUP' ? 'rgba(124,77,255,0.12)' : 'rgba(59,130,246,0.12)' }}>
+                                                                {conv.type === 'GROUP' ? <Users size={17} style={{ color: 'var(--accent)' }} /> : <Hash size={17} className="text-blue-400" />}
+                                                            </div>
                                                         )}
-                                                    </>
-                                                ) : (
-                                                    <div className="w-11 h-11 rounded-full flex items-center justify-center"
-                                                         style={{ background: conv.type === 'GROUP' ? 'rgba(124,77,255,0.12)' : 'rgba(59,130,246,0.12)' }}>
-                                                        {conv.type === 'GROUP' ? <Users size={17} style={{ color: 'var(--accent)' }} /> : <Hash size={17} className="text-blue-400" />}
                                                     </div>
-                                                )}
-                                            </div>
 
-                                            {/* Text */}
-                                            <div className="min-w-0 flex-1">
-                                                <div className="flex items-center justify-between mb-0.5 gap-2">
-                                                    <p className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-1)' }}>
-                                                        {isSaved ? 'Збережені' : (conv.name ?? 'Чат')}
-                                                    </p>
-                                                    {conv.lastMessage && (
-                                                        <span className="text-[10px] font-mono shrink-0" style={{ color: 'var(--text-3)' }}>
-                                                            {formatTime(conv.lastMessage.createdAt)}
-                                                        </span>
-                                                    )}
+                                                    {/* Text */}
+                                                    <div className="min-w-0 flex-1">
+                                                        <div className="flex items-center justify-between mb-0.5 gap-2">
+                                                            <p className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-1)' }}>
+                                                                {isSaved ? 'Збережені' : (conv.name ?? 'Чат')}
+                                                            </p>
+                                                            {conv.lastMessage && (
+                                                                <span className="text-[10px] font-mono shrink-0" style={{ color: 'var(--text-3)' }}>
+                                                                    {formatTime(conv.lastMessage.createdAt)}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <div className="flex items-center justify-between gap-2">
+                                                            <p className="text-[12px] truncate" style={{
+                                                                color: conv.unreadCount > 0 ? 'var(--text-2)' : 'var(--text-3)',
+                                                                fontWeight: conv.unreadCount > 0 ? 500 : 400,
+                                                            }}>
+                                                                {conv.lastMessage?.content || (conv.lastMessage?.fileType ? '📎 Файл' : '…')}
+                                                            </p>
+                                                            {conv.unreadCount > 0 && (
+                                                                <span className="shrink-0 min-w-[18px] h-[18px] rounded-full text-[10px] font-semibold text-white px-1.5 flex items-center justify-center badge-appear"
+                                                                      style={{ background: 'var(--accent)' }}>
+                                                                    {conv.unreadCount}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </div>
                                                 </div>
-                                                <div className="flex items-center justify-between gap-2">
-                                                    <p className="text-[12px] truncate" style={{
-                                                        color: conv.unreadCount > 0 ? 'var(--text-2)' : 'var(--text-3)',
-                                                        fontWeight: conv.unreadCount > 0 ? 500 : 400,
-                                                    }}>
-                                                        {conv.lastMessage?.content || (conv.lastMessage?.fileType ? '📎 Файл' : '…')}
-                                                    </p>
-                                                    {conv.unreadCount > 0 && (
-                                                        <span className="shrink-0 min-w-[18px] h-[18px] rounded-full text-[10px] font-semibold text-white px-1.5 flex items-center justify-center badge-appear"
-                                                              style={{ background: 'var(--accent)' }}>
-                                                            {conv.unreadCount}
-                                                        </span>
-                                                    )}
-                                                </div>
+                                            );
+                                        })}
+
+                                        {/* ── Infinite scroll sentinel ── */}
+                                        {!isSearchingConvs && convsHasMore && onLoadMoreConvs && (
+                                            <LoadMoreSentinel
+                                                onIntersect={onLoadMoreConvs}
+                                                isLoading={convsLoadingMore}
+                                            />
+                                        )}
+
+                                        {/* End-of-list indicator */}
+                                        {!isSearchingConvs && !convsHasMore && filteredConvs.length > 0 && (
+                                            <div className="py-4 text-center">
+                                                <span className="text-[10px]" style={{ color: 'var(--text-3)' }}>
+                                                    · всі чати завантажено ·
+                                                </span>
                                             </div>
-                                        </div>
-                                    );
-                                })}
+                                        )}
+                                    </>
+                                )
+                        }
                     </>
                 )}
 
                 {/* ── Friends tab ── */}
                 {tab === 'friends' && (
                     <div className="px-2 py-1 space-y-4">
-                        {/* Pending requests */}
                         {pendingRequests.length > 0 && (
                             <section className="slide-up">
                                 <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-3)' }}>
@@ -433,7 +482,6 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
                             </section>
                         )}
 
-                        {/* Search results */}
                         {searchQuery.trim().length >= 2 && (
                             <section>
                                 <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-3)' }}>
@@ -489,7 +537,6 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
                             </section>
                         )}
 
-                        {/* Friends list */}
                         {friends.length > 0 && searchQuery.trim().length < 2 && (
                             <section>
                                 <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--text-3)' }}>
@@ -567,7 +614,6 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
                 />
             )}
 
-            {/* ── Logout confirm modal ── */}
             {showLogoutConfirm && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
                     <div className="w-full max-w-xs rounded-2xl overflow-hidden modal-enter"
@@ -598,8 +644,7 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
                                     onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(255,77,106,0.22)'}
                                     onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'rgba(255,77,106,0.15)'}
                                 >
-                                    <LogOut size={13} />
-                                    Вийти
+                                    <LogOut size={13} /> Вийти
                                 </button>
                             </div>
                         </div>
@@ -610,7 +655,6 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
     );
 }
 
-// ── Reusable icon button ──────────────────────────────────────────────────────
 function SidebarIconBtn({
                             children, onClick, title, active, danger, disabled,
                         }: {
@@ -637,8 +681,7 @@ function SidebarIconBtn({
             onMouseEnter={e => {
                 if (!active && !disabled) {
                     (e.currentTarget as HTMLElement).style.background = danger
-                        ? 'rgba(255,77,106,0.1)'
-                        : 'rgba(255,255,255,0.05)';
+                        ? 'rgba(255,77,106,0.1)' : 'rgba(255,255,255,0.05)';
                     (e.currentTarget as HTMLElement).style.color = danger ? 'var(--red)' : 'var(--text-2)';
                 }
             }}

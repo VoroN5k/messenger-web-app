@@ -24,8 +24,14 @@ export class ConversationsController {
 
     @SkipThrottle()
     @Get()
-    getAll(@CurrentUser('sub') userId: number) {
-        return this.conversationsService.getMyConversations(userId);
+    getAll(
+        @CurrentUser('sub') userId: number,
+        @Query('skip') skip?: string,
+        @Query('take') take?: string,
+    ) {
+        const skipNum = skip ? Math.max(0, parseInt(skip, 10)) : 0;
+        const takeNum = take ? Math.min(50, Math.max(1, parseInt(take, 10))) : 20;
+        return this.conversationsService.getMyConversations(userId, skipNum, takeNum);
     }
 
     @Throttle({ default: { ttl: 60_000, limit: 20 } })

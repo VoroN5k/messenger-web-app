@@ -11,7 +11,7 @@ import { jwtDecode }              from 'jwt-decode';
 import { Bell, X, ShieldAlert }   from 'lucide-react';
 import Sidebar                    from '@/src/components/chat/SideBar';
 import ChatArea                   from '@/src/components/chat/ChatArea';
-import { Conversation }           from '@/src/types/conversation.types';
+import { Conversation, Message }  from '@/src/types/conversation.types';
 import { useWebRTC }              from '@/src/hooks/useWebRTC';
 import { IncomingCallModal }      from '@/src/components/call/IncomingCallModal';
 import { ActiveCallOverlay }      from '@/src/components/call/ActiveCallOverlay';
@@ -28,6 +28,8 @@ export default function ChatPage() {
     const [selectedConv,  setSelectedConv]  = useState<Conversation | null>(null);
     const [isLoaded,      setIsLoaded]      = useState(false);
     const [showBanner,    setShowBanner]    = useState(false);
+
+    const [pendingForward, setPendingForward] = useState<Message | null>(null);
 
     useEffect(() => {
         if (needsRecoverySetup && sessionStorage.getItem('freshLogin') === 'true') {
@@ -113,7 +115,6 @@ export default function ChatPage() {
     if (!isLoaded) return null;
 
     return (
-        // Жодних орбів, сіток і фонових ефектів. Чистий майже-чорний колір #050505
         <div className="flex h-screen flex-col overflow-hidden text-slate-200 bg-[#050505] selection:bg-violet-500/30">
 
             {showBanner && (
@@ -170,6 +171,9 @@ export default function ChatPage() {
                     onConversationUpdate={updateConversation}
                     onMarkRead={(id) => markConversationRead(id)}
                     onStartCall={startCall}
+                    pendingForward={pendingForward}
+                    onSetPendingForward={setPendingForward}
+                    onSelectConversation={handleSelectConversation}
                 />
             </div>
 

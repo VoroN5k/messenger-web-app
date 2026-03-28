@@ -3,7 +3,7 @@
 import React, {
     useState, useRef, useEffect, UIEvent, useCallback,
 } from 'react';
-import { Paperclip, Loader2, Pin, PinOff, ArrowDown, Lock } from 'lucide-react';
+import { Paperclip, Loader2, Pin, PinOff, ArrowDown, Lock, Forward } from 'lucide-react';
 
 import { useMessages }              from '@/src/hooks/useMessages';
 import { useSearch }                from '@/src/hooks/useSearch';
@@ -22,7 +22,7 @@ import { ImageSendPreview }  from './ImageSendPreview';
 import { Conversation, Message } from '@/src/types/conversation.types';
 import { User }                  from '@/src/types/auth.types';
 import { Socket }                from 'socket.io-client';
-import {EDIT_WINDOW_MS, looksEncrypted} from '@/src/lib/chatFormatters';
+import { EDIT_WINDOW_MS, looksEncrypted } from '@/src/lib/chatFormatters';
 
 interface ChatAreaProps {
     currentUser:           User | null;
@@ -32,11 +32,16 @@ interface ChatAreaProps {
     onConversationUpdate?: (updated: any) => void;
     onMarkRead?:           (conversationId: number) => void;
     onStartCall?:          (convId: number, targetUserId: number, type: 'audio' | 'video') => void;
+    // Forward navigation
+    pendingForward?:         Message | null;
+    onSetPendingForward?:    (msg: Message | null) => void;
+    onSelectConversation?:   (conv: Conversation) => void;
 }
 
 export default function ChatArea({
                                      currentUser, conversation, conversations, socket,
                                      onConversationUpdate, onMarkRead, onStartCall,
+                                     pendingForward, onSetPendingForward, onSelectConversation,
                                  }: Readonly<ChatAreaProps>) {
     const currentUserId = currentUser?.id;
 
@@ -53,6 +58,7 @@ export default function ChatArea({
     const [uploadProgress, setUploadProgress] = useState<number | null>(null);
     const [uploadError,    setUploadError]    = useState<string | null>(null);
     const [showVoice,      setShowVoice]      = useState(false);
+    // forwardMsg: the message user clicked "forward" on — used to open ForwardModal
     const [forwardMsg,     setForwardMsg]     = useState<Message | null>(null);
     const [showMedia,      setShowMedia]      = useState(false);
     const [imagePreview,   setImagePreview]   = useState<{ file: File; url: string } | null>(null);
@@ -93,7 +99,7 @@ export default function ChatArea({
         setGroupKeysReady(false);
         e2e.prefetchGroupSenderKeys(conversationId, groupMemberIds)
             .then(() => setGroupKeysReady(true))
-            .catch(() => setGroupKeysReady(true)); // Навіть якщо не вдалося отримати ключі, дозволяємо користувачу бачити повідомлення (хоча вони будуть зашифровані)
+            .catch(() => setGroupKeysReady(true));
     }, []);
 
     const decryptFn = otherUserId
@@ -230,15 +236,8 @@ export default function ChatArea({
                 encMeta = JSON.stringify({ encrypted: true });
             } else if (conversation?.type === 'GROUP' && conversation?.id) {
                 const buf = await fileToProcess.arrayBuffer();
-                const encBuf = await e2e.encryptBinaryForGroup(
-                    buf,
-                    conversation.id,
-                    groupMemberIds,
-                );
-
-                if (encBuf === buf) {
-                    throw new Error('Не вдалося зашифрувати файл для групи')
-                }
+                const encBuf = await e2e.encryptBinaryForGroup(buf, conversation.id, groupMemberIds);
+                if (encBuf === buf) throw new Error('Не вдалося зашифрувати файл для групи');
                 fileToUpload = new File([encBuf], fileToProcess.name, { type: fileToProcess.type });
                 encMeta = JSON.stringify({ encrypted: true });
             }
@@ -325,69 +324,69 @@ export default function ChatArea({
         socket?.emit('unpinMessage', { conversationId: conversation.id });
     }, [socket, conversation]);
 
-    const forwardMessage = useCallback(
-        async (msgId: number, targetConvId: number) => {
-            if (!socket) return;
+    // ── Send the pending forwarded message from the SOURCE conv into the current (target) conv ──
+    const sendPendingForward = useCallback(async (msg: Message) => {
+        if (!conversation || !socket) return;
 
-            const original = messages.find(m => m.id === msgId);
-            if (!original) return;
-
-            // 1. Decrypt the original message
-            let plainContent = original.content;
-            if (looksEncrypted(original.content)) {
-                try {
-                    if (otherUserId) {
-                        plainContent = await e2e.decrypt(original.content, otherUserId);
-                    } else if (conversation?.type === 'GROUP' && conversation.id) {
-                        plainContent = await e2e.decryptFromGroup(
-                            original.content,
-                            conversation.id,
-                            Number(original.senderId),
-                        );
-                    }
-                } catch {
-                    // Keep original ciphertext — will show as-is on recipient side
-                }
-            }
-
-            // 2. Re-encrypt for the target conversation
-            const targetConv = conversations.find(c => c.id === targetConvId);
-            let reEncrypted  = plainContent;
-
+        // 1. Decrypt from source conversation
+        let plainContent = msg.content;
+        if (looksEncrypted(msg.content)) {
             try {
-                if (targetConv?.type === 'DIRECT') {
-                    const targetOther = targetConv.members.find(m => m.userId !== currentUserId);
-                    if (targetOther) {
-                        reEncrypted = await e2e.encrypt(plainContent, targetOther.userId);
-                    }
-                } else if (targetConv?.type === 'GROUP') {
-                    const targetMemberIds = targetConv.members.map(m => m.userId);
-
-                    // ВАЖЛИВО: завжди prefetch ключі для цільової групи перед шифруванням.
-                    // Це гарантує, що або існуючий ключ завантажений, або новий розповсюджений.
-                    await e2e.prefetchGroupSenderKeys(targetConvId, targetMemberIds);
-
-                    reEncrypted = await e2e.encryptForGroup(plainContent, targetConvId);
-
-                    // Якщо ключ не знайдено (повернули plaintext) — явно розповсюджуємо і повторюємо
-                    if (reEncrypted === plainContent) {
-                        await e2e.distributeMySenderKey(targetConvId, targetMemberIds);
-                        reEncrypted = await e2e.encryptForGroup(plainContent, targetConvId);
-                    }
+                const sourceConv = conversations.find(c => c.id === msg.conversationId);
+                if (sourceConv?.type === 'DIRECT') {
+                    const sourceOther = sourceConv.members.find(m => m.userId !== currentUserId);
+                    if (sourceOther) plainContent = await e2e.decrypt(msg.content, sourceOther.userId);
+                } else if (sourceConv?.type === 'GROUP' && sourceConv.id) {
+                    plainContent = await e2e.decryptFromGroup(msg.content, sourceConv.id, Number(msg.senderId));
                 }
-                // CHANNEL — no E2E encryption needed
             } catch {
-                reEncrypted = plainContent;
+                // keep ciphertext as fallback
             }
+        }
 
-            socket.emit('forwardMessage', {
-                messageId:            msgId,
-                targetConversationId: targetConvId,
-                reEncryptedContent:   reEncrypted,
-            });
-        },
-        [socket, messages, conversation, conversations, currentUserId, otherUserId, e2e],
-    );
+        // 2. Re-encrypt for the current (target) conversation
+        let reEncrypted = plainContent;
+        try {
+            if (conversation.type === 'DIRECT') {
+                const targetOther = conversation.members.find(m => m.userId !== currentUserId);
+                if (targetOther) reEncrypted = await e2e.encrypt(plainContent, targetOther.userId);
+            } else if (conversation.type === 'GROUP') {
+                const targetMemberIds = conversation.members.map(m => m.userId);
+                await e2e.prefetchGroupSenderKeys(conversation.id, targetMemberIds);
+                reEncrypted = await e2e.encryptForGroup(plainContent, conversation.id);
+                if (reEncrypted === plainContent) {
+                    await e2e.distributeMySenderKey(conversation.id, targetMemberIds);
+                    reEncrypted = await e2e.encryptForGroup(plainContent, conversation.id);
+                }
+            }
+            // CHANNEL — no E2E
+        } catch {
+            reEncrypted = plainContent;
+        }
+
+        socket.emit('forwardMessage', {
+            messageId:            msg.id,
+            targetConversationId: conversation.id,
+            reEncryptedContent:   reEncrypted,
+        });
+
+        onSetPendingForward?.(null);
+    }, [conversation, conversations, currentUserId, socket, e2e, onSetPendingForward]);
+
+    // ── ForwardModal: instead of immediately forwarding, navigate to target conv ──
+    const handleForwardModalSelect = useCallback(async (targetConvId: number) => {
+        if (!forwardMsg) return;
+
+        const targetConv = conversations.find(c => c.id === targetConvId);
+        if (!targetConv) return;
+
+        // Store the message to forward at page level (survives conv switch)
+        onSetPendingForward?.(forwardMsg);
+        setForwardMsg(null);
+
+        // Navigate to the target conversation
+        onSelectConversation?.(targetConv);
+    }, [forwardMsg, conversations, onSetPendingForward, onSelectConversation]);
 
     const onDragEnter = (e: React.DragEvent) => {
         e.preventDefault();
@@ -430,37 +429,44 @@ export default function ChatArea({
         if (msg.id) jumpToMessage(msg.id);
     };
 
-    const handleSubmit = (e: React.FormEvent, scheduledAt?: Date | null, destructAfterSeconds?: number | null) => {
+    // ── Main submit: send text (if any) → then send the pending forward ──
+    const handleSubmit = useCallback(async (
+        e: React.FormEvent,
+        scheduledAt?: Date | null,
+        destructAfterSeconds?: number | null,
+    ) => {
         e.preventDefault();
-        if (!inputValue.trim()) return;
-        sendMessage(inputValue.trim(), replyTo?.id, scheduledAt, destructAfterSeconds);
-        setInputValue('');
-        setReplyTo(null);
-    };
+
+        const hasText   = inputValue.trim().length > 0;
+        const hasFwd    = !!pendingForward && pendingForward.conversationId !== conversation?.id;
+        const hasFwdSame = !!pendingForward && pendingForward.conversationId === conversation?.id;
+        const hasAnyFwd = !!pendingForward;
+
+        if (!hasText && !hasAnyFwd) return;
+
+        // Send the text message first
+        if (hasText) {
+            sendMessage(inputValue.trim(), replyTo?.id, scheduledAt, destructAfterSeconds);
+            setInputValue('');
+            setReplyTo(null);
+        }
+
+        // Then send the forwarded message
+        if (pendingForward) {
+            await sendPendingForward(pendingForward);
+        }
+    }, [inputValue, replyTo, pendingForward, sendMessage, sendPendingForward, conversation]);
 
     // ── Empty state ──────────────────────────────────────────────────────────────
     if (!conversation) {
         return (
-            <div
-                className="flex-1 flex flex-col items-center justify-center"
-                style={{ background: 'var(--bg-base)' }}
-            >
-                <div
-                    className="w-16 h-16 rounded-2xl flex items-center justify-center mb-5"
-                    style={{
-                        background: 'var(--accent-dim)',
-                        border: '1px solid var(--border-accent)',
-                        boxShadow: '0 0 32px var(--accent-glow)',
-                    }}
-                >
+            <div className="flex-1 flex flex-col items-center justify-center" style={{ background: 'var(--bg-base)' }}>
+                <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-5"
+                     style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-accent)', boxShadow: '0 0 32px var(--accent-glow)' }}>
                     <Lock size={24} style={{ color: 'var(--accent-bright)' }} />
                 </div>
-                <p className="text-[15px] font-medium mb-2" style={{ color: 'var(--text-1)' }}>
-                    End-to-end encrypted
-                </p>
-                <p className="text-[13px]" style={{ color: 'var(--text-3)' }}>
-                    Select a conversation to begin
-                </p>
+                <p className="text-[15px] font-medium mb-2" style={{ color: 'var(--text-1)' }}>End-to-end encrypted</p>
+                <p className="text-[13px]" style={{ color: 'var(--text-3)' }}>Select a conversation to begin</p>
             </div>
         );
     }
@@ -476,22 +482,12 @@ export default function ChatArea({
         >
             {/* ── Drag overlay ── */}
             {isDragging && (
-                <div
-                    className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none backdrop-enter"
-                    style={{ background: 'rgba(124,77,255,0.08)', backdropFilter: 'blur(4px)' }}
-                >
-                    <div
-                        className="flex flex-col items-center gap-3 px-10 py-8 rounded-2xl modal-enter"
-                        style={{
-                            background: 'var(--bg-elevated)',
-                            border: '2px dashed var(--border-accent)',
-                            boxShadow: '0 8px 40px rgba(0,0,0,0.4)',
-                        }}
-                    >
+                <div className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none backdrop-enter"
+                     style={{ background: 'rgba(124,77,255,0.08)', backdropFilter: 'blur(4px)' }}>
+                    <div className="flex flex-col items-center gap-3 px-10 py-8 rounded-2xl modal-enter"
+                         style={{ background: 'var(--bg-elevated)', border: '2px dashed var(--border-accent)', boxShadow: '0 8px 40px rgba(0,0,0,0.4)' }}>
                         <Paperclip size={28} style={{ color: 'var(--accent-bright)' }} />
-                        <p className="text-[14px] font-semibold" style={{ color: 'var(--text-1)' }}>
-                            Drop to send file
-                        </p>
+                        <p className="text-[14px] font-semibold" style={{ color: 'var(--text-1)' }}>Drop to send file</p>
                         <p className="text-[11px]" style={{ color: 'var(--text-3)' }}>Max 10 MB</p>
                     </div>
                 </div>
@@ -500,14 +496,9 @@ export default function ChatArea({
             {/* ── Jump to latest ── */}
             {hasMoreNewer && (
                 <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-20">
-                    <button
-                        onClick={resetToLatest}
-                        className="flex items-center gap-2 px-4 py-2 rounded-full text-[12px] font-semibold text-white cursor-pointer transition-all duration-150 active:scale-95"
-                        style={{
-                            background: 'var(--accent)',
-                            boxShadow: '0 4px 16px rgba(124,77,255,0.4)',
-                        }}
-                    >
+                    <button onClick={resetToLatest}
+                            className="flex items-center gap-2 px-4 py-2 rounded-full text-[12px] font-semibold text-white cursor-pointer transition-all duration-150 active:scale-95"
+                            style={{ background: 'var(--accent)', boxShadow: '0 4px 16px rgba(124,77,255,0.4)' }}>
                         <ArrowDown size={13} />
                         Jump to latest
                     </button>
@@ -527,18 +518,11 @@ export default function ChatArea({
 
             {/* ── Pinned message ── */}
             {conversation.pinnedMessage && (
-                <div
-                    className="flex items-center gap-3 px-5 py-2.5 slide-up"
-                    style={{
-                        background: 'rgba(251,191,36,0.05)',
-                        borderBottom: '1px solid rgba(251,191,36,0.1)',
-                    }}
-                >
+                <div className="flex items-center gap-3 px-5 py-2.5 slide-up"
+                     style={{ background: 'rgba(251,191,36,0.05)', borderBottom: '1px solid rgba(251,191,36,0.1)' }}>
                     <Pin size={11} className="text-amber-400 shrink-0" />
-                    <button
-                        onClick={() => conversation.pinnedMessage?.id && jumpToMessage(conversation.pinnedMessage.id)}
-                        className="flex-1 min-w-0 text-left"
-                    >
+                    <button onClick={() => conversation.pinnedMessage?.id && jumpToMessage(conversation.pinnedMessage.id)}
+                            className="flex-1 min-w-0 text-left">
                         <p className="text-[11px] font-semibold text-amber-400 leading-tight">
                             {conversation.pinnedMessage.sender.nickname}
                         </p>
@@ -547,13 +531,10 @@ export default function ChatArea({
                         </p>
                     </button>
                     {canPin && (
-                        <button
-                            onClick={unpinMessage}
-                            className="p-1 cursor-pointer transition-colors duration-150"
-                            style={{ color: 'var(--text-3)' }}
-                            onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--red)'}
-                            onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-3)'}
-                        >
+                        <button onClick={unpinMessage} className="p-1 cursor-pointer transition-colors duration-150"
+                                style={{ color: 'var(--text-3)' }}
+                                onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--red)'}
+                                onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-3)'}>
                             <PinOff size={13} />
                         </button>
                     )}
@@ -563,37 +544,23 @@ export default function ChatArea({
             {/* ── Search panel ── */}
             {isSearchOpen && (
                 <SearchPanel
-                    query={query}
-                    setQuery={setQuery}
-                    results={results}
-                    isSearching={isSearching}
-                    loadedCount={loadedCount}
-                    navIdx={searchNavIdx}
-                    currentUserId={currentUserId}
+                    query={query} setQuery={setQuery} results={results}
+                    isSearching={isSearching} loadedCount={loadedCount}
+                    navIdx={searchNavIdx} currentUserId={currentUserId}
                     searchInputRef={searchInputRef}
-                    onNavSearch={navSearch}
-                    onClose={closeSearch}
+                    onNavSearch={navSearch} onClose={closeSearch}
                     onJumpTo={(msgId, idx) => { setSearchNavIdx(idx); jumpToMessage(msgId); }}
                 />
             )}
 
             {/* ── Messages ── */}
-            <div
-                ref={scrollRef}
-                onScroll={handleScroll}
-                className="flex-1 overflow-y-auto py-4 chat-scroll"
-                style={{ paddingBottom: '8px' }}
-            >
+            <div ref={scrollRef} onScroll={handleScroll}
+                 className="flex-1 overflow-y-auto py-4 chat-scroll"
+                 style={{ paddingBottom: '8px' }}>
                 {isLoadingMore && (
                     <div className="flex justify-center py-3">
-                        <div
-                            className="w-4 h-4 rounded-full border-2 border-t-transparent"
-                            style={{
-                                borderColor: 'var(--border-md)',
-                                borderTopColor: 'var(--accent)',
-                                animation: 'spinSlow 0.8s linear infinite',
-                            }}
-                        />
+                        <div className="w-4 h-4 rounded-full border-2 border-t-transparent"
+                             style={{ borderColor: 'var(--border-md)', borderTopColor: 'var(--accent)', animation: 'spinSlow 0.8s linear infinite' }} />
                     </div>
                 )}
 
@@ -635,14 +602,8 @@ export default function ChatArea({
 
                 {isLoadingNewer && (
                     <div className="flex justify-center py-3">
-                        <div
-                            className="w-4 h-4 rounded-full border-2 border-t-transparent"
-                            style={{
-                                borderColor: 'var(--border-md)',
-                                borderTopColor: 'var(--accent)',
-                                animation: 'spinSlow 0.8s linear infinite',
-                            }}
-                        />
+                        <div className="w-4 h-4 rounded-full border-2 border-t-transparent"
+                             style={{ borderColor: 'var(--border-md)', borderTopColor: 'var(--accent)', animation: 'spinSlow 0.8s linear infinite' }} />
                     </div>
                 )}
 
@@ -654,6 +615,8 @@ export default function ChatArea({
                 canPost={canPost && groupKeysReady}
                 inputValue={inputValue}
                 replyTo={replyTo}
+                pendingForward={pendingForward ?? null}
+                onClearPendingForward={() => onSetPendingForward?.(null)}
                 typingUsers={typingUsers}
                 showVoice={showVoice}
                 uploadProgress={uploadProgress}
@@ -673,14 +636,15 @@ export default function ChatArea({
                 notifyTyping={notifyTyping}
             />
 
-            {/* ── Modals ── */}
+            {/* ── ForwardModal — now navigates instead of immediately forwarding ── */}
             {forwardMsg && (
                 <ForwardModal
                     conversations={conversations}
-                    onForward={(targetId) => { if (forwardMsg.id) forwardMessage(forwardMsg.id, targetId); }}
+                    onForward={handleForwardModalSelect}
                     onClose={() => setForwardMsg(null)}
                 />
             )}
+
             {showMedia && conversation && (
                 <MediaPanel
                     conversationId={conversation.id}
@@ -689,6 +653,7 @@ export default function ChatArea({
                     decryptFn={decryptFn}
                 />
             )}
+
             {imagePreview && (
                 <ImageSendPreview
                     file={imagePreview.file}
