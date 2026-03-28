@@ -559,13 +559,14 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
         if (!this.rateLimit(client, this.mutateLimiter, 'pinMessage')) return;
 
         try {
-            const result = await this.convService.pinMessage(
+            const result = await this.convService.addPinnedMessage(
                 client.data.user.id, data.conversationId, data.messageId,
             );
             this.server.to(`conv_${data.conversationId}`).emit('messagePinned', {
                 conversationId:  data.conversationId,
-                pinnedMessageId: result.pinnedMessageId,
-                pinnedMessage:   result.message,
+                pinnedMessageId: result.pinned.messageId,
+                pinnedMessage:   result.pinned.message,
+                pinnedCount: result.pinnedCount,
             });
         } catch (e: any) {
             client.emit('pinFailed', { error: e.message });
@@ -576,12 +577,12 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     @SubscribeMessage('unpinMessage')
     async handleUnpin(
         @ConnectedSocket() client: Socket,
-        @MessageBody() data: { conversationId: number },
+        @MessageBody() data: { conversationId: number; messageId: number; },
     ) {
         if (!this.rateLimit(client, this.mutateLimiter, 'unpinMessage')) return;
 
         try {
-            await this.convService.unpinMessage(client.data.user.id, data.conversationId);
+            await this.convService.removePinnedMessage(client.data.user.id, data.conversationId, data.messageId);
             this.server.to(`conv_${data.conversationId}`).emit('messageUnpinned', {
                 conversationId: data.conversationId,
             });
