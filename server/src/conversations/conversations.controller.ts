@@ -1,6 +1,6 @@
 import {
     Body, Controller, Delete, forwardRef, Get, Inject, Param,
-    ParseIntPipe, Post, Put, Query, UseGuards,
+    ParseIntPipe, Patch, Post, Put, Query, UseGuards,
 } from '@nestjs/common';
 import { Throttle, SkipThrottle } from '@nestjs/throttler';
 import { ConversationsService } from './conversations.service.js';
@@ -28,10 +28,12 @@ export class ConversationsController {
         @CurrentUser('sub') userId: number,
         @Query('skip') skip?: string,
         @Query('take') take?: string,
+        @Query('archived') archived?: string,
     ) {
         const skipNum = skip ? Math.max(0, parseInt(skip, 10)) : 0;
         const takeNum = take ? Math.min(50, Math.max(1, parseInt(take, 10))) : 20;
-        return this.conversationsService.getMyConversations(userId, skipNum, takeNum);
+        const showArchived = archived === 'true';
+        return this.conversationsService.getMyConversations(userId, skipNum, takeNum, showArchived);
     }
 
     @Throttle({ default: { ttl: 60_000, limit: 20 } })
@@ -74,6 +76,27 @@ export class ConversationsController {
         @Body() dto: UpdateConversationDto,
     ) {
         return this.conversationsService.updateConversation(userId, id, dto);
+    }
+
+    // Pin / Archive in a sidebar
+    @Throttle({ default: { ttl: 60_000, limit: 30 } })
+    @Patch(':id/pin-chat')
+    pinChat(
+        @CurrentUser('sub') userId: number,
+        @Param('id', ParseIntPipe) id: number,
+        @Body('isPinned') isPinned: boolean,
+    ) {
+        return this.conversationsService.setChatPinned(userId, id, isPinned);
+    }
+
+    @Throttle({ default: { ttl: 60_000, limit: 30 } })
+    @Patch(':id/archive')
+    archiveChat(
+        @CurrentUser('sub') userId: number,
+        @Param('id', ParseIntPipe) id: number,
+        @Body('isArchived') isArchived: boolean,
+    ) {
+        return this.conversationsService.setChatArchived(userId, id, isArchived);
     }
 
     @Throttle({ default: { ttl: 60_000, limit: 120 } })
@@ -149,16 +172,26 @@ export class ConversationsController {
         @Param('id', ParseIntPipe) id: number,
         @Body() dto: PinMessageDto,
     ) {
-        return this.conversationsService.pinMessage(userId, id, dto.messageId);
+        return this.conversationsService.addPinnedMessage(userId, id, dto.messageId);
     }
 
     @Throttle({ default: { ttl: 60_000, limit: 20 } })
-    @Delete(':id/pin')
+    @Delete(':id/pin/:messageId')
     unpinMessage(
         @CurrentUser('sub') userId: number,
         @Param('id', ParseIntPipe) id: number,
+        @Param('messageId', ParseIntPipe) messageId: number,
     ) {
-        return this.conversationsService.unpinMessage(userId, id);
+        return this.conversationsService.removePinnedMessage(userId, id, messageId);
+    }
+
+    @SkipThrottle()
+    @Get(':id/pinned-messages')
+    getPinnedMessages(
+        @CurrentUser('sub') userId: number,
+        @Param('id', ParseIntPipe) id: number,
+    ) {
+        return this.conversationsService.getPinnedMessages(userId, id);
     }
 
     @Throttle({ default: { ttl: 60_000, limit: 30 } })
