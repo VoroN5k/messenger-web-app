@@ -25,26 +25,23 @@ export interface CallState {
 }
 
 const ICE_SERVERS: RTCIceServer[] = [
-    { urls: "stun:stun.l.google.com:19302" },
-
-    { urls: "stun:stun.relay.metered.ca:80" },
-
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun.relay.metered.ca:80' },
     {
         urls: [
-            "turn:global.relay.metered.ca:80",
-            "turn:global.relay.metered.ca:80?transport=tcp",
-            "turn:global.relay.metered.ca:443",
-            "turns:global.relay.metered.ca:443?transport=tcp"
+            'turn:global.relay.metered.ca:80',
+            'turn:global.relay.metered.ca:80?transport=tcp',
+            'turn:global.relay.metered.ca:443',
+            'turns:global.relay.metered.ca:443?transport=tcp',
         ],
-        username: "ae9cc6ddc8b03bb71663a872",
-        credential: "qjgGIvEE2jLHOFgD",
-    }
+        username:   'ae9cc6ddc8b03bb71663a872',
+        credential: 'qjgGIvEE2jLHOFgD',
+    },
 ];
 
 function createRingtone() {
     let ctx: AudioContext | null = null;
     let playing = false;
-
     const ring = () => {
         if (!playing || !ctx) return;
         const osc  = ctx.createOscillator();
@@ -58,7 +55,6 @@ function createRingtone() {
         osc.stop(ctx.currentTime + 0.4);
         setTimeout(ring, 1400);
     };
-
     return {
         play: () => {
             if (playing) return;
@@ -75,25 +71,24 @@ function createRingtone() {
 }
 
 export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
-    const [callState,    setCallState]    = useState<CallState>({ status: 'idle' });
-    const [localStream,  setLocalStream]  = useState<MediaStream | null>(null);
-    const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
-    const [isMuted,      setIsMuted]      = useState(false);
-    const [isCameraOff,  setIsCameraOff]  = useState(false);
+    const [callState,      setCallState]      = useState<CallState>({ status: 'idle' });
+    const [localStream,    setLocalStream]    = useState<MediaStream | null>(null);
+    const [remoteStream,   setRemoteStream]   = useState<MediaStream | null>(null);
+    const [isMuted,        setIsMuted]        = useState(false);
+    const [isCameraOff,    setIsCameraOff]    = useState(false);
+    const [isScreenSharing, setIsScreenSharing] = useState(false);
 
     const pcRef              = useRef<RTCPeerConnection | null>(null);
     const localStreamRef     = useRef<MediaStream | null>(null);
+    const screenStreamRef    = useRef<MediaStream | null>(null);
     const callStateRef       = useRef<CallState>({ status: 'idle' });
     const ringTimeoutRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
     const ringtone           = useRef(createRingtone());
-
-    // ── KEY FIX: buffer ICE candidates until remoteDescription is set ─────────
     const iceCandidateBuffer = useRef<RTCIceCandidateInit[]>([]);
     const remoteDescSet      = useRef(false);
 
     useEffect(() => { callStateRef.current = callState; }, [callState]);
 
-    // ── Flush buffered ICE candidates ─────────────────────────────────────────
     const flushIceCandidates = useCallback(async () => {
         const pc = pcRef.current;
         if (!pc) return;
@@ -103,14 +98,16 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
         }
     }, []);
 
-    // ── Cleanup ───────────────────────────────────────────────────────────────
     const cleanup = useCallback(() => {
         localStreamRef.current?.getTracks().forEach(t => t.stop());
         localStreamRef.current = null;
+        screenStreamRef.current?.getTracks().forEach(t => t.stop());
+        screenStreamRef.current = null;
         setLocalStream(null);
         setRemoteStream(null);
         setIsMuted(false);
         setIsCameraOff(false);
+        setIsScreenSharing(false);
 
         if (pcRef.current) {
             pcRef.current.ontrack                    = null;
@@ -119,22 +116,18 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
             pcRef.current.close();
             pcRef.current = null;
         }
-
         iceCandidateBuffer.current = [];
         remoteDescSet.current      = false;
-
         ringtone.current.stop();
         if (ringTimeoutRef.current) { clearTimeout(ringTimeoutRef.current); ringTimeoutRef.current = null; }
     }, []);
 
-    // ── Create PeerConnection ─────────────────────────────────────────────────
     const createPC = useCallback((callId: string): RTCPeerConnection => {
         const pc       = new RTCPeerConnection({ iceServers: ICE_SERVERS });
         const remoteMS = new MediaStream();
 
         pc.ontrack = ({ track }) => {
             remoteMS.addTrack(track);
-            // Create new reference to trigger React re-render
             setRemoteStream(new MediaStream(remoteMS.getTracks()));
         };
 
@@ -144,8 +137,6 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
 
         pc.oniceconnectionstatechange = () => {
             const s = pc.iceConnectionState;
-            console.log('[WebRTC] ICE state:', s);
-
             if (s === 'connected' || s === 'completed') {
                 setCallState(prev =>
                     prev.status === 'connecting'
@@ -153,10 +144,7 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
                         : prev,
                 );
             }
-            if (s === 'failed') {
-                // Try ICE restart
-                pc.restartIce?.();
-            }
+            if (s === 'failed') pc.restartIce?.();
             if (s === 'disconnected' || s === 'closed') {
                 setCallState(prev => {
                     if (prev.status === 'active' || prev.status === 'connecting') {
@@ -174,48 +162,32 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
         return pc;
     }, [socket, cleanup]);
 
-    // ── Get media ─────────────────────────────────────────────────────────────
     const getMedia = useCallback(async (callType: CallType): Promise<MediaStream> => {
-        // ── спочатку пробуємо запитаний тип ──────────────────────────────────────
         if (callType === 'video') {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({
                     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-                    video: true, // мінімальні constraints — без ideal width/height/facingMode
+                    video: true,
                 });
                 localStreamRef.current = stream;
                 setLocalStream(stream);
                 return stream;
             } catch (videoErr: any) {
-                const isNotFound =
-                    videoErr.name === 'NotFoundError' ||
-                    videoErr.name === 'DevicesNotFoundError' ||
-                    videoErr.message?.includes('not be found');
-
+                const isNotFound = videoErr.name === 'NotFoundError' || videoErr.name === 'DevicesNotFoundError';
                 if (isNotFound) {
-                    // ── камери немає — fallback на аудіо ─────────────────────────
-                    console.warn('[WebRTC] No camera found, falling back to audio-only');
-                    try {
-                        const stream = await navigator.mediaDevices.getUserMedia({
-                            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-                            video: false,
-                        });
-                        localStreamRef.current = stream;
-                        setLocalStream(stream);
-                        // Оновлюємо callType в стані щоб UI відобразив аудіо-режим
-                        setCallState(prev => ({ ...prev, callType: 'audio' }));
-                        callStateRef.current = { ...callStateRef.current, callType: 'audio' };
-                        return stream;
-                    } catch (audioErr) {
-                        throw audioErr;
-                    }
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+                        video: false,
+                    });
+                    localStreamRef.current = stream;
+                    setLocalStream(stream);
+                    setCallState(prev => ({ ...prev, callType: 'audio' }));
+                    callStateRef.current = { ...callStateRef.current, callType: 'audio' };
+                    return stream;
                 }
-
-                throw videoErr; // інша помилка — пробрасуємо далі
+                throw videoErr;
             }
         }
-
-        // ── аудіо дзвінок ────────────────────────────────────────────────────────
         const stream = await navigator.mediaDevices.getUserMedia({
             audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
             video: false,
@@ -225,17 +197,94 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
         return stream;
     }, []);
 
-    // ── Start call ────────────────────────────────────────────────────────────
-    const startCall = useCallback(async (
-        conversationId: number,
-        targetUserId:   number,
-        callType:       CallType,
-    ) => {
+    // Screen sharing
+
+    const startScreenShare = useCallback(async () => {
+        const pc = pcRef.current;
+        if (!pc || callStateRef.current.status !== 'active') return;
+
+        try {
+            const screenStream = await navigator.mediaDevices.getDisplayMedia({
+                video: { frameRate: 30 },
+                audio: false, // system audio can be included but often causes echo
+            });
+            screenStreamRef.current = screenStream;
+
+            const screenTrack = screenStream.getVideoTracks()[0];
+            if (!screenTrack) return;
+
+            // Replace video sender track in peer connection
+            const senders   = pc.getSenders();
+            const videoSender = senders.find(s => s.track?.kind === 'video');
+
+            if (videoSender) {
+                await videoSender.replaceTrack(screenTrack);
+            } else {
+                pc.addTrack(screenTrack, screenStream);
+            }
+
+            // Update local stream displayed in PiP
+            const newLocal = new MediaStream([
+                ...(localStreamRef.current?.getAudioTracks() ?? []),
+                screenTrack,
+            ]);
+            setLocalStream(newLocal);
+            setIsScreenSharing(true);
+
+            // Auto-stop when browser UI "stop sharing" button is pressed
+            screenTrack.onended = () => {
+                stopScreenShare();
+            };
+        } catch (err: any) {
+            if (err.name !== 'NotAllowedError') {
+                console.error('[WebRTC] screen share failed:', err);
+            }
+        }
+    }, []);
+
+    const stopScreenShare = useCallback(async () => {
+        const pc = pcRef.current;
+        if (!pc) return;
+
+        screenStreamRef.current?.getTracks().forEach(t => t.stop());
+        screenStreamRef.current = null;
+
+        // Restore camera track
+        const cameraTrack = localStreamRef.current?.getVideoTracks().find(t =>
+            !t.label.toLowerCase().includes('screen'),
+        );
+
+        const senders     = pc.getSenders();
+        const videoSender = senders.find(s => s.track?.kind === 'video');
+
+        if (videoSender) {
+            if (cameraTrack) {
+                await videoSender.replaceTrack(cameraTrack).catch(() => {});
+                setLocalStream(new MediaStream([
+                    ...(localStreamRef.current?.getAudioTracks() ?? []),
+                    cameraTrack,
+                ]));
+            } else {
+                // No camera — turn off video sender
+                await videoSender.replaceTrack(null).catch(() => {});
+            }
+        }
+
+        setIsScreenSharing(false);
+    }, []);
+
+    const toggleScreenShare = useCallback(async () => {
+        if (isScreenSharing) await stopScreenShare();
+        else                 await startScreenShare();
+    }, [isScreenSharing, startScreenShare, stopScreenShare]);
+
+    // Call lifecycle
+
+    const startCall = useCallback(async (conversationId: number, targetUserId: number, callType: CallType) => {
         if (!socket || !currentUserId) return;
         if (callStateRef.current.status !== 'idle') return;
 
         const callId = `${currentUserId}-${targetUserId}-${Date.now()}`;
-
         try {
             await getMedia(callType);
             setCallState({ status: 'calling', callId, conversationId, targetUserId, callType });
@@ -250,47 +299,37 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
                 }
             }, 45_000);
         } catch (err: any) {
-            console.error('[WebRTC] startCall failed:', err.name, err.message);
             cleanup();
-
             const msg =
                 err.name === 'NotFoundError'      ? 'Камеру не знайдено. Перевірте підключення.' :
                     err.name === 'NotAllowedError'    ? 'Немає дозволу на мікрофон/камеру.' :
                         err.name === 'NotReadableError'   ? 'Камера або мікрофон зайняті іншим додатком.' :
                             err.name === 'OverconstrainedError' ? 'Камера не підтримує потрібні параметри.' :
                                 `Помилка медіа: ${err.message}`;
-
-            alert(msg); // або заміни на свій toast
+            alert(msg);
             setCallState({ status: 'idle' });
         }
     }, [socket, currentUserId, getMedia, cleanup]);
 
-    // ── Accept call ───────────────────────────────────────────────────────────
     const acceptCall = useCallback(async (asType?: CallType) => {
         const state = callStateRef.current;
         if (state.status !== 'incoming' || !socket) return;
-
         const { callId, conversationId, callType } = state.incomingData!;
         const mediaType = asType ?? callType;
-
         ringtone.current.stop();
         if (ringTimeoutRef.current) { clearTimeout(ringTimeoutRef.current); ringTimeoutRef.current = null; }
-
         try {
             await getMedia(mediaType);
-            // FIX: update ref synchronously before emitting, so onSdpOffer won't miss it
             const newState: CallState = { status: 'connecting', callId, conversationId, callType: mediaType };
             callStateRef.current = newState;
             setCallState(newState);
             socket.emit('callAccept', { callId, callType: mediaType });
-        } catch (err) {
-            console.error('[WebRTC] acceptCall media failed:', err);
+        } catch {
             rejectCall();
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [socket, getMedia]);
 
-    // ── Reject call ───────────────────────────────────────────────────────────
     const rejectCall = useCallback(() => {
         const state = callStateRef.current;
         if (state.status !== 'incoming' || !socket) return;
@@ -301,7 +340,6 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
         setCallState({ status: 'idle' });
     }, [socket, cleanup]);
 
-    // ── End call ──────────────────────────────────────────────────────────────
     const endCall = useCallback(() => {
         const state = callStateRef.current;
         if (state.status === 'idle') return;
@@ -311,7 +349,6 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
         setTimeout(() => setCallState({ status: 'idle' }), 2000);
     }, [socket, cleanup]);
 
-    // ── Toggle mute / camera ──────────────────────────────────────────────────
     const toggleMute = useCallback(() => {
         const t = localStreamRef.current?.getAudioTracks()[0];
         if (!t) return;
@@ -326,7 +363,8 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
         setIsCameraOff(!t.enabled);
     }, []);
 
-    // ── Socket events ─────────────────────────────────────────────────────────
+    // Socket events
+
     useEffect(() => {
         if (!socket) return;
 
@@ -343,7 +381,6 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
             callStateRef.current = newState;
             setCallState(newState);
             ringtone.current.play();
-
             ringTimeoutRef.current = setTimeout(() => {
                 if (callStateRef.current.status === 'incoming') {
                     socket.emit('callReject', { callId: data.callId, conversationId: data.conversationId });
@@ -354,104 +391,70 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
             }, 45_000);
         };
 
-        // ── CALLER: callee accepted → create offer ────────────────────────────
         const onCallAccepted = async (data: { callId: string; callType: CallType }) => {
             if (callStateRef.current.status !== 'calling') return;
             if (ringTimeoutRef.current) { clearTimeout(ringTimeoutRef.current); ringTimeoutRef.current = null; }
-
-            const newState = { ...callStateRef.current, status: 'connecting' as CallStatus };
+            const newState = { ...callStateRef.current, status: 'connecting' as const };
             callStateRef.current = newState;
             setCallState(newState);
-
             const pc = createPC(data.callId);
             localStreamRef.current?.getTracks().forEach(t => pc.addTrack(t, localStreamRef.current!));
-
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
             socket.emit('sdpOffer', { callId: data.callId, offer: { type: offer.type, sdp: offer.sdp } });
         };
 
-        // ── CALLEE: receive offer → create answer ─────────────────────────────
         const onSdpOffer = async (data: { callId: string; offer: RTCSessionDescriptionInit }) => {
-            // FIX: don't check status here — use ref directly and accept if connecting OR just received
             const state = callStateRef.current;
-            if (state.status !== 'connecting' && state.status !== 'incoming') {
-                console.warn('[WebRTC] onSdpOffer ignored, status:', state.status);
-                return;
-            }
-
+            if (state.status !== 'connecting' && state.status !== 'incoming') return;
             const pc = createPC(data.callId);
             localStreamRef.current?.getTracks().forEach(t => pc.addTrack(t, localStreamRef.current!));
-
             await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
             remoteDescSet.current = true;
-            await flushIceCandidates(); // flush buffered candidates
-
+            await flushIceCandidates();
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
             socket.emit('sdpAnswer', { callId: data.callId, answer: { type: answer.type, sdp: answer.sdp } });
         };
 
-        // ── CALLER: receive answer ────────────────────────────────────────────
         const onSdpAnswer = async (data: { callId: string; answer: RTCSessionDescriptionInit }) => {
             const pc = pcRef.current;
             if (!pc) return;
             await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
             remoteDescSet.current = true;
-            await flushIceCandidates(); // flush buffered candidates
+            await flushIceCandidates();
         };
 
-        // ── ICE candidate — buffer if remote desc not set yet ─────────────────
         const onIceCandidate = async (data: { callId: string; candidate: RTCIceCandidateInit }) => {
             if (!data.candidate) return;
-
-            if (!remoteDescSet.current) {
-                // Buffer — remote description not set yet
-                iceCandidateBuffer.current.push(data.candidate);
-                return;
-            }
-
+            if (!remoteDescSet.current) { iceCandidateBuffer.current.push(data.candidate); return; }
             const pc = pcRef.current;
             if (!pc) return;
             try { await pc.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch {}
         };
 
-        const onCallRejected = () => {
-            cleanup();
-            setCallState({ status: 'ended', endReason: 'rejected' });
-            setTimeout(() => setCallState({ status: 'idle' }), 2500);
-        };
+        const onCallRejected = () => { cleanup(); setCallState({ status: 'ended', endReason: 'rejected' }); setTimeout(() => setCallState({ status: 'idle' }), 2500); };
+        const onCallEnded    = () => { cleanup(); setCallState({ status: 'ended', endReason: 'ended'    }); setTimeout(() => setCallState({ status: 'idle' }), 2500); };
+        const onCallBusy     = () => { cleanup(); setCallState({ status: 'ended', endReason: 'busy'     }); setTimeout(() => setCallState({ status: 'idle' }), 2500); };
 
-        const onCallEnded = () => {
-            cleanup();
-            setCallState({ status: 'ended', endReason: 'ended' });
-            setTimeout(() => setCallState({ status: 'idle' }), 2500);
-        };
-
-        const onCallBusy = () => {
-            cleanup();
-            setCallState({ status: 'ended', endReason: 'busy' });
-            setTimeout(() => setCallState({ status: 'idle' }), 2500);
-        };
-
-        socket.on('incomingCall',  onIncomingCall);
-        socket.on('callAccepted',  onCallAccepted);
-        socket.on('sdpOffer',      onSdpOffer);
-        socket.on('sdpAnswer',     onSdpAnswer);
-        socket.on('iceCandidate',  onIceCandidate);
-        socket.on('callRejected',  onCallRejected);
-        socket.on('callEnded',     onCallEnded);
-        socket.on('callBusy',      onCallBusy);
+        socket.on('incomingCall', onIncomingCall);
+        socket.on('callAccepted', onCallAccepted);
+        socket.on('sdpOffer',     onSdpOffer);
+        socket.on('sdpAnswer',    onSdpAnswer);
+        socket.on('iceCandidate', onIceCandidate);
+        socket.on('callRejected', onCallRejected);
+        socket.on('callEnded',    onCallEnded);
+        socket.on('callBusy',     onCallBusy);
 
         return () => {
-            socket.off('incomingCall',  onIncomingCall);
-            socket.off('callAccepted',  onCallAccepted);
-            socket.off('sdpOffer',      onSdpOffer);
-            socket.off('sdpAnswer',     onSdpAnswer);
-            socket.off('iceCandidate',  onIceCandidate);
-            socket.off('callRejected',  onCallRejected);
-            socket.off('callEnded',     onCallEnded);
-            socket.off('callBusy',      onCallBusy);
+            socket.off('incomingCall', onIncomingCall);
+            socket.off('callAccepted', onCallAccepted);
+            socket.off('sdpOffer',     onSdpOffer);
+            socket.off('sdpAnswer',    onSdpAnswer);
+            socket.off('iceCandidate', onIceCandidate);
+            socket.off('callRejected', onCallRejected);
+            socket.off('callEnded',    onCallEnded);
+            socket.off('callBusy',     onCallBusy);
         };
     }, [socket, createPC, cleanup, flushIceCandidates]);
 
@@ -459,8 +462,8 @@ export const useWebRTC = (socket: any, currentUserId: number | undefined) => {
 
     return {
         callState, localStream, remoteStream,
-        isMuted, isCameraOff,
+        isMuted, isCameraOff, isScreenSharing,
         startCall, acceptCall, rejectCall, endCall,
-        toggleMute, toggleCamera,
+        toggleMute, toggleCamera, toggleScreenShare,
     };
 };
