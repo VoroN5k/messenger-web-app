@@ -3,22 +3,24 @@
 import { useEffect, useRef, useState } from 'react';
 import {
     PhoneOff, Mic, MicOff, Video, VideoOff,
-    Maximize2, Minimize2, Volume2,
+    Minimize2, Volume2, Monitor, MonitorOff,
 } from 'lucide-react';
-import { Avatar } from '@/src/components/chat/Avatar';
-import { CallState, CallType } from '@/src/hooks/useWebRTC';
+import { Avatar }    from '@/src/components/chat/Avatar';
+import { CallState } from '@/src/hooks/useWebRTC';
 
 interface Props {
-    callState:    CallState;
-    localStream:  MediaStream | null;
-    remoteStream: MediaStream | null;
-    isMuted:      boolean;
-    isCameraOff:  boolean;
-    peerName:     string;
-    peerAvatar:   string | null;
-    onEnd:        () => void;
-    onToggleMute:   () => void;
-    onToggleCamera: () => void;
+    callState:       CallState;
+    localStream:     MediaStream | null;
+    remoteStream:    MediaStream | null;
+    isMuted:         boolean;
+    isCameraOff:     boolean;
+    isScreenSharing: boolean;
+    peerName:        string;
+    peerAvatar:      string | null;
+    onEnd:              () => void;
+    onToggleMute:       () => void;
+    onToggleCamera:     () => void;
+    onToggleScreenShare: () => void;
 }
 
 function formatDuration(ms: number): string {
@@ -30,40 +32,32 @@ function formatDuration(ms: number): string {
 
 export function ActiveCallOverlay({
                                       callState, localStream, remoteStream,
-                                      isMuted, isCameraOff,
+                                      isMuted, isCameraOff, isScreenSharing,
                                       peerName, peerAvatar,
-                                      onEnd, onToggleMute, onToggleCamera,
+                                      onEnd, onToggleMute, onToggleCamera, onToggleScreenShare,
                                   }: Props) {
     const remoteVideoRef = useRef<HTMLVideoElement>(null);
     const localVideoRef  = useRef<HTMLVideoElement>(null);
     const remoteAudioRef = useRef<HTMLAudioElement>(null);
-    const [expanded,  setExpanded]  = useState(true);
-    const [duration,  setDuration]  = useState('00:00');
+    const [expanded, setExpanded] = useState(true);
+    const [duration, setDuration] = useState('00:00');
 
     const isVideo  = callState.callType === 'video';
     const isActive = callState.status === 'active';
     const status   = callState.status;
 
-    // ── Attach streams to video elements ─────────────────────────────────────
     useEffect(() => {
-        if (remoteVideoRef.current && remoteStream) {
-            remoteVideoRef.current.srcObject = remoteStream;
-        }
+        if (remoteVideoRef.current && remoteStream) remoteVideoRef.current.srcObject = remoteStream;
     }, [remoteStream]);
 
     useEffect(() => {
-        if (localVideoRef.current && localStream) {
-            localVideoRef.current.srcObject = localStream;
-        }
+        if (localVideoRef.current && localStream) localVideoRef.current.srcObject = localStream;
     }, [localStream]);
 
     useEffect(() => {
-        if (remoteAudioRef.current && remoteStream) {
-            remoteAudioRef.current.srcObject = remoteStream;
-        }
+        if (remoteAudioRef.current && remoteStream) remoteAudioRef.current.srcObject = remoteStream;
     }, [remoteStream]);
 
-    // ── Duration counter ──────────────────────────────────────────────────────
     useEffect(() => {
         if (status !== 'active' || !callState.startedAt) return;
         const t = setInterval(() => {
@@ -72,21 +66,20 @@ export function ActiveCallOverlay({
         return () => clearInterval(t);
     }, [status, callState.startedAt]);
 
-    // ── Status label ──────────────────────────────────────────────────────────
     const statusLabel =
         status === 'calling'    ? 'Виклик...'     :
             status === 'incoming'   ? 'Вхідний...'    :
                 status === 'connecting' ? "З'єднання..."  :
                     status === 'active'     ? duration        :
                         status === 'ended'      ? (
-                            callState.endReason === 'rejected'  ? 'Відхилено'  :
+                            callState.endReason === 'rejected'  ? 'Відхилено'       :
                                 callState.endReason === 'no-answer' ? 'Немає відповіді' :
-                                    callState.endReason === 'busy'      ? 'Зайнято'    :
-                                        callState.endReason === 'error'     ? 'Помилка'    :
+                                    callState.endReason === 'busy'      ? 'Зайнято'         :
+                                        callState.endReason === 'error'     ? 'Помилка'         :
                                             'Дзвінок завершено'
                         ) : '';
 
-    // ── Minimized pill ────────────────────────────────────────────────────────
+    // Minimized pill
     if (!expanded) {
         return (
             <div
@@ -105,7 +98,7 @@ export function ActiveCallOverlay({
                 </div>
                 <div className="flex items-center gap-1.5 ml-2">
                     <button
-                        onClick={(e) => { e.stopPropagation(); onEnd(); }}
+                        onClick={e => { e.stopPropagation(); onEnd(); }}
                         className="w-8 h-8 rounded-full bg-red-500 hover:bg-red-400 flex items-center justify-center cursor-pointer transition-colors"
                     >
                         <PhoneOff size={13} className="text-white" />
@@ -115,23 +108,20 @@ export function ActiveCallOverlay({
         );
     }
 
-    // ── Expanded overlay ──────────────────────────────────────────────────────
+    // Expanded overlay
     return (
         <div className="fixed inset-0 z-[90] flex flex-col bg-slate-950">
-
             <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
 
-            {/* ── Remote video / audio visual ── */}
+            {/* Remote video / audio visual */}
             <div className="flex-1 relative flex items-center justify-center overflow-hidden">
                 {isVideo ? (
                     <>
                         <video
                             ref={remoteVideoRef}
-                            autoPlay
-                            playsInline
+                            autoPlay playsInline
                             className="w-full h-full object-cover"
                         />
-                        {/* No remote stream yet — show avatar */}
                         {!remoteStream?.getVideoTracks().length && (
                             <div className="absolute inset-0 flex items-center justify-center bg-slate-900">
                                 <Avatar user={{ nickname: peerName, avatarUrl: peerAvatar }} size="xl" />
@@ -139,7 +129,6 @@ export function ActiveCallOverlay({
                         )}
                     </>
                 ) : (
-                    /* Audio call — show large avatar with pulse */
                     <div className="flex flex-col items-center gap-6">
                         <div className="relative">
                             {isActive && (
@@ -158,17 +147,20 @@ export function ActiveCallOverlay({
                     </div>
                 )}
 
-                {/* ── Local video (PiP) ── */}
+                {/* Screen sharing indicator badge */}
+                {isScreenSharing && (
+                    <div className="absolute top-16 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 backdrop-blur-sm">
+                        <Monitor size={12} className="text-emerald-400 animate-pulse" />
+                        <span className="text-[11px] font-medium text-emerald-300">Демонстрація екрану</span>
+                    </div>
+                )}
+
+                {/* Local video PiP */}
                 {isVideo && (
                     <div className="absolute bottom-4 right-4 w-32 h-24 rounded-2xl overflow-hidden border-2 border-white/20 shadow-xl bg-slate-800">
-                        <video
-                            ref={localVideoRef}
-                            autoPlay
-                            playsInline
-                            muted
-                            className={`w-full h-full object-cover ${isCameraOff ? 'opacity-0' : ''}`}
-                        />
-                        {isCameraOff && (
+                        <video ref={localVideoRef} autoPlay playsInline muted
+                               className={`w-full h-full object-cover ${isCameraOff && !isScreenSharing ? 'opacity-0' : ''}`} />
+                        {isCameraOff && !isScreenSharing && (
                             <div className="absolute inset-0 flex items-center justify-center bg-slate-800">
                                 <VideoOff size={20} className="text-slate-500" />
                             </div>
@@ -176,7 +168,7 @@ export function ActiveCallOverlay({
                     </div>
                 )}
 
-                {/* ── Top bar ── */}
+                {/* Top bar */}
                 <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-5 pt-safe-top py-4 bg-gradient-to-b from-black/60 to-transparent">
                     {isVideo && (
                         <div>
@@ -193,18 +185,25 @@ export function ActiveCallOverlay({
                 </div>
             </div>
 
-            {/* ── Controls bar ── */}
-            <div className="flex items-center justify-center gap-5 px-8 py-8 bg-gradient-to-t from-black/80 to-transparent">
+            {/* Controls bar */}
+            <div className="flex items-center justify-center gap-4 px-8 py-8 bg-gradient-to-t from-black/80 to-transparent flex-wrap">
 
                 {/* Mute */}
-                <CallButton
-                    label={isMuted ? 'Звук вимк.' : 'Звук'}
-                    active={isMuted}
-                    activeColor="bg-red-500"
-                    onClick={onToggleMute}
-                >
+                <CallButton label={isMuted ? 'Звук вимк.' : 'Звук'} active={isMuted} activeColor="bg-red-500" onClick={onToggleMute}>
                     {isMuted ? <MicOff size={20} /> : <Mic size={20} />}
                 </CallButton>
+
+                {/* Screen share — only for video calls */}
+                {isVideo && (
+                    <CallButton
+                        label={isScreenSharing ? 'Стоп' : 'Екран'}
+                        active={isScreenSharing}
+                        activeColor="bg-emerald-600"
+                        onClick={onToggleScreenShare}
+                    >
+                        {isScreenSharing ? <MonitorOff size={20} /> : <Monitor size={20} />}
+                    </CallButton>
+                )}
 
                 {/* End call */}
                 <button
@@ -214,14 +213,9 @@ export function ActiveCallOverlay({
                     <PhoneOff size={24} className="text-white" />
                 </button>
 
-                {/* Camera (video calls only) */}
+                {/* Camera (video calls) or Volume (audio calls) */}
                 {isVideo ? (
-                    <CallButton
-                        label={isCameraOff ? 'Камера вимк.' : 'Камера'}
-                        active={isCameraOff}
-                        activeColor="bg-red-500"
-                        onClick={onToggleCamera}
-                    >
+                    <CallButton label={isCameraOff ? 'Камера вимк.' : 'Камера'} active={isCameraOff} activeColor="bg-red-500" onClick={onToggleCamera}>
                         {isCameraOff ? <VideoOff size={20} /> : <Video size={20} />}
                     </CallButton>
                 ) : (
@@ -231,14 +225,10 @@ export function ActiveCallOverlay({
                 )}
             </div>
         </div>
-
     );
 }
 
-// ── Small control button ──────────────────────────────────────────────────────
-function CallButton({
-                        children, label, active, activeColor, onClick,
-                    }: {
+function CallButton({ children, label, active, activeColor, onClick }: {
     children:    React.ReactNode;
     label:       string;
     active:      boolean;
@@ -250,7 +240,7 @@ function CallButton({
             <button
                 onClick={onClick}
                 className={`w-14 h-14 rounded-full flex items-center justify-center cursor-pointer transition-all active:scale-95
-          ${active ? `${activeColor} text-white` : 'bg-white/15 hover:bg-white/25 text-white'}`}
+                    ${active ? `${activeColor} text-white` : 'bg-white/15 hover:bg-white/25 text-white'}`}
             >
                 {children}
             </button>
