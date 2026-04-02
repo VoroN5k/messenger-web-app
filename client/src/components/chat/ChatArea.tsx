@@ -514,6 +514,7 @@ export default function ChatArea({
                 onToggleSearch={() => setSearchOpen(o => !o)}
                 onToggleMedia={() => setShowMedia(o => !o)}
                 onStartCall={onStartCall}
+                onJumpToMessage={jumpToMessage}
             />
 
             {/* ── Pinned message ── */}
