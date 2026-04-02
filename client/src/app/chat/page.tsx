@@ -108,6 +108,7 @@ export default function ChatPage() {
 
     const handleLogout = async () => {
         try { await api.post('/auth/logout'); } catch {}
+        sessionStorage.removeItem('freshLogin');
         logout();
         localStorage.removeItem('auth-storage');
         window.location.href = '/auth/login';
