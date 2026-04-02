@@ -104,11 +104,9 @@ export class AuthService {
 
                 if (reusedSession) {
                     this.logger.error(
-                        `SECURITY: Refresh token reuse detected for user ${reusedSession.userId}. ` +
-                        `Invalidating ALL sessions.`,
+                        `Possible refresh token reuse for user ${reusedSession.userId} ` +
+                        `(may be multi-tab race). Returning 401 without killAll.`,
                     );
-                    // Вбиваємо всі сесії цього юзера
-                    await tx.session.deleteMany({ where: { userId: reusedSession.userId } });
                 } else {
                     this.logger.warn(`Refresh token not found (hash: ${hashed.slice(0, 12)}…)`);
                 }

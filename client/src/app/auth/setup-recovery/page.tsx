@@ -57,7 +57,8 @@ export default function SetupRecoveryPage() {
     const isReset      = searchParams.get('reset') === 'true';
 
     const { user, _hasHydrated } = useAuthStore();
-    const { isReady, setupRecovery } = useE2E();
+    const { isReady, needsRecovery, resetToNewKeys, setupRecovery } = useE2E();
+    const [isResettingKeys, setIsResettingKeys] = useState(false);
 
     const [pin,         setPin]         = useState('');
     const [confirm,     setConfirm]     = useState('');
@@ -77,6 +78,33 @@ export default function SetupRecoveryPage() {
     const [showEmergencyKit, setShowEmergencyKit] = useState(false);
 
     useEffect(() => { setTimeout(() => setMounted(true), 50); }, []);
+
+    useEffect(() => {
+        if (!isReset || !_hasHydrated || !user) return;
+        if (isReady) return; // вже готово
+        if (isResettingKeys) return;
+
+        // Якщо застрягли в needs-recovery під час reset — генеруємо нові ключі
+        const timer = setTimeout(async () => {
+            if (!isReady && isReset) {
+                if (typeof resetToNewKeys !== 'function') {
+                    setError('Функція скидання ключів недоступна');
+                    return;
+                }
+
+                setIsResettingKeys(true);
+                try {
+                    await resetToNewKeys();
+                } catch (e) {
+                    setError('Помилка генерації ключів');
+                } finally {
+                    setIsResettingKeys(false);
+                }
+            }
+        }, 3000);
+
+        return () => clearTimeout(timer);
+    }, [isReset, isReady, _hasHydrated, user, isResettingKeys]);
 
     useEffect(() => {
         if (_hasHydrated && !user) router.push('/auth/login');

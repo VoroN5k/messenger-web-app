@@ -609,15 +609,23 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
 }
 
 // Conversation row
-function ConvRow({ conv, isSelected, isSaved, currentUserId, onSelect, onContextMenu, isArchived: archivedStyle }: {
-    conv:           Conversation;
-    isSelected:     boolean;
-    isSaved:        boolean;
-    currentUserId?: number;
-    onSelect:       (c: Conversation) => void;
-    onContextMenu:  (e: React.MouseEvent) => void;
-    isArchived?:    boolean;
-}) {
+function ConvRow({
+                     conv,
+                     isSelected,
+                     isSaved,
+                     currentUserId,
+                     onSelect,
+                     onContextMenu,
+                     isArchived: archivedStyle,
+                 }: Readonly<{
+    conv: Conversation,
+    isSelected: boolean,
+    isSaved: boolean,
+    currentUserId?: number,
+    onSelect: (c: Conversation) => void,
+    onContextMenu: (e: React.MouseEvent) => void,
+    isArchived?: boolean,
+}>) {
     return (
         <div
             onClick={() => onSelect(conv)}
@@ -648,6 +656,16 @@ function ConvRow({ conv, isSelected, isSaved, currentUserId, onSelect, onContext
                     <div className="w-11 h-11 rounded-full flex items-center justify-center"
                          style={{ background: conv.type === 'GROUP' ? 'rgba(124,77,255,0.12)' : 'rgba(59,130,246,0.12)' }}>
                         {conv.type === 'GROUP' ? <Users size={17} style={{ color: 'var(--accent)' }} /> : <Hash size={17} className="text-blue-400" />}
+                    </div>
+                )}
+
+
+                {archivedStyle && (
+                    <div className="absolute -bottom-0.5 -right-0.5 w-6 h-6 rounded-full flex items-center justify-center"
+                         title="Архів"
+                         aria-label="Архів"
+                         style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+                        <Archive size={11} style={{ color: 'var(--text-3)' }} />
                     </div>
                 )}
             </div>

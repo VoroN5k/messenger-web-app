@@ -267,6 +267,20 @@ export function useE2E() {
         broadcastStatus('ready');
     }, []);
 
+    const resetToNewKeys = useCallback(async (): Promise<void> => {
+        const myUserId = useAuthStore.getState().user?.id;
+        if (!myUserId) throw new Error('Not authenticated');
+
+        const { publicKey, privateKey: newPriv } = await generateKeyPair();
+        await savePrivateKey(myUserId, newPriv);
+        await api.post('/keys', { publicKey }).catch(() =>
+            api.put('/keys', { publicKey }) // fallback якщо вже існує
+        );
+        privateKey  = newPriv;
+        initialized = true;
+        broadcastStatus('needs-setup');
+    }, [])
+
     // ECDH session key (DIRECT)
     const getSessionKey = useCallback(async (
         targetUserId: number,
@@ -735,6 +749,7 @@ export function useE2E() {
         // Recovery
         unlockWithPin,
         setupRecovery,
+        resetToNewKeys,
         // Meta
         isReady,
         status,
