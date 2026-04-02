@@ -82,6 +82,8 @@ model Session {
   ipAddress    String?
   expiresAt    DateTime
   createdAt    DateTime @default(now())
+  prevRefreshToken String?
+
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   @@index([userId])
 }

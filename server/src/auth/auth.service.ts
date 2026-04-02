@@ -97,9 +97,22 @@ export class AuthService {
             });
 
             if (!session) {
-                this.logger.warn(
-                    `Refresh token not found - possible reuse attack (hash: ${hashed.slice(0, 12)}…)`,
-                );
+                // Перевіряємо чи це reuse старого (вже ротованого) токена
+                const reusedSession = await tx.session.findFirst({
+                    where: { prevRefreshToken: hashed },
+                });
+
+                if (reusedSession) {
+                    this.logger.error(
+                        `SECURITY: Refresh token reuse detected for user ${reusedSession.userId}. ` +
+                        `Invalidating ALL sessions.`,
+                    );
+                    // Вбиваємо всі сесії цього юзера
+                    await tx.session.deleteMany({ where: { userId: reusedSession.userId } });
+                } else {
+                    this.logger.warn(`Refresh token not found (hash: ${hashed.slice(0, 12)}…)`);
+                }
+
                 throw new UnauthorizedException('Invalid or expired refresh token');
             }
 
@@ -348,11 +361,18 @@ export class AuthService {
         client:    any,
     ) {
         const { accessToken, rawRefreshToken } = await this.generateTokens(userId, client);
+        const newHash = hashToken(rawRefreshToken);
+
+        const current = await client.session.findUnique({
+            where: { id: sessionId },
+            select: { refreshToken: true },
+        });
 
         await client.session.update({
             where: { id: sessionId },
             data: {
-                refreshToken: hashToken(rawRefreshToken),
+                refreshToken: newHash,
+                prevRefreshToken: current?.refreshToken ?? null,
                 ipAddress:    meta.ip || 'unknown',
                 expiresAt:    new Date(Date.now() + this.REFRESH_TOKEN_EXPIRY_MS),
             },
