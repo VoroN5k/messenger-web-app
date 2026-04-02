@@ -347,7 +347,17 @@ export const useMessages = (
         } catch { return false; }
     }, [socket, encryptContent]);
 
-    const { queue: offlineQueue, isOnline, enqueue, flush } = useOfflineQueue(flushMessage);
+    const { queue: offlineQueue, isOnline, enqueue, flush } = useOfflineQueue(
+        flushMessage,
+
+        (failedMsg) => {
+            setMessages(prev => prev.map(m =>
+                m._queueId === failedMsg.queueId
+                    ? { ...m, isPending: false, _sendFailed: true }
+                    : m
+            ));
+        }
+    );
 
     useEffect(() => {
         if (!socket) return;

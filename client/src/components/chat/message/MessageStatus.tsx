@@ -21,6 +21,16 @@ export function MessageStatus({ msg }: { msg: Message }) {
         );
     }
 
+    if ((msg as any)._sendFailed) {
+        return (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" className="inline-block shrink-0">
+                <title>Не вдалося надіслати</title>
+                <circle cx="12" cy="12" r="9" stroke="var(--red)" strokeWidth="1.8"/>
+                <path d="M12 7v5M12 16v1" stroke="var(--red)" strokeWidth="1.8" strokeLinecap="round"/>
+            </svg>
+        );
+    }
+
     const isRead = msg.isRead === true;
     const c = isRead ? '#69dafa' : 'rgba(255,255,255,0.5)';
 

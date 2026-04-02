@@ -16,6 +16,7 @@ import {useCallback, useEffect, useRef, useState} from "react";
 
 export function useOfflineQueue(
     onFlush: (msg: QueuedMessage) => Promise<boolean>,
+    onFlushFailed?: (msg: QueuedMessage) => void,
 ) {
     const [queue, setQueue] = useState<QueuedMessage[]>([]);
     const queueRef = useRef<QueuedMessage[]>([]);
@@ -54,9 +55,13 @@ export function useOfflineQueue(
         for (const msg of toFlush) {
             try {
                 const ok = await onFlushRef.current(msg);
-                if (!ok) failed.push(msg);
+                if (!ok) {
+                    failed.push(msg);
+                    onFlushFailed?.(msg);
+                }
             } catch {
                 failed.push(msg);
+                onFlushFailed?.(msg);
             }
         }
 

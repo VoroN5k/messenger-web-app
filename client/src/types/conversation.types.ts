@@ -75,6 +75,7 @@ export interface Message {
     createdAt:      string | Date;
     editedAt?:      string | Date | null;
     deletedAt?:     string | Date | null;
+    _sendFailed?: boolean;
     isRead:         boolean;
     reactions?:     Reaction[];
     replyToId?:     number | null;
