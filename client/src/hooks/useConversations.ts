@@ -58,19 +58,29 @@ export const useConversations = (socket: any, activeConversationId?: number) => 
 
     // Fetch initial page
     const fetchConversations = useCallback(async () => {
-        // Запобігаємо паралельним запитам
         if (fetchInProgressRef.current) return;
         fetchInProgressRef.current = true;
         setIsLoading(true);
 
         try {
-            const res = await api.get<{ conversations: Conversation[]; hasMore: boolean }>(
-                `/conversations?skip=0&take=${PAGE_SIZE}`,
-            );
-            const decrypted = await Promise.all(res.data.conversations.map(decryptLastMessage));
+            const [mainRes, archivedRes] = await Promise.all([
+                api.get<{ conversations: Conversation[]; hasMore: boolean }>(
+                    `/conversations?skip=0&take=${PAGE_SIZE}`,
+                ),
+                api.get<{ conversations: Conversation[]; hasMore: boolean }>(
+                    `/conversations?skip=0&take=50&archived=true`,
+                ),
+            ]);
+
+            const all = [
+                ...mainRes.data.conversations,
+                ...archivedRes.data.conversations,
+            ];
+
+            const decrypted = await Promise.all(all.map(decryptLastMessage));
             setConversations(decrypted);
-            setHasMore(res.data.hasMore);
-            loadedCountRef.current = decrypted.length;
+            setHasMore(mainRes.data.hasMore);
+            loadedCountRef.current = mainRes.data.conversations.length;
         } catch (e) {
             console.error('fetchConversations:', e);
         } finally {
