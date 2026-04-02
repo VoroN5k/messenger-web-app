@@ -15,6 +15,10 @@ import {
 } from "@/src/lib/crypto";
 import api from "@/src/lib/axios";
 
+const IS_BROWSER = typeof window !== 'undefined' &&
+    typeof window.crypto !== 'undefined' &&
+    typeof indexedDB !== 'undefined';
+
 // Module-level singletons
 const sessionKeys  = new Map<number, CryptoKey>();
 const pendingEcdh  = new Map<number, Promise<CryptoKey | null>>();
@@ -100,6 +104,29 @@ export function useE2E() {
     const { user, accessToken } = useAuthStore();
     const [isReady, setIsReady] = useState(initialized && !!privateKey);
     const [status, setStatus] = useState<E2EStatus>(e2eStatus)
+
+    if(!IS_BROWSER) {
+        return {
+            encrypt: async (c: string) => c,
+            decrypt: async (c: string) => c,
+            encryptBinary: async (d: ArrayBuffer) => d,
+            decryptBinary: async (d: ArrayBuffer) => d,
+            encryptForGroup: async (c: string) => c,
+            decryptFromGroup: async (c: string) => c,
+            encryptBinaryForGroup: async (d: ArrayBuffer) => d,
+            decryptBinaryFromGroup: async (d: ArrayBuffer) => d,
+            distributeMySenderKey: async () => {},
+            prefetchGroupSenderKeys: async () => {},
+            invalidateGroupKeys: () => {},
+            unlockWithPin: async () => false,
+            setupRecovery: async () => {},
+            isReady: false,
+            status: 'idle' as E2EStatus,
+            needsRecovery: false,
+            needsRecoverySetup: false,
+            clearAllKeyMaterial: async () => {},
+        }
+    }
 
     useEffect(() => {
         if(e2eStatus !== 'idle') setStatus(e2eStatus);
