@@ -57,12 +57,11 @@ export const useMessages = (
             if (!msg.id || !msg.metadata || msg.deletedAt) continue;
             const { destructAfterSeconds } = parseMetadata(msg.metadata);
             if (!destructAfterSeconds) continue;
-            // Only start timer for receiver (sender sees it indefinitely until sent)
-            if (String(msg.senderId) === String(currentUserId)) continue;
-            const elapsed = Date.now() - new Date(msg.createdAt).getTime();
+
+            const elapsed   = Date.now() - new Date(msg.createdAt).getTime();
             const remaining = destructAfterSeconds * 1000 - elapsed;
+
             if (remaining <= 0) {
-                // Already expired — mark deleted immediately
                 socket?.emit('deleteMessage', { messageId: msg.id });
             } else {
                 scheduleDestruct(msg, remaining);
