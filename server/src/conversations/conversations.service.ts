@@ -394,6 +394,12 @@ export class ConversationsService {
         fileType?: string; fileSize?: number; replyToId?: number;
         metadata?: string; scheduledAt?: Date | null;
     }) {
+        const MAX_CONTENT = 4096;
+
+        if(dto.content && dto.content.length > MAX_CONTENT) {
+            throw new BadRequestException(`Message content exceeds maximum length of ${MAX_CONTENT} characters`);
+        }
+
         const member = await this.assertMember(userId, conversationId);
         const conv   = await this.prisma.conversation.findUnique({ where: { id: conversationId } });
         if (!conv) throw new NotFoundException('Conversation not found');

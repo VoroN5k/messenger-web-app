@@ -210,11 +210,33 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
         },
     ) {
         const MAX_SCHEDULE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+        const MAX_CONTENT  = 4096;
+        const MAX_FILENAME = 255;
+        const MAX_FILETYPE = 127;
+
 
         if (!this.rateLimit(client, this.msgLimiter, 'sendMessage')) return;
         const userId = client.data.user.id as number;
         if (!data?.conversationId) return;
         if (!data.content?.trim() && !data.fileUrl) return;
+
+        if (data.content && data.content.length > MAX_CONTENT) {
+            client.emit('messageFailed', { error: 'Message too long (max 4096 chars)' });
+            return;
+        }
+        if (data.fileName && data.fileName.length > MAX_FILENAME) {
+            client.emit('messageFailed', { error: 'File name too long' });
+            return;
+        }
+        if (data.fileType && data.fileType.length > MAX_FILETYPE) {
+            client.emit('messageFailed', { error: 'Invalid file type' });
+            return;
+        }
+        // fileSize перевірка (10MB)
+        if (data.fileSize && data.fileSize > 10 * 1024 * 1024) {
+            client.emit('messageFailed', { error: 'File size exceeds limit' });
+            return;
+        }
 
         const rawScheduled = data.scheduledAt ? new Date(data.scheduledAt) : null;
         if (rawScheduled && isNaN(rawScheduled.getTime())) {
@@ -225,6 +247,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
             client.emit('messageFailed', { error: 'scheduledAt too far in the future (max 30 days)' });
             return;
         }
+
+
 
         try {
             const scheduledAt = rawScheduled && rawScheduled > new Date() ? rawScheduled : null;
