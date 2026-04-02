@@ -79,7 +79,7 @@ export class AuthController {
             await this.authService.logout(refreshToken);
         }
 
-        res.clearCookie('refreshToken', { path: '/' });
+        res.clearCookie('refreshToken', { path: '/api/auth' });
         return { message: 'Logged out successfully' };
     }
 
@@ -133,7 +133,7 @@ export class AuthController {
         @Res({ passthrough: true }) res: Response,
     ) {
         await this.authService.deleteAccount(userId, dto.password, dto.twoFactorCode);
-        res.clearCookie('refreshToken', { path: '/' });
+        res.clearCookie('refreshToken', { path: '/api/auth' });
         return { message: 'Account deleted successfully' };
     }
 
@@ -200,8 +200,8 @@ export class AuthController {
         res.cookie('refreshToken', token, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
-            sameSite: 'lax',
-            path: '/', // Обмежуємо куку лише шляхом оновлення
+            sameSite: 'strict',
+            path: '/api/auth', // Обмежуємо куку лише шляхом оновлення
             maxAge: 7 * 24 * 60 * 60 * 1000, // 7 днів
         });
     }
