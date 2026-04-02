@@ -20,7 +20,7 @@ import { RecoveryUnlockModal }    from "@/src/components/chat/RecoveryUnlockModa
 import { useRouter }              from "next/navigation";
 
 export default function ChatPage() {
-    const { user, logout } = useAuthStore();
+    const { user, logout, _hasHydrated } = useAuthStore();
     const socket = useSocket();
     const { needsRecovery, needsRecoverySetup, unlockWithPin } = useE2E();
     const router = useRouter();
@@ -29,6 +29,18 @@ export default function ChatPage() {
     const [isLoaded,       setIsLoaded]       = useState(false);
     const [showBanner,     setShowBanner]     = useState(false);
     const [pendingForward, setPendingForward] = useState<Message | null>(null);
+
+    useEffect(() => {
+        if (!_hasHydrated) return;
+        if (needsRecoverySetup && sessionStorage.getItem('freshLogin') === 'true') {
+            sessionStorage.removeItem('freshLogin');
+            router.push('/auth/setup-recovery');
+        }
+    }, [needsRecoverySetup, _hasHydrated]);
+
+    useEffect(() => {
+        if(_hasHydrated) setIsLoaded(true);
+    }, [_hasHydrated]);
 
     useEffect(() => {
         if (needsRecoverySetup && sessionStorage.getItem('freshLogin') === 'true') {
@@ -40,12 +52,13 @@ export default function ChatPage() {
     useEffect(() => { if (user !== undefined) setIsLoaded(true); }, [user]);
 
     useEffect(() => {
+        if (!_hasHydrated) return;
         if (!useAuthStore.getState().accessToken) {
             refreshAccessToken().then((token) => {
                 if (!token) window.location.href = '/auth/login';
             });
         }
-    }, []);
+    }, [_hasHydrated]);
 
     const {
         conversations, isLoading: convsLoading,

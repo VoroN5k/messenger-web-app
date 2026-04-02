@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import {useSignedUrl} from "@/src/hooks/useSignedUrl";
 
 interface AvatarProps {
     user:      { nickname: string; avatarUrl?: string | null };
@@ -31,6 +32,7 @@ function avatarColor(nickname: string): string {
 
 export function Avatar({ user, size = 'md', onClick, className = '' }: AvatarProps) {
     const [imgError, setImgError] = useState(false);
+    const signedUrl = useSignedUrl(user.avatarUrl);
     const { container, text } = SIZE_MAP[size];
     const initials = user.nickname.slice(0, 2).toUpperCase();
     const showImg  = !!user.avatarUrl && !imgError;
@@ -41,7 +43,7 @@ export function Avatar({ user, size = 'md', onClick, className = '' }: AvatarPro
             ${showImg ? '' : `${avatarColor(user.nickname)} text-white font-semibold`}
             ${className}`}>
                 {showImg
-                    ? <img src={user.avatarUrl!} alt={user.nickname} onError={() => setImgError(true)} className="w-full h-full object-cover" />
+                    ? <img src={signedUrl!} alt={user.nickname} onError={() => setImgError(true)} className="w-full h-full object-cover" />
                     : <span className={`${text} leading-none`}>{initials}</span>}
             </div>
             {/* Emoji status badge */}

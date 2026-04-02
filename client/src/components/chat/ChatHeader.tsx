@@ -6,6 +6,7 @@ import { Avatar }       from '@/src/components/chat/Avatar';
 import { Conversation } from '@/src/types/conversation.types';
 import { User }         from '@/src/types/auth.types';
 import api              from '@/src/lib/axios';
+import {formatLastSeen} from "@/src/lib/chatFormatters";
 
 interface PinnedMessageData {
     messageId: number;
@@ -144,7 +145,9 @@ export function ChatHeader({
                             {conversation.type === 'DIRECT'
                                 ? isSelf
                                     ? 'Private vault'
-                                    : conversation.isOnline ? 'Online' : 'Offline'
+                                    : conversation.isOnline
+                                        ? 'Онлайн'
+                                        : formatLastSeen(otherMember?.user?.lastSeen)
                                 : memberCountLabel}
                         </p>
                     </div>

@@ -12,32 +12,23 @@ api.interceptors.request.use((config) => {
     return config;
 });
 
-// ── Single shared refresh lock ────────────────────────────────────────────────
-// All refresh attempts (proactive, silent timer, 401 interceptor) go through
-// this one function. If a refresh is already in-flight, callers await the same
-// promise instead of firing a second request — which is what caused the
-// "Security alert! Token reuse" loop when the computer woke up.
-
 let refreshPromise: Promise<string | null> | null = null;
 
-
-
 export async function refreshAccessToken(): Promise<string | null> {
-    // If a refresh is already in-flight, return the same promise
+    // Встановлюємо refreshPromise СИНХРОННО до будь-яких await —
+    // це унеможливлює race condition коли два виклики одночасно
+    // проходять перевірку `if (refreshPromise)`
     if (refreshPromise) return refreshPromise;
 
-    if (typeof navigator !== 'undefined' && navigator.locks) {
-        // Use a lock to ensure only one refresh at a time across tabs
-        return navigator.locks.request('refresh_token_lock', async () => {
+    refreshPromise = _doRefresh().finally(() => {
+        refreshPromise = null;
+    });
 
-            return executeRefresh();
-        })
-    }
-    return executeRefresh();
+    return refreshPromise;
 }
 
-async function executeRefresh(): Promise<string | null> {
-    refreshPromise = (async () => {
+async function _doRefresh(): Promise<string | null> {
+    const execute = async (): Promise<string | null> => {
         try {
             const { data } = await axios.post(
                 'http://localhost:4000/api/auth/refresh',
@@ -47,7 +38,7 @@ async function executeRefresh(): Promise<string | null> {
             const newToken: string = data.accessToken;
             const currentUser = useAuthStore.getState().user;
 
-            if (!currentUser) throw new Error("Cross-tab sync error");
+            if (!currentUser) throw new Error('No user in store after refresh');
 
             useAuthStore.getState().setAuth(currentUser, newToken);
             return newToken;
@@ -57,15 +48,14 @@ async function executeRefresh(): Promise<string | null> {
                 window.location.href = '/auth/login';
             }
             return null;
-        } finally {
-            refreshPromise = null;
         }
-    })();
-    return refreshPromise;
-}
+    };
 
-// ── 401 interceptor ───────────────────────────────────────────────────────────
-// Uses the shared refreshAccessToken() — no separate isRefreshing flag needed.
+    if (typeof navigator !== 'undefined' && navigator.locks) {
+        return navigator.locks.request('refresh_token_lock', execute);
+    }
+    return execute();
+}
 
 const bypassUrls = ['/auth/login', '/auth/register', '/auth/refresh'];
 
