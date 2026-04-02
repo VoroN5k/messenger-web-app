@@ -316,7 +316,7 @@ export default function LoginPage() {
                             <span className="text-sm font-semibold" style={{
                                 background: 'linear-gradient(135deg, #e2d9f3 0%, #a78bfa 100%)',
                                 WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
-                            }}>CIPHERMSG</span>
+                            }}>VESPER<span style={{ WebkitTextFillColor: 'rgba(139,92,246,0.6)' }}>MSG</span></span>
                         </Link>
                     </div>
 
