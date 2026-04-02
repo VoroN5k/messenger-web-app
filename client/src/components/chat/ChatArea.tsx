@@ -112,7 +112,7 @@ export default function ChatArea({
         messages, typingUsers,
         hasMore, hasMoreNewer,
         isLoadingMore, isLoadingNewer,
-        jumpTarget, firstUnreadId,
+        jumpTarget, firstUnreadId, clearUnreadDivider,
         sendMessage, sendFileMessage, deleteMessage, editMessage, toggleReaction,
         notifyTyping, loadMoreMessages, loadNewerMessages, resetToLatest,
         jumpToMessage, clearJumpTarget,
@@ -206,6 +206,10 @@ export default function ChatArea({
         const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
         if (distanceFromBottom <= 100 && hasMoreNewer && !isLoadingNewer) {
             await loadNewerMessages();
+        }
+
+        if (distanceFromBottom < 100 && firstUnreadId) {
+            clearUnreadDivider();
         }
     };
 

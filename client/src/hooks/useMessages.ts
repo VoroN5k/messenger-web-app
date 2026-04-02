@@ -200,6 +200,10 @@ export const useMessages = (
         }
     }, [conversationId, isLoadingNewer, hasMoreNewer, decryptMessages]);
 
+    const clearUnreadDivider = useCallback(() => {
+        setFirstUnreadId(null);
+    }, []);
+
     // Socket events
     useEffect(() => {
         if (!socket) return;
@@ -479,7 +483,7 @@ export const useMessages = (
         messages, typingUsers,
         hasMore, hasMoreNewer,
         isLoadingMore, isLoadingNewer,
-        jumpTarget, firstUnreadId,
+        jumpTarget, firstUnreadId, clearUnreadDivider,
         sendMessage, sendFileMessage, deleteMessage, editMessage,
         toggleReaction, notifyTyping,
         loadMoreMessages, loadNewerMessages, resetToLatest,
