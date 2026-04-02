@@ -528,14 +528,18 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
             {contextMenu && (() => {
                 const conv = conversations.find(c => c.id === contextMenu.convId);
                 if (!conv) return null;
+                const MENU_WIDTH = 200;
+                const MENU_HEIGHT = 90;
+                const safeX = Math.min(contextMenu.x, window.innerWidth - MENU_WIDTH - 8);
+                const safeY = Math.min(contextMenu.y, window.innerHeight - MENU_HEIGHT - 8);
                 const isPinned    = (conv as any).isPinned;
                 const isArchived  = (conv as any).isArchived;
                 return (
                     <div
                         className="fixed z-[200] py-1.5 rounded-xl shadow-2xl modal-enter overflow-hidden"
                         style={{
-                            left:       contextMenu.x,
-                            top:        contextMenu.y,
+                            left:       safeX,
+                            top:        safeY,
                             background: 'var(--bg-elevated)',
                             border:     '1px solid var(--border-md)',
                             minWidth:   '180px',
