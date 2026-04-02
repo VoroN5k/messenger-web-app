@@ -14,6 +14,8 @@ export const useConversations = (socket: any, activeConversationId?: number) => 
     const accessToken = useAuthStore((s) => s.accessToken);
     const currentUserId = useAuthStore((s) => s.user?.id);
 
+    const fetchInProgressRef = useRef(false);
+
     const activeConvIdRef = useRef<number | undefined>(activeConversationId);
     useEffect(() => { activeConvIdRef.current = activeConversationId; }, [activeConversationId]);
 
@@ -56,7 +58,11 @@ export const useConversations = (socket: any, activeConversationId?: number) => 
 
     // Fetch initial page
     const fetchConversations = useCallback(async () => {
+        // Запобігаємо паралельним запитам
+        if (fetchInProgressRef.current) return;
+        fetchInProgressRef.current = true;
         setIsLoading(true);
+
         try {
             const res = await api.get<{ conversations: Conversation[]; hasMore: boolean }>(
                 `/conversations?skip=0&take=${PAGE_SIZE}`,
@@ -69,6 +75,7 @@ export const useConversations = (socket: any, activeConversationId?: number) => 
             console.error('fetchConversations:', e);
         } finally {
             setIsLoading(false);
+            fetchInProgressRef.current = false;
         }
     }, [decryptLastMessage]);
 
