@@ -271,6 +271,16 @@ export function useE2E() {
         const myUserId = useAuthStore.getState().user?.id;
         if (!myUserId) throw new Error('Not authenticated');
 
+        // Clear all existing key material (both in-memory and on-disk)
+        sessionKeys.clear();
+        pendingEcdh.clear();
+        sessionKeyTimes.clear();
+        sessionKeyPubHash.clear();
+        mySenderKeys.clear();
+        peerSenderKeys.clear();
+        pendingSender.clear();
+        prefetchedConvs.clear();
+
         const { publicKey, privateKey: newPriv } = await generateKeyPair();
         await savePrivateKey(myUserId, newPriv);
         await api.post('/keys', { publicKey }).catch(() =>
