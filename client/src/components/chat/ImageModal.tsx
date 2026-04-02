@@ -12,6 +12,8 @@ interface ImageModalProps {
     fileName?: string;
 }
 
+let openModalCount = 0;
+
 export function ImageModal({ src, alt, onClose, fileName }: ImageModalProps) {
     const [scale, setScale] = useState(1);
     const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -19,31 +21,37 @@ export function ImageModal({ src, alt, onClose, fileName }: ImageModalProps) {
     const dragStart = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
     const [mounted, setMounted] = useState(false);
 
-    // ── Mount, Escape Listener & Scroll Lock ──────────────────────────────────
+    // Mount, Escape Listener & Scroll Lock
     useEffect(() => {
         setMounted(true);
 
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.key === 'Escape') onClose();
         };
-
         document.addEventListener('keydown', handleKeyDown);
-        // Prevent body scroll while modal is open
-        document.body.style.overflow = 'hidden';
+
+
+        openModalCount += 1;
+        if (openModalCount === 1) {
+            document.body.style.overflow = 'hidden';
+        }
 
         return () => {
             document.removeEventListener('keydown', handleKeyDown);
-            document.body.style.overflow = ''; // Resetting to empty string is safer than 'unset'
+            openModalCount -= 1;
+            if (openModalCount === 0) {
+                document.body.style.overflow = '';
+            }
         };
     }, [onClose]);
 
-    // ── Scroll to zoom ────────────────────────────────────────────────────────
+    // Scroll to zoom
     const onWheel = useCallback((e: React.WheelEvent) => {
         e.preventDefault();
         setScale(s => Math.min(5, Math.max(0.5, s - e.deltaY * 0.001)));
     }, []);
 
-    // ── Drag to pan ───────────────────────────────────────────────────────────
+    // Drag to pan
     const onMouseDown = (e: React.MouseEvent) => {
         if (scale <= 1) return;
         e.preventDefault();
@@ -63,7 +71,7 @@ export function ImageModal({ src, alt, onClose, fileName }: ImageModalProps) {
 
     const resetZoom = () => { setScale(1); setOffset({ x: 0, y: 0 }); };
 
-    // ── Download ──────────────────────────────────────────────────────────────
+    // Download
     const handleDownload = async () => {
         try {
             const res  = await fetch(src);
