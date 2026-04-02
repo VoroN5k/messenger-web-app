@@ -162,6 +162,7 @@ export default function ChatPage() {
                     onLogout={handleLogout}
                     pushPermission={permission}
                     onTogglePush={requestPermission}
+                    onUpdateConversation={updateConversation}
                 />
 
                 <ChatArea

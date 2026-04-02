@@ -81,30 +81,14 @@ export default function SetupRecoveryPage() {
 
     useEffect(() => {
         if (!isReset || !_hasHydrated || !user) return;
-        if (isReady) return; // вже готово
         if (isResettingKeys) return;
 
-        // Якщо застрягли в needs-recovery під час reset — генеруємо нові ключі
-        const timer = setTimeout(async () => {
-            if (!isReady && isReset) {
-                if (typeof resetToNewKeys !== 'function') {
-                    setError('Функція скидання ключів недоступна');
-                    return;
-                }
+        setIsResettingKeys(true);
+        resetToNewKeys()
+            .catch(() => setError('Error resetting keys. Please try again.'))
+            .finally(() => setIsResettingKeys(false));
 
-                setIsResettingKeys(true);
-                try {
-                    await resetToNewKeys();
-                } catch (e) {
-                    setError('Помилка генерації ключів');
-                } finally {
-                    setIsResettingKeys(false);
-                }
-            }
-        }, 3000);
-
-        return () => clearTimeout(timer);
-    }, [isReset, isReady, _hasHydrated, user, isResettingKeys]);
+    }, [isReset, _hasHydrated, user]);
 
     useEffect(() => {
         if (_hasHydrated && !user) router.push('/auth/login');

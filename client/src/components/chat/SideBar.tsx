@@ -37,6 +37,7 @@ interface SidebarProps {
     onLogout:              () => void;
     pushPermission?:       string;
     onTogglePush?:         () => void;
+    onUpdateConversation?: (updated: Partial<Conversation> & { id: number }) => void;
 }
 
 function formatTime(d: string): string {
@@ -68,7 +69,7 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
         currentUser, conversations, convsLoading, friends, pendingRequests,
         selectedConvId, socket, onSelectConversation, onAddConversation,
         onSendFriendRequest, onRespondFriendRequest, onRemoveFriend,
-        onLogout, pushPermission, onTogglePush,
+        onLogout, pushPermission, onTogglePush, onUpdateConversation
     } = props;
 
     const router = useRouter();
@@ -149,6 +150,7 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
     const handlePinChat = async (convId: number, isPinned: boolean) => {
         try {
             await api.patch(`/conversations/${convId}/pin-chat`, { isPinned });
+            onUpdateConversation?.({ id: convId, isPinned } as any);
             // Optimistically update local state via onSelectConversation not needed;
             // parent should refresh or the socket event will update
         } catch {}
@@ -158,6 +160,7 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
     const handleArchiveChat = async (convId: number, isArchived: boolean) => {
         try {
             await api.patch(`/conversations/${convId}/archive`, { isArchived });
+            onUpdateConversation?.({ id: convId, isArchived, ...(isArchived ? { isPinned: false } : {}) } as any);
         } catch {}
         setContextMenu(null);
     };

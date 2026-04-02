@@ -120,6 +120,7 @@ export function useE2E() {
             invalidateGroupKeys: () => {},
             unlockWithPin: async () => false,
             setupRecovery: async () => {},
+            resetToNewKeys: async () => {},
             isReady: false,
             status: 'idle' as E2EStatus,
             needsRecovery: false,
