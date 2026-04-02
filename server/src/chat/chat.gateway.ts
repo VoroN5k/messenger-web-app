@@ -82,6 +82,29 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
         try {
             const msg = await this.convService.getMessageById(messageId);
             if (!msg || msg.deletedAt) return;
+
+            const senderStillMember = await this.prisma.conversationMember.findUnique({
+                where: {
+                    conversationId_userId: {
+                        conversationId,
+                        userId: Number(msg.senderId),
+                    },
+                },
+            });
+
+            if (!senderStillMember) {
+                this.logger.warn(
+                    `Scheduled message ${messageId}: sender ${msg.senderId} ` +
+                    `is no longer a member of conv ${conversationId}. Cancelling delivery.`,
+                );
+
+                await this.prisma.message.update({
+                    where: { id: messageId },
+                    data: { deletedAt: new Date() },
+                });
+                return;
+            }
+
             this.server.to(`conv_${conversationId}`).emit('onMessage', msg);
 
             // push notify
