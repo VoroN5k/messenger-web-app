@@ -296,12 +296,30 @@ export default function SetupRecoveryPage() {
                                                 }
                                             />
 
-                                            {error && (
-                                                <div className="flex items-start gap-2.5 rounded-lg px-4 py-3 bg-red-500/10 border border-red-500/20">
-                                                    <svg width="13" height="13" fill="none" stroke="rgba(248,113,113,0.8)" strokeWidth="2" viewBox="0 0 24 24" className="shrink-0 mt-0.5">
-                                                        <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                                            {error && !isReady && (
+                                                <div className="flex items-start gap-2.5 rounded-lg px-4 py-3 bg-red-500/10 border border-red-500/20 mx-8 mb-4">
+                                                    <svg width="13" height="13" fill="none" stroke="rgba(248,113,113,0.8)"
+                                                         strokeWidth="2" viewBox="0 0 24 24" className="shrink-0 mt-0.5">
+                                                        <circle cx="12" cy="12" r="10"/>
+                                                        <line x1="12" y1="8" x2="12" y2="12"/>
+                                                        <line x1="12" y1="16" x2="12.01" y2="16"/>
                                                     </svg>
-                                                    <p className="text-[11px] font-mono text-red-400">{error}</p>
+                                                    <div>
+                                                        <p className="text-[11px] font-mono text-red-400">{error}</p>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setError('');
+                                                                setIsResettingKeys(true);
+                                                                resetToNewKeys?.()
+                                                                    .catch(e => setError(e?.message ?? 'Помилка'))
+                                                                    .finally(() => setIsResettingKeys(false));
+                                                            }}
+                                                            className="text-[10px] font-mono text-red-400/70 hover:text-red-400 mt-1 underline"
+                                                        >
+                                                            Спробувати ще раз
+                                                        </button>
+                                                    </div>
                                                 </div>
                                             )}
 

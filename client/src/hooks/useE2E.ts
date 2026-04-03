@@ -27,6 +27,8 @@ const sessionKeyTimes = new Map<number, number>();
 const sessionKeyPubHash = new Map<number, string>();
 const SESSION_KEY_TTL_MS = 5 * 60 * 1000;
 
+let initGeneration = 0;
+
 // Sender Key (GROUP)
 // mySenderKeys:   convId → my own AES key for that group
 // peerSenderKeys: `${convId}:${senderId}` → peer's AES key (already decrypted for us)
@@ -150,8 +152,14 @@ export function useE2E() {
         broadcastStatus('idle');
 
         initPromise = (async () => {
+            const myGen = ++initGeneration;
             try {
                 let privKey = await loadPrivateKey(user.id);
+
+                if (myGen !== initGeneration) {
+                    initPromise = null;
+                    return;
+                }
 
                 if (!privKey) {
                     try {
@@ -192,6 +200,11 @@ export function useE2E() {
                             console.warn('[E2E] Не вдалося оновити Public Key на сервері:', e);
                         }
                     }
+                }
+
+                if (myGen !== initGeneration) {
+                    initPromise = null;
+                    return;
                 }
 
                 privateKey  = privKey;
@@ -272,6 +285,9 @@ export function useE2E() {
         const myUserId = useAuthStore.getState().user?.id;
         if (!myUserId) throw new Error('Not authenticated');
 
+        initGeneration++;
+        initPromise = null;
+
         // Clear all existing key material (both in-memory and on-disk)
         sessionKeys.clear();
         pendingEcdh.clear();
@@ -283,12 +299,19 @@ export function useE2E() {
         prefetchedConvs.clear();
 
         const { publicKey, privateKey: newPriv } = await generateKeyPair();
+
         await savePrivateKey(myUserId, newPriv);
-        await api.post('/keys', { publicKey }).catch(() =>
-            api.put('/keys', { publicKey }) // fallback якщо вже існує
-        );
+
+        try {
+            await api.post('/keys', { publicKey });
+        } catch (e) {
+            console.error('[E2E] resetToNewKeys: не вдалося опублікувати публічний ключ', e);
+            throw new Error('Не вдалося опублікувати новий публічний ключ');
+        }
+
         privateKey  = newPriv;
         initialized = true;
+
         broadcastStatus('needs-setup');
     }, [])
 
