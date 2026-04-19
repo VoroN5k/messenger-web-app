@@ -4,7 +4,7 @@ import { useAuthStore } from "@/src/store/useAuthStore";
 
 export const useSocket = () => {
     const [socket, setSocket] = useState<Socket | null>(null);
-    const { accessToken } = useAuthStore();
+    const { accessToken, _hasHydrated } = useAuthStore();
 
     useEffect(() => {
         const newSocket = io(process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:4000', {
@@ -24,7 +24,7 @@ export const useSocket = () => {
 
 
     useEffect(() => {
-        if (!socket) return;
+        if (!socket || !_hasHydrated) return;
 
         if (accessToken) {
             socket.auth = { token: accessToken };
@@ -37,7 +37,7 @@ export const useSocket = () => {
         } else {
             socket.disconnect();
         }
-    }, [socket, accessToken]);
+    }, [socket, accessToken, _hasHydrated]);
 
     useEffect(() => {
         if (!socket) return;

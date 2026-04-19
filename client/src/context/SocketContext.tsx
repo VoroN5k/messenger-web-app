@@ -8,7 +8,7 @@ const SocketContext = createContext<Socket | null>(null);
 
 export function SocketProvider({ children }: { children: ReactNode}) {
     const [socket, setSocket] = useState<Socket | null>(null);
-    const { accessToken } = useAuthStore();
+    const { accessToken, _hasHydrated } = useAuthStore();
 
     useEffect(() => {
         const newSocket = io(process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:4000', {
@@ -27,7 +27,7 @@ export function SocketProvider({ children }: { children: ReactNode}) {
     }, []);
 
     useEffect(() => {
-        if (!socket) return;
+        if (!socket || !_hasHydrated) return;
 
         if(accessToken) {
             socket.auth = { token: accessToken };
@@ -39,7 +39,7 @@ export function SocketProvider({ children }: { children: ReactNode}) {
         } else {
             socket.disconnect();
         }
-    }, [socket, accessToken]);
+    }, [socket, accessToken, _hasHydrated]);
 
     useEffect(() => {
         if (!socket) return;
