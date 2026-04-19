@@ -647,6 +647,24 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
         }
     }
 
+    // Sender key redistribution relay
+    @UseGuards(WsJwtGuard)
+    @SubscribeMessage('requestSenderKeyRedistribution')
+    async handleRequestSenderKeyRedistribution(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() data: { conversationId: number; targetUserId: number },
+    ) {
+        try {
+            await this.prisma.conversationMember.findUniqueOrThrow({
+                where: { conversationId_userId: { conversationId: data.conversationId, userId: client.data.userId } },
+            });
+            this.server.to(`user_${data.targetUserId}`).emit('senderKeyRedistributionRequested', {
+                conversationId: data.conversationId,
+                requesterId: client.data.userId,
+            });
+        } catch {}
+    }
+
     // Forward
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('forwardMessage')

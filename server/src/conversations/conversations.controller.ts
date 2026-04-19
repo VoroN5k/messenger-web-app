@@ -203,6 +203,12 @@ export class ConversationsController {
         return this.conversationsService.forwardMessage(userId, dto.messageId, dto.targetConversationId);
     }
 
+    @Throttle({ default: { ttl: 60_000, limit: 10 } })
+    @Delete('sender-keys/mine-all')
+    deleteAllMySenderKeys(@CurrentUser('sub') userId: number) {
+        return this.conversationsService.deleteAllMySenderKeys(userId);
+    }
+
     @Throttle({ default: { ttl: 60_000, limit: 30 } })
     @Post(':id/sender-keys')
     setGroupKeys(

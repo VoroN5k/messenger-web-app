@@ -124,7 +124,7 @@ export const useMessages = (
         (async () => {
             try {
                 if (isGroup && groupMemberIds?.length) {
-                    await e2e.prefetchGroupSenderKeys(conversationId, groupMemberIds);
+                    await e2e.prefetchGroupSenderKeys(conversationId, groupMemberIds, socket);
                 }
 
                 const res = await api.get(`/conversations/${conversationId}/messages`, { signal: ctrl.signal });

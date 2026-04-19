@@ -22,7 +22,7 @@ import { useRouter }              from "next/navigation";
 export default function ChatPage() {
     const { user, logout, _hasHydrated } = useAuthStore();
     const socket = useSocket();
-    const { needsRecovery, needsRecoverySetup, unlockWithPin } = useE2E();
+    const { needsRecovery, needsRecoverySetup, unlockWithPin, distributeMySenderKey, isReady: e2eReady } = useE2E();
     const router = useRouter();
 
     const [selectedConv,   setSelectedConv]   = useState<Conversation | null>(null);
@@ -59,6 +59,16 @@ export default function ChatPage() {
             });
         }
     }, [_hasHydrated]);
+
+    // Відповідаємо на запити перерозподілу sender key від інших учасників груп
+    useEffect(() => {
+        if (!socket || !e2eReady) return;
+        const handler = async ({ conversationId, requesterId }: { conversationId: number; requesterId: number }) => {
+            await distributeMySenderKey(conversationId, [requesterId]);
+        };
+        socket.on('senderKeyRedistributionRequested', handler);
+        return () => { socket.off('senderKeyRedistributionRequested', handler); };
+    }, [socket, e2eReady, distributeMySenderKey]);
 
     const {
         conversations, isLoading: convsLoading,

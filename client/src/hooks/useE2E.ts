@@ -309,6 +309,14 @@ export function useE2E() {
             throw new Error('Не вдалося опублікувати новий публічний ключ');
         }
 
+        // Видаляємо застарілі GroupSenderKey (зашифровані старим ECDH-ключем).
+        // Після цього peers отримають запит на перерозподіл при наступному відкритті групи.
+        try {
+            await api.delete('/conversations/sender-keys/mine-all');
+        } catch (e) {
+            console.warn('[E2E] resetToNewKeys: не вдалося видалити старі sender keys', e);
+        }
+
         privateKey  = newPriv;
         initialized = true;
 
@@ -560,6 +568,7 @@ export function useE2E() {
     const prefetchGroupSenderKeys = useCallback(async (
         conversationId: number,
         memberUserIds: number[],
+        socket?: { emit: (event: string, data: unknown) => void } | null,
     ): Promise<void> => {
         if (prefetchedConvs.has(conversationId)) return;
         prefetchedConvs.add(conversationId);
@@ -573,6 +582,7 @@ export function useE2E() {
             );
 
             let hasMySenderKey = false;
+            let decryptFailCount = 0;
 
             await Promise.all(
                 data.map(async ({senderId, encryptedKey}) => {
@@ -581,7 +591,7 @@ export function useE2E() {
 
                     try {
                         const sessionKey = await getSessionKey(senderId);
-                        if (!sessionKey) return;
+                        if (!sessionKey) { decryptFailCount++; return; }
                         const rawKey = await aesDecryptRaw(sessionKey, encryptedKey);
                         const aesKey = await crypto.subtle.importKey(
                             'raw',
@@ -592,25 +602,24 @@ export function useE2E() {
                         );
                         peerSenderKeys.set(cacheKey, aesKey);
 
-                        // Якщо це мій ключ — кешуємо ще й окремо
                         if (senderId === myUserId) {
                             mySenderKeys.set(conversationId, aesKey);
                             hasMySenderKey = true;
                         }
                     } catch {
+                        decryptFailCount++;
                     }
                 }),
             );
 
-            let decryptFailCount = 0;
-
+            // Повторна спроба з force-refresh для ключів що не розшифрувались
             if (decryptFailCount > 0) {
                 await Promise.all(
                     data.map(async ({senderId, encryptedKey}) => {
                         const cacheKey = `${conversationId}:${senderId}`;
                         if (peerSenderKeys.has(cacheKey)) return;
                         try {
-                            const freshKey = await getSessionKey(senderId, true /* forceRefresh */);
+                            const freshKey = await getSessionKey(senderId, true);
                             if (!freshKey) return;
                             const rawKey = await aesDecryptRaw(freshKey, encryptedKey);
                             const aesKey = await crypto.subtle.importKey(
@@ -623,45 +632,34 @@ export function useE2E() {
                                 mySenderKeys.set(conversationId, aesKey);
                                 hasMySenderKey = true;
                             }
-                        } catch {
-                        }
+                        } catch {}
                     }),
                 );
+
+                // Для peers чиї ключі все ще не декриптуються — запитуємо перерозподіл
+                if (socket) {
+                    for (const { senderId } of data) {
+                        if (senderId === myUserId) continue;
+                        if (!peerSenderKeys.has(`${conversationId}:${senderId}`)) {
+                            socket.emit('requestSenderKeyRedistribution', {
+                                conversationId,
+                                targetUserId: senderId,
+                            });
+                        }
+                    }
+                }
             }
 
-            // Якщо мого ключа немає на сервері — генеруємо і розповсюджуємо
             const mySenderKeyExistsOnServer = data.some(({senderId}) => senderId === myUserId);
 
             if (!hasMySenderKey && !mySenderKeyExistsOnServer) {
                 // Ключа немає взагалі — новий учасник або перший вхід у групу
                 await distributeMySenderKey(conversationId, memberUserIds);
             } else if (!hasMySenderKey && mySenderKeyExistsOnServer) {
-                // Ключ є на сервері але не вдалось розшифрувати.
-                // Можлива причина: зміна ключової пари або мережева помилка.
-                // Пробуємо force-refresh сесійного ключа і повторну спробу.
-                try {
-                    const myEntry = data.find(({senderId}) => senderId === myUserId);
-                    if (myEntry) {
-                        const freshSessionKey = await getSessionKey(myUserId, true /* forceRefresh */);
-                        if (freshSessionKey) {
-                            const rawKey = await aesDecryptRaw(freshSessionKey, myEntry.encryptedKey);
-                            const aesKey = await crypto.subtle.importKey(
-                                'raw',
-                                rawKey.buffer.slice(rawKey.byteOffset, rawKey.byteOffset + rawKey.byteLength) as ArrayBuffer,
-                                {name: 'AES-GCM'},
-                                false,
-                                ['encrypt', 'decrypt'],
-                            );
-                            peerSenderKeys.set(`${conversationId}:${myUserId}`, aesKey);
-                            mySenderKeys.set(conversationId, aesKey);
-                        }
-                    }
-                } catch {
-                    // Якщо й після force-refresh не вдалось — розповсюджуємо новий ключ
-                    // (це остання опція; старі повідомлення стануть нечитабельними, але нові будуть OK)
-                    console.warn(`[E2E] Cannot decrypt own sender key for conv ${conversationId}, distributing new key`);
-                    await distributeMySenderKey(conversationId, memberUserIds);
-                }
+                // Ключ є на сервері але не вдалось розшифрувати (застарілий після зміни ключів).
+                // Upsert на сервері дозволяє перезаписати — розповсюджуємо новий ключ.
+                console.warn(`[E2E] Cannot decrypt own sender key for conv ${conversationId}, redistributing new key`);
+                await distributeMySenderKey(conversationId, memberUserIds);
             }
         } catch (err) {
             console.warn(`[E2E] prefetchGroupSenderKeys failed for conv ${conversationId}:`, err);
