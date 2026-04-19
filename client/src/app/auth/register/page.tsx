@@ -277,6 +277,7 @@ export default function RegisterPage() {
                 password: data.password,
                 confirmPassword: data.confirmPassword,
                 nickname: data.nickname,
+                tosAccepted: tosAccepted,
             });
             router.push(`/auth/verify-pending?email=${encodeURIComponent(data.email)}`);
         } catch (e: any) {

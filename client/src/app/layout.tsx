@@ -42,7 +42,7 @@ export default async function RootLayout({
                 }}
             />
         </head>
-        <body className={inter.className}>
+        <body className={inter.className} suppressHydrationWarning>
         <NextIntlClientProvider locale={locale} messages={messages}>
             <AuthSync />
             <ThemeProvider>

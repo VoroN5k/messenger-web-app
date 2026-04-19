@@ -6,7 +6,7 @@ export class EmailService {
     constructor(private readonly mailer: MailerService) {}
 
     async sendVerificationEmail(email: string, token: string) {
-        const verificationLink = `http://localhost:4000/api/auth/verify-email?token=${token}`
+        const verificationLink = `https://09d065b6e3bc99ab-82-60-63-84.serveousercontent.com/api/auth/verify-email?token=${token}`
 
         await this.mailer.sendMail({
             to: email,

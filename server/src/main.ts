@@ -3,32 +3,41 @@ import { AppModule } from './app.module.js';
 import * as dotenv from 'dotenv';
 import { ValidationPipe } from '@nestjs/common';
 import cookieParser from 'cookie-parser';
+import { NestExpressApplication } from '@nestjs/platform-express';
 
 async function bootstrap() {
+  dotenv.config();
 
-    dotenv.config();
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    }),
+  );
 
+  app.setGlobalPrefix('api');
+  app.use(cookieParser());
 
-    const app = await NestFactory.create(AppModule);
+  if (process.env.NODE_ENV === 'production') {
+    app.set('trust proxy', 1);
+  }
 
-    app.useGlobalPipes(
-        new ValidationPipe({
-            whitelist: true,
-            forbidNonWhitelisted: true,
-            transform: true,
-        }));
+  app.enableCors({
+    origin: (origin, callback) => {
+      const allowed = ['http://localhost:3000', process.env.CLIENT_URL].filter(
+        Boolean,
+      );
+      if (!origin || allowed.includes(origin)) callback(null, true);
+      else callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true,
+  });
 
-    app.setGlobalPrefix('api');
-    app.use(cookieParser());
-
-    app.enableCors({
-        origin: ['http://localhost:3000'],
-        credentials: true,
-    });
-
-    await app.listen(process.env.PORT || 4000);
-    console.log(`Server running on http://localhost:${process.env.PORT || 4000}`);
+  await app.listen(process.env.PORT || 4000);
+  console.log(`Server running on http://localhost:${process.env.PORT || 4000}`);
 }
 
-bootstrap();
+await bootstrap();

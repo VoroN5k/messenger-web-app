@@ -1,53 +1,51 @@
-
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 @Injectable()
 export class UsersService {
-    constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) {}
 
-    async findAll(currentUserId: number) {
-        return this.prisma.user.findMany({
-            where: {
-                id: {
-                    not: currentUserId,
-                },
-            },
-            select: {
-                id: true,
-                nickname: true,
-                email: true,
-                isOnline: true,
-                lastSeen: true,
-                avatarUrl: true,
-            },
-            orderBy: {
-                isOnline: 'desc',
-            },
-        });
-    }
+  async findAll(currentUserId: number) {
+    return this.prisma.user.findMany({
+      where: {
+        id: {
+          not: currentUserId,
+        },
+      },
+      select: {
+        id: true,
+        nickname: true,
+        email: true,
+        isOnline: true,
+        lastSeen: true,
+        avatarUrl: true,
+      },
+      orderBy: {
+        isOnline: 'desc',
+      },
+    });
+  }
 
+  async findOne(id: number) {
+    return this.prisma.user.findUnique({
+      where: { id },
+      select: { id: true, nickname: true, isOnline: true },
+    });
+  }
 
-    async findOne(id: number) {
-        return this.prisma.user.findUnique({
-            where: { id },
-            select: { id: true, nickname: true, isOnline: true },
-        });
-    }
+  async updateAvatar(userId: number, avatarUrl: string) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { avatarUrl },
+      select: { avatarUrl: true },
+    });
+  }
 
-    async updateAvatar(userId: number, avatarUrl: string) {
-        return this.prisma.user.update({
-            where: { id: userId },
-            data: { avatarUrl },
-            select: { avatarUrl: true},
-        });
-    }
-
-    async updateStatusEmoji(userId: number, emoji: string | null) {
-        return this.prisma.user.update({
-            where: { id: userId },
-            data: { statusEmoji: emoji },
-            select: { statusEmoji: true },
-        });
-    }
+  async updateStatusEmoji(userId: number, emoji: string | null) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { statusEmoji: emoji },
+      select: { statusEmoji: true },
+    });
+  }
 }
