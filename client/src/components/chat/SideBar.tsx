@@ -178,7 +178,7 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
 
     return (
         <aside
-            className="w-[300px] flex flex-col shrink-0 h-full"
+            className="w-full md:w-[300px] flex flex-col shrink-0 h-full"
             style={{ background: 'var(--bg-surface)', borderRight: '1px solid var(--border)' }}
         >
             {/* ── Top bar ── */}

@@ -36,12 +36,13 @@ interface ChatAreaProps {
     pendingForward?:         Message | null;
     onSetPendingForward?:    (msg: Message | null) => void;
     onSelectConversation?:   (conv: Conversation) => void;
+    onBack?:                 () => void;
 }
 
 export default function ChatArea({
                                      currentUser, conversation, conversations, socket,
                                      onConversationUpdate, onMarkRead, onStartCall,
-                                     pendingForward, onSetPendingForward, onSelectConversation,
+                                     pendingForward, onSetPendingForward, onSelectConversation, onBack,
                                  }: Readonly<ChatAreaProps>) {
     const currentUserId = currentUser?.id;
 
@@ -519,6 +520,7 @@ export default function ChatArea({
                 onToggleMedia={() => setShowMedia(o => !o)}
                 onStartCall={onStartCall}
                 onJumpToMessage={jumpToMessage}
+                onBack={onBack}
             />
 
             {/* ── Pinned message ── */}

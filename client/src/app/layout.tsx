@@ -10,8 +10,14 @@ import AuthSync from '@/src/app/auth/AuthSync';
 const inter = Inter({ subsets: ['latin', 'cyrillic'] });
 
 export const metadata: Metadata = {
-    title: 'Мій Месенджер',
-    description: 'Найкращий чат на Next.js',
+    title: 'Vesper',
+    description: 'End-to-end encrypted messenger',
+    manifest: '/manifest.json',
+    appleWebApp: {
+        capable: true,
+        statusBarStyle: 'black-translucent',
+        title: 'Vesper',
+    },
 };
 
 
@@ -26,6 +32,10 @@ export default async function RootLayout({
     return (
         <html lang={locale} suppressHydrationWarning>
         <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+            <meta name="theme-color" content="#7c4dff" />
+            <meta name="mobile-web-app-capable" content="yes" />
+            <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
             <script
                 dangerouslySetInnerHTML={{
                     __html: `

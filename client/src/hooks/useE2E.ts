@@ -47,6 +47,7 @@ let   initPromise: Promise<void> | null = null;
 // Recovery state
 type E2EStatus = 'idle' | 'ready' | 'needs-recovery' | 'needs-setup';
 let e2eStatus: E2EStatus = 'idle';
+let keysWereRotated = false; // true when keys were regenerated this session (not loaded from storage)
 let recoveryBlob: string | null = null;
 let recoverySalt:     string | null = null;
 let currentUserId:    number | null = null;
@@ -120,6 +121,8 @@ export function useE2E() {
             distributeMySenderKey: async () => {},
             prefetchGroupSenderKeys: async () => {},
             invalidateGroupKeys: () => {},
+            invalidatePeerKey: () => {},
+            keysJustRotated: false,
             unlockWithPin: async () => false,
             setupRecovery: async () => {},
             resetToNewKeys: async () => {},
@@ -172,13 +175,8 @@ export function useE2E() {
                         const { publicKey, privateKey: newPriv } = await generateKeyPair();
                         await savePrivateKey(user.id, newPriv);
                         privKey = newPriv;
-
-                        try {
-                            await api.post('/keys', { publicKey });
-                        } catch (e) {
-                            console.warn('[E2E] Не вдалося зберегти Public Key на сервері (можливо вже існує):', e);
-                        }
-
+                        await api.post('/keys', { publicKey });
+                        keysWereRotated = true;
                         broadcastStatus('needs-setup');
                     }
                 } else {
@@ -190,15 +188,12 @@ export function useE2E() {
                     try {
                         await api.get(`/keys/${user.id}`);
                     } catch {
+                        // Public key missing from server (e.g. vault/IndexedDB desync) — republish
                         const { publicKey, privateKey: newPriv } = await generateKeyPair();
                         await savePrivateKey(user.id, newPriv);
                         privKey = newPriv;
-
-                        try {
-                            await api.post('/keys', { publicKey });
-                        } catch (e) {
-                            console.warn('[E2E] Не вдалося оновити Public Key на сервері:', e);
-                        }
+                        await api.post('/keys', { publicKey });
+                        keysWereRotated = true;
                     }
                 }
 
@@ -228,12 +223,13 @@ export function useE2E() {
 
     useEffect(() => {
         if (!user?.id) {
-            privateKey    = null;
-            initialized   = false;
-            initPromise   = null;
-            recoveryBlob  = null;
-            recoverySalt  = null;
-            currentUserId = null;
+            privateKey       = null;
+            initialized      = false;
+            initPromise      = null;
+            recoveryBlob     = null;
+            recoverySalt     = null;
+            currentUserId    = null;
+            keysWereRotated  = false;
             sessionKeys.clear();
             pendingEcdh.clear();
             sessionKeyTimes.clear();
@@ -758,6 +754,18 @@ export function useE2E() {
         catch { return data; }
     }, [getPeerSenderKey]);
 
+    // Invalidate session key for a specific peer (call on peerKeyRotated socket event)
+    const invalidatePeerKey = useCallback((userId: number) => {
+        sessionKeys.delete(userId);
+        sessionKeyTimes.delete(userId);
+        sessionKeyPubHash.delete(userId);
+        // Also clear any sender keys encrypted by this peer
+        for (const k of peerSenderKeys.keys()) {
+            if (k.endsWith(`:${userId}`)) peerSenderKeys.delete(k);
+        }
+        prefetchedConvs.clear();
+    }, []);
+
     // Invalidate sender key cache (після зміни учасників)
     const invalidateGroupKeys = useCallback((conversationId: number) => {
         mySenderKeys.delete(conversationId);
@@ -782,6 +790,9 @@ export function useE2E() {
         unlockWithPin,
         setupRecovery,
         resetToNewKeys,
+        // Peer key rotation
+        invalidatePeerKey,
+        keysJustRotated: keysWereRotated,
         // Meta
         isReady,
         status,

@@ -22,7 +22,7 @@ import { useRouter }              from "next/navigation";
 export default function ChatPage() {
     const { user, logout, _hasHydrated } = useAuthStore();
     const socket = useSocket();
-    const { needsRecovery, needsRecoverySetup, unlockWithPin, distributeMySenderKey, isReady: e2eReady } = useE2E();
+    const { needsRecovery, needsRecoverySetup, unlockWithPin, distributeMySenderKey, isReady: e2eReady, keysJustRotated, invalidatePeerKey } = useE2E();
     const router = useRouter();
 
     const [selectedConv,   setSelectedConv]   = useState<Conversation | null>(null);
@@ -69,6 +69,21 @@ export default function ChatPage() {
         socket.on('senderKeyRedistributionRequested', handler);
         return () => { socket.off('senderKeyRedistributionRequested', handler); };
     }, [socket, e2eReady, distributeMySenderKey]);
+
+    // Якщо під час цієї сесії були згенеровані нові ключі — повідомляємо пірів,
+    // щоб вони скинули кеш ECDH і наступний запит підтягнув новий публічний ключ.
+    useEffect(() => {
+        if (!socket || !keysJustRotated) return;
+        socket.emit('notifyKeyRotated');
+    }, [socket, keysJustRotated]);
+
+    // Коли піp оновлює ключі — інвалідуємо кеш його ECDH session key
+    useEffect(() => {
+        if (!socket) return;
+        const handler = ({ userId }: { userId: number }) => invalidatePeerKey(userId);
+        socket.on('peerKeyRotated', handler);
+        return () => { socket.off('peerKeyRotated', handler); };
+    }, [socket, invalidatePeerKey]);
 
     const {
         conversations, isLoading: convsLoading,
@@ -156,37 +171,42 @@ export default function ChatPage() {
             )}
 
             <div className="flex flex-1 overflow-hidden">
-                <Sidebar
-                    currentUser={user}
-                    conversations={conversations}
-                    convsLoading={convsLoading}
-                    friends={friends}
-                    pendingRequests={pendingRequests}
-                    selectedConvId={selectedConv?.id}
-                    socket={socket}
-                    onSelectConversation={handleSelectConversation}
-                    onAddConversation={addConversation}
-                    onSendFriendRequest={sendRequest}
-                    onRespondFriendRequest={respondToRequest}
-                    onRemoveFriend={removeFriend}
-                    onLogout={handleLogout}
-                    pushPermission={permission}
-                    onTogglePush={requestPermission}
-                    onUpdateConversation={updateConversation}
-                />
+                <div className={selectedConv ? 'hidden md:contents' : 'contents'}>
+                    <Sidebar
+                        currentUser={user}
+                        conversations={conversations}
+                        convsLoading={convsLoading}
+                        friends={friends}
+                        pendingRequests={pendingRequests}
+                        selectedConvId={selectedConv?.id}
+                        socket={socket}
+                        onSelectConversation={handleSelectConversation}
+                        onAddConversation={addConversation}
+                        onSendFriendRequest={sendRequest}
+                        onRespondFriendRequest={respondToRequest}
+                        onRemoveFriend={removeFriend}
+                        onLogout={handleLogout}
+                        pushPermission={permission}
+                        onTogglePush={requestPermission}
+                        onUpdateConversation={updateConversation}
+                    />
+                </div>
 
-                <ChatArea
-                    currentUser={user}
-                    conversation={selectedConv}
-                    conversations={conversations}
-                    socket={socket}
-                    onConversationUpdate={updateConversation}
-                    onMarkRead={(id) => markConversationRead(id)}
-                    onStartCall={startCall}
-                    pendingForward={pendingForward}
-                    onSetPendingForward={setPendingForward}
-                    onSelectConversation={handleSelectConversation}
-                />
+                <div className={selectedConv ? 'contents' : 'hidden md:contents'}>
+                    <ChatArea
+                        currentUser={user}
+                        conversation={selectedConv}
+                        conversations={conversations}
+                        socket={socket}
+                        onConversationUpdate={updateConversation}
+                        onMarkRead={(id) => markConversationRead(id)}
+                        onStartCall={startCall}
+                        pendingForward={pendingForward}
+                        onSetPendingForward={setPendingForward}
+                        onSelectConversation={handleSelectConversation}
+                        onBack={() => setSelectedConv(null)}
+                    />
+                </div>
             </div>
 
             {callState.status === 'incoming' && callState.incomingData && (

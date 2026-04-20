@@ -46,6 +46,16 @@
     --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* ─── Mobile / PWA ───────────────────────────────────────────────────────── */
+html, body {
+    overscroll-behavior: none;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* Safe-area utilities for iOS home indicator / notch */
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
+.safe-top    { padding-top:    env(safe-area-inset-top, 0px); }
+
 /* ─── Keyframes ──────────────────────────────────────────────────────────── */
 @keyframes msgSlideUp {
     0%   { opacity: 0; transform: translateY(12px) scale(0.93); }

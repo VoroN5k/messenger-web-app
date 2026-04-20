@@ -665,6 +665,15 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
         } catch {}
     }
 
+    // Key rotation relay — when a user regenerates their E2E keypair,
+    // notify all online peers so they drop their cached ECDH session key.
+    @UseGuards(WsJwtGuard)
+    @SubscribeMessage('notifyKeyRotated')
+    handleKeyRotated(@ConnectedSocket() client: Socket) {
+        const userId = client.data.userId;
+        client.broadcast.emit('peerKeyRotated', { userId });
+    }
+
     // Forward
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('forwardMessage')

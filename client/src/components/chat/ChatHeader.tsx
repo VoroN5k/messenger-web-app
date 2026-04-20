@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Users, Hash, Search, LayoutGrid, Phone, Video, Lock, Pin, ChevronUp } from 'lucide-react';
+import { Users, Hash, Search, LayoutGrid, Phone, Video, Lock, Pin, ChevronUp, ChevronLeft } from 'lucide-react';
 import { Avatar }       from '@/src/components/chat/Avatar';
 import { Conversation } from '@/src/types/conversation.types';
 import { User }         from '@/src/types/auth.types';
@@ -28,13 +28,14 @@ interface Props {
     onToggleMedia:  () => void;
     onStartCall?:   (convId: number, targetUserId: number, type: 'audio' | 'video') => void;
     onJumpToMessage?: (messageId: number) => void;
+    onBack?: () => void;
 }
 
 export function ChatHeader({
                                conversation, currentUser,
                                isSearchOpen, showMedia,
                                onToggleSearch, onToggleMedia, onStartCall,
-                               onJumpToMessage,
+                               onJumpToMessage, onBack,
                            }: Readonly<Props>) {
     const currentUserId = currentUser?.id;
     const isGroup   = conversation.type === 'GROUP';
@@ -107,6 +108,16 @@ export function ChatHeader({
             >
                 {/* Left: info */}
                 <div className="flex items-center gap-3 min-w-0">
+                    {onBack && (
+                        <button
+                            onClick={onBack}
+                            className="md:hidden flex items-center justify-center w-8 h-8 rounded-full shrink-0 transition-colors"
+                            style={{ color: 'var(--text-2)' }}
+                            aria-label="Back"
+                        >
+                            <ChevronLeft size={22} />
+                        </button>
+                    )}
                     {conversation.avatarUrl || conversation.type === 'DIRECT' ? (
                         <div className="relative shrink-0">
                             <Avatar
