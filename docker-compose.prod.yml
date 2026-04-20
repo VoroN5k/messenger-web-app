@@ -1,0 +1,35 @@
+# ─── Local production-parity test ────────────────────────────────────────────
+# Builds the same multi-stage images used on fly.io.
+# Usage:
+#   docker compose -f docker-compose.prod.yml up --build
+#
+# Requires ./server/.env and ./client/.env.local with production values.
+
+name: vesper-prod
+
+services:
+  server:
+    build:
+      context: ./server
+      target: production
+    env_file: ./server/.env
+    ports:
+      - '4000:4000'
+    restart: unless-stopped
+
+  client:
+    build:
+      context: ./client
+      target: production
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000/api}
+        NEXT_PUBLIC_SOCKET_URL: ${NEXT_PUBLIC_SOCKET_URL:-http://localhost:4000}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY: ${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY}
+        NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${NEXT_PUBLIC_VAPID_PUBLIC_KEY}
+    env_file: ./client/.env.local
+    ports:
+      - '3000:3000'
+    depends_on:
+      - server
+    restart: unless-stopped

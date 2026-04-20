@@ -1,0 +1,33 @@
+# fly.toml — Vesper Client (Next.js standalone)
+# Deploy: fly deploy --config fly.toml  (run from ./client)
+#
+# NEXT_PUBLIC_* vars are baked into the JS bundle at build time.
+# Pass them as build args in the [build.args] section below.
+# They are NOT secrets — it's fine to commit non-sensitive public keys here.
+#
+# If you need to rotate them, you must redeploy (rebuild the image).
+
+app            = 'voronsk-client'
+primary_region = 'fra'          # Frankfurt — close to Supabase eu-west-1
+
+[build]
+  dockerfile = 'Dockerfile'
+  target     = 'production'
+
+  [build.args]
+    NEXT_PUBLIC_API_URL                          = 'https://voronsk-server.fly.dev/api'
+    NEXT_PUBLIC_SOCKET_URL                       = 'https://voronsk-server.fly.dev'
+    NEXT_PUBLIC_SUPABASE_URL                     = 'https://inlycfphvxclztvjhkpb.supabase.co'
+    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY = 'sb_publishable_w8cZkaags39mJeCRrrZlUQ_0SPTg5pt'
+    NEXT_PUBLIC_VAPID_PUBLIC_KEY                 = 'BK71dmP28RgsD7fujxp12TSBg8IhiVe8fY7WZzbeqDnQ6WGAOrSZnRUpOqlVqV6UJGlRFH-fgPeuLQOo0vv5jJ0'
+
+[http_service]
+  internal_port        = 3000
+  force_https          = true
+  auto_stop_machines   = 'stop'
+  auto_start_machines  = true
+  min_machines_running = 0      # stateless — cold-starts are fine
+
+[[vm]]
+  size   = 'shared-cpu-1x'
+  memory = '256mb'

@@ -1,0 +1,58 @@
+# ─── Local development with hot-reload ───────────────────────────────────────
+# Usage:
+#   docker compose up --build
+#
+# Notes:
+#   • Source files are bind-mounted so changes are reflected immediately.
+#   • node_modules live in named volumes (populated from the image on first start)
+#     so the Windows host FS never touches them — avoids permission & perf issues.
+#   • No local Postgres — DB is Supabase cloud (configured in server/.env).
+#
+# On first run (empty named volumes):
+#   docker compose up --build
+
+name: vesper
+
+services:
+  # ── NestJS API + Socket.io ──────────────────────────────────────────────────
+  server:
+    build:
+      context: ./server
+      target: development
+    volumes:
+      - ./server/src:/app/src                  # hot-reload source
+      - ./server/prisma:/app/prisma            # schema / migration changes
+      - server_node_modules:/app/node_modules  # isolated from host
+      - server_generated:/app/generated        # prisma generate output
+    env_file: ./server/.env
+    ports:
+      - '4000:4000'
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:4000/api/health']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ── Next.js frontend ────────────────────────────────────────────────────────
+  client:
+    build:
+      context: ./client
+      target: development
+    volumes:
+      - ./client/src:/app/src                  # hot-reload source
+      - ./client/public:/app/public
+      - client_node_modules:/app/node_modules  # isolated from host
+    env_file: ./client/.env.local
+    ports:
+      - '3000:3000'
+    depends_on:
+      server:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  server_node_modules:
+  server_generated:
+  client_node_modules:

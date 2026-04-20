@@ -1,0 +1,51 @@
+# fly.toml — Vesper Server (NestJS + Socket.io)
+# Deploy: fly deploy --config fly.toml  (run from ./server)
+#
+# Required secrets (set once via `fly secrets set`):
+#   DATABASE_URL          — Supabase pooler URL   (port 6543, pgbouncer=true)
+#   DIRECT_URL            — Supabase direct URL   (port 5432, for migrations)
+#   JWT_SECRET
+#   SUPABASE_URL
+#   SUPABASE_SERVICE_KEY
+#   SUPABASE_STORAGE_BUCKET
+#   VAPID_EMAIL
+#   VAPID_PUBLIC_KEY
+#   VAPID_PRIVATE_KEY
+#   MAIL_HOST  MAIL_PORT  MAIL_USER  MAIL_PASS
+#   CLIENT_URL            — public URL of the deployed client (e.g. https://voronsk-client.fly.dev)
+
+app            = 'voronsk-server'
+primary_region = 'fra'          # Frankfurt — close to Supabase eu-west-1
+
+[build]
+  dockerfile = 'Dockerfile'
+  target     = 'production'
+
+[env]
+  PORT          = '4000'
+  NODE_ENV      = 'production'
+  SERVER_URL    = 'https://voronsk-server.fly.dev'
+  COOKIE_SECURE = 'true'
+
+# Run migrations atomically before the new version receives traffic.
+# A non-zero exit code aborts the deployment.
+[deploy]
+  release_command = 'sh scripts/release.sh'
+
+[http_service]
+  internal_port       = 4000
+  force_https         = true
+  # Keep at least 1 machine running so WebSocket connections aren't dropped
+  # by cold-starts. Increase to 2+ for HA.
+  auto_stop_machines  = 'stop'
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type       = 'connections'
+    hard_limit = 1000
+    soft_limit = 800
+
+[[vm]]
+  size   = 'shared-cpu-1x'
+  memory = '512mb'
