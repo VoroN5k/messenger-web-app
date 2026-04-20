@@ -30,8 +30,9 @@ export async function refreshAccessToken(): Promise<string | null> {
 async function _doRefresh(): Promise<string | null> {
     const execute = async (): Promise<string | null> => {
         try {
+            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
             const { data } = await axios.post(
-                'http://localhost:4000/api/auth/refresh',
+                `${apiUrl}/auth/refresh`,
                 {},
                 { withCredentials: true },
             );

@@ -6,7 +6,8 @@ export class EmailService {
     constructor(private readonly mailer: MailerService) {}
 
     async sendVerificationEmail(email: string, token: string) {
-        const verificationLink = `https://09d065b6e3bc99ab-82-60-63-84.serveousercontent.com/api/auth/verify-email?token=${token}`
+        const serverUrl = process.env.SERVER_URL ?? 'http://localhost:4000';
+        const verificationLink = `${serverUrl}/api/auth/verify-email?token=${token}`;
 
         await this.mailer.sendMail({
             to: email,
@@ -19,7 +20,8 @@ export class EmailService {
     }
 
     async sendPasswordResetEmail(email: string, token: string) {
-        const resetLink = `http://localhost:3000/auth/reset-password?token=${token}`;
+        const clientUrl = process.env.CLIENT_URL ?? 'http://localhost:3000';
+        const resetLink = `${clientUrl}/auth/reset-password?token=${token}`;
 
         await this.mailer.sendMail({
             to: email,

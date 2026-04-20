@@ -61,7 +61,9 @@ export const uploadFile = (
         formData.append('file', file);
 
         const xhr = new XMLHttpRequest();
-        xhr.open('POST', 'http://localhost:4000/api/upload');
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
+        xhr.open('POST', `${apiUrl}/upload`);
+        xhr.withCredentials = true;
 
         const token = useAuthStore.getState().accessToken;
         if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);

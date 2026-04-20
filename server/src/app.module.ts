@@ -11,6 +11,7 @@ import { ConversationsModule } from './conversations/conversations.module.js';
 import { KeysModule } from './keys/keys.module.js';
 import { OGModule } from './og/og.module.js';
 import { FilesModule } from './files/files.module.js';
+import { HealthController } from './health/health.controller.js';
 
 @Module({
   imports: [
@@ -27,5 +28,6 @@ import { FilesModule } from './files/files.module.js';
     OGModule,
     FilesModule,
   ],
+  controllers: [HealthController],
 })
 export class AppModule {}

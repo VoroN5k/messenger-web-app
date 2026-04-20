@@ -79,11 +79,11 @@ export class AuthController {
             await this.authService.logout(refreshToken);
         }
 
-        const isProduction = process.env.NODE_ENV === 'production';
+        const secure = process.env.COOKIE_SECURE === 'true';
         res.clearCookie('refreshToken', {
             httpOnly: true,
-            secure: isProduction,
-            sameSite: isProduction ? 'none' : 'lax',
+            secure,
+            sameSite: secure ? 'none' : 'lax',
             path: '/',
         });
         return { message: 'Logged out successfully' };
@@ -139,11 +139,11 @@ export class AuthController {
         @Res({ passthrough: true }) res: Response,
     ) {
         await this.authService.deleteAccount(userId, dto.password, dto.twoFactorCode);
-        const isProduction = process.env.NODE_ENV === 'production';
+        const secure = process.env.COOKIE_SECURE === 'true';
         res.clearCookie('refreshToken', {
             httpOnly: true,
-            secure: isProduction,
-            sameSite: isProduction ? 'none' : 'lax',
+            secure,
+            sameSite: secure ? 'none' : 'lax',
             path: '/',
         });
         return { message: 'Account deleted successfully' };
@@ -209,13 +209,15 @@ export class AuthController {
 
 
     private setRefreshCookie(res: Response, token: string) {
-        const isProduction = process.env.NODE_ENV === 'production';
+        // COOKIE_SECURE=true must be set explicitly in production (fly.toml [env]).
+        // Do not rely on NODE_ENV — it can be unreliable inside containerised runtimes.
+        const secure = process.env.COOKIE_SECURE === 'true';
         res.cookie('refreshToken', token, {
             httpOnly: true,
-            secure: isProduction,
-            sameSite: isProduction ? 'none' : 'lax',
+            secure,
+            sameSite: secure ? 'none' : 'lax',
             path: '/',
-            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 днів
+            maxAge: 7 * 24 * 60 * 60 * 1000,
         });
     }
 

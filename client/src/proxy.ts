@@ -23,15 +23,11 @@ export function proxy(request: NextRequest) {
         pathname.startsWith("/settings") ||
         pathname.startsWith("/auth/setup-recovery");
 
-    // Scenario A: User without token is trying to access protected route
-    if ( isProtectedRoute && !refreshToken ) {
-        const loginUrl = new URL('/auth/login', request.url);
+    // NOTE: refreshToken cookie lives on the API domain (voronsk-server.fly.dev),
+    // so it is never visible here. Server-side protection of /chat is not possible
+    // without a BFF proxy. Client-side guards in chat/page.tsx handle unauthed access.
 
-        loginUrl.searchParams.set('from', pathname);
-        return NextResponse.redirect(loginUrl);
-    }
-
-    // Scenario B: User with token is trying to access auth route
+    // Scenario B only: redirect already-authenticated users away from auth pages.
     if (isAuthRoute && refreshToken) {
         return NextResponse.redirect(new URL('/chat', request.url));
     }

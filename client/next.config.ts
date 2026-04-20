@@ -6,6 +6,10 @@ const withNextIntl = createNextIntlPlugin(
 )
 
 const nextConfig: NextConfig = {
+    // Required for Docker / fly.io — produces a self-contained server.js bundle.
+    // See: https://nextjs.org/docs/app/api-reference/config/next-config-js/output
+    output: 'standalone',
+
     async rewrites() {
         return [
             {
