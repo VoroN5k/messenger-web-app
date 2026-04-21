@@ -39,9 +39,12 @@ async function _doRefresh(): Promise<string | null> {
             const newToken: string = data.accessToken;
             const currentUser = useAuthStore.getState().user;
 
-            if (!currentUser) throw new Error('No user in store after refresh');
-
-            useAuthStore.getState().setAuth(currentUser, newToken);
+            if (currentUser) {
+                useAuthStore.getState().setAuth(currentUser, newToken);
+            } else {
+                // Store not yet hydrated — update only the token, user will hydrate from localStorage
+                useAuthStore.setState({ accessToken: newToken });
+            }
             return newToken;
         } catch {
             useAuthStore.getState().logout();

@@ -722,8 +722,12 @@ export function useE2E() {
 
         // Якщо це моє повідомлення — беремо мій sender key
         if (senderId === myUserId) {
-            const key = mySenderKeys.get(conversationId);
-            if (!key) return ciphertext; // ще не готовий
+            let key = mySenderKeys.get(conversationId);
+            if (!key) {
+                // Cache miss — try to load from server (e.g. after page reload before prefetch)
+                key = await getOrCreateMySenderKey(conversationId) ?? undefined;
+            }
+            if (!key) return ciphertext;
             try { return await decryptMessage(key, ciphertext); }
             catch { return '[🔒 Не вдалося розшифрувати]'; }
         }
@@ -781,14 +785,18 @@ export function useE2E() {
     ): Promise<ArrayBuffer> => {
         const myUserId = useAuthStore.getState().user?.id;
 
-        const key = senderId === myUserId
+        let key = senderId === myUserId
             ? mySenderKeys.get(conversationId)
             : await getPeerSenderKey(conversationId, senderId);
+
+        if (!key && senderId === myUserId) {
+            key = await getOrCreateMySenderKey(conversationId) ?? undefined;
+        }
 
         if (!key) return data;
         try { return await decryptFile(key, data); }
         catch { return data; }
-    }, [getPeerSenderKey]);
+    }, [getPeerSenderKey, getOrCreateMySenderKey]);
 
     // Invalidate session key for a specific peer (call on peerKeyRotated socket event)
     const invalidatePeerKey = useCallback((userId: number) => {
