@@ -13,6 +13,7 @@ import { PushService }            from '../push/push.service.js';
 import { WsRateLimiter }          from './ws-rate-limiter.js';
 
 @WebSocketGateway({
+    path: '/rt',
     cors: {
         origin: (origin: string, callback: (err: Error | null, allow?: boolean) => void) => {
             const allowed = ['http://localhost:3000', process.env.CLIENT_URL].filter(Boolean);

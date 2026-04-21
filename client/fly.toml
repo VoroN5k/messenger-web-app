@@ -15,11 +15,14 @@ primary_region = 'fra'          # Frankfurt — close to Supabase eu-west-1
   target     = 'production'
 
   [build.args]
-    NEXT_PUBLIC_API_URL                          = 'https://voronsk-server.fly.dev/api'
+    # /api is relative — browser calls voronsk-client.fly.dev/api/* which Next.js
+    # proxies server-side to BACKEND_URL, keeping cookies same-origin.
+    NEXT_PUBLIC_API_URL                          = '/api'
     NEXT_PUBLIC_SOCKET_URL                       = 'https://voronsk-server.fly.dev'
     NEXT_PUBLIC_SUPABASE_URL                     = 'https://inlycfphvxclztvjhkpb.supabase.co'
     NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY = 'sb_publishable_w8cZkaags39mJeCRrrZlUQ_0SPTg5pt'
     NEXT_PUBLIC_VAPID_PUBLIC_KEY                 = 'BK71dmP28RgsD7fujxp12TSBg8IhiVe8fY7WZzbeqDnQ6WGAOrSZnRUpOqlVqV6UJGlRFH-fgPeuLQOo0vv5jJ0'
+    BACKEND_URL                                  = 'https://voronsk-server.fly.dev'
 
 [http_service]
   internal_port        = 3000

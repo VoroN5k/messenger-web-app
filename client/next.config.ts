@@ -11,7 +11,13 @@ const nextConfig: NextConfig = {
     output: 'standalone',
 
     async rewrites() {
+        const backendUrl = process.env.BACKEND_URL || 'http://localhost:4000';
         return [
+            // Proxy all API calls through Next.js so cookies are same-origin
+            {
+                source: '/api/:path*',
+                destination: `${backendUrl}/api/:path*`,
+            },
             {
                 source: '/storage/:path*',
                 destination: `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/:path*`,

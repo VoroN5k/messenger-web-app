@@ -14,6 +14,7 @@ export function SocketProvider({ children }: { children: ReactNode}) {
         const newSocket = io(process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:4000', {
             autoConnect: false,
             transports: ['websocket'],
+            path: '/rt',
         });
 
         newSocket.on('connect', () => console.log('Socket connected:', newSocket.id));
