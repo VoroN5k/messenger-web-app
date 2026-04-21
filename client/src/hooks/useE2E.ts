@@ -10,7 +10,9 @@ import {
     encryptMessage,
     generateKeyPair,
     loadPrivateKey,
+    loadPublicKey,
     savePrivateKey,
+    savePublicKey,
     deletePrivateKey, decryptPrivateKeyWithPin, encryptPrivateKeyWithPin,
 } from "@/src/lib/crypto";
 import api from "@/src/lib/axios";
@@ -45,7 +47,7 @@ let   initialized  = false;
 let   initPromise: Promise<void> | null = null;
 
 // Recovery state
-type E2EStatus = 'idle' | 'ready' | 'needs-recovery' | 'needs-setup';
+type E2EStatus = 'idle' | 'ready' | 'needs-recovery' | 'needs-setup' | 'keys-desynced';
 let e2eStatus: E2EStatus = 'idle';
 let keysWereRotated = false; // true when keys were regenerated this session (not loaded from storage)
 let recoveryBlob: string | null = null;
@@ -130,6 +132,7 @@ export function useE2E() {
             status: 'idle' as E2EStatus,
             needsRecovery: false,
             needsRecoverySetup: false,
+            keysDesynced: false,
             clearAllKeyMaterial: async () => {},
         }
     }
@@ -140,7 +143,7 @@ export function useE2E() {
 
         const cb = (s: E2EStatus) => {
             setStatus(s);
-            if (s === 'ready' || s === 'needs-setup') setIsReady(true);
+            if (s === 'ready' || s === 'needs-setup' || s === 'keys-desynced') setIsReady(true);
         };
         statusCallbacks.push(cb);
         return () => { statusCallbacks = statusCallbacks.filter(x => x !== cb); };
@@ -159,56 +162,80 @@ export function useE2E() {
             try {
                 let privKey = await loadPrivateKey(user.id);
 
-                if (myGen !== initGeneration) {
-                    initPromise = null;
-                    return;
-                }
+                if (myGen !== initGeneration) { initPromise = null; return; }
 
                 if (!privKey) {
+                    // No local private key — check recovery first
                     try {
                         const { data } = await api.get('/keys/recovery/me');
                         recoveryBlob = data.encryptedBlob;
                         recoverySalt = data.salt;
                         broadcastStatus('needs-recovery');
                         return;
-                    } catch {
-                        const { publicKey, privateKey: newPriv } = await generateKeyPair();
-                        await savePrivateKey(user.id, newPriv);
-                        privKey = newPriv;
-                        await api.post('/keys', { publicKey });
-                        keysWereRotated = true;
-                        broadcastStatus('needs-setup');
+                    } catch (err: unknown) {
+                        const status = (err as { response?: { status?: number } })?.response?.status;
+                        if (status === 404) {
+                            // Truly first setup — generate and publish
+                            const { publicKey, privateKey: newPriv } = await generateKeyPair();
+                            await savePrivateKey(user.id, newPriv);
+                            await savePublicKey(user.id, publicKey);
+                            privKey = newPriv;
+                            await api.post('/keys', { publicKey });
+                            keysWereRotated = true;
+                            broadcastStatus('needs-setup');
+                        } else {
+                            // Network error or other transient issue — never generate new keys
+                            console.error('[E2E] Cannot check recovery (network?). Will retry on next load.', err);
+                            initPromise = null;
+                            return;
+                        }
                     }
                 } else {
+                    // Have local private key — check recovery setup
                     try {
                         await api.get('/keys/recovery/me');
                     } catch {
                         broadcastStatus('needs-setup');
                     }
+
+                    // Verify server has our public key and it matches local
                     try {
-                        await api.get(`/keys/${user.id}`);
-                    } catch {
-                        // Public key missing from server (e.g. vault/IndexedDB desync) — republish
-                        const { publicKey, privateKey: newPriv } = await generateKeyPair();
-                        await savePrivateKey(user.id, newPriv);
-                        privKey = newPriv;
-                        await api.post('/keys', { publicKey });
-                        keysWereRotated = true;
+                        const { data: serverKey } = await api.get(`/keys/${user.id}`);
+                        const localPubKey = await loadPublicKey(user.id);
+                        if (localPubKey && serverKey.publicKey !== localPubKey) {
+                            // Keys desynced — never auto-regenerate, show warning
+                            console.warn('[E2E] Local public key differs from server. Keys desynced!');
+                            broadcastStatus('keys-desynced');
+                        }
+                    } catch (err: unknown) {
+                        const status = (err as { response?: { status?: number } })?.response?.status;
+                        if (status === 404) {
+                            // Server lost our public key — try to re-publish existing one
+                            const localPubKey = await loadPublicKey(user.id);
+                            if (localPubKey) {
+                                try {
+                                    await api.post('/keys', { publicKey: localPubKey });
+                                    console.info('[E2E] Re-published public key to server');
+                                } catch (pubErr) {
+                                    console.error('[E2E] Failed to re-publish public key:', pubErr);
+                                }
+                            } else {
+                                // Old device: private key exists but public key was never cached locally
+                                console.warn('[E2E] Server key missing and no local public key stored. Reset PIN to recover.');
+                                broadcastStatus('keys-desynced');
+                            }
+                        }
+                        // else: network error — continue with local key, don't block
                     }
                 }
 
-                if (myGen !== initGeneration) {
-                    initPromise = null;
-                    return;
-                }
+                if (myGen !== initGeneration) { initPromise = null; return; }
 
-                privateKey  = privKey;
+                privateKey  = privKey!;
                 initialized = true;
 
-                if (e2eStatus !== 'needs-setup') {
+                if (e2eStatus !== 'needs-setup' && e2eStatus !== 'keys-desynced') {
                     broadcastStatus('ready');
-                } else {
-                    broadcastStatus('needs-setup');
                 }
 
                 onReadyCallbacks.forEach(cb => cb());
@@ -249,6 +276,13 @@ export function useE2E() {
         try {
             const privKey = await decryptPrivateKeyWithPin(recoveryBlob, recoverySalt, pin);
             await savePrivateKey(currentUserId, privKey);
+            // Cache server's public key locally so we can re-publish if server loses it
+            try {
+                const { data } = await api.get(`/keys/${currentUserId}`);
+                await savePublicKey(currentUserId, data.publicKey);
+            } catch {
+                // Non-critical — will be resolved on next init check
+            }
             privateKey  = privKey;
             initialized = true;
             recoveryBlob  = null;
@@ -297,6 +331,7 @@ export function useE2E() {
         const { publicKey, privateKey: newPriv } = await generateKeyPair();
 
         await savePrivateKey(myUserId, newPriv);
+        await savePublicKey(myUserId, publicKey);
 
         try {
             await api.post('/keys', { publicKey });
@@ -315,6 +350,7 @@ export function useE2E() {
 
         privateKey  = newPriv;
         initialized = true;
+        keysWereRotated = true;
 
         broadcastStatus('needs-setup');
     }, [])
@@ -798,6 +834,7 @@ export function useE2E() {
         status,
         needsRecovery:      status === 'needs-recovery',
         needsRecoverySetup: status === 'needs-setup',
+        keysDesynced:       status === 'keys-desynced',
         clearAllKeyMaterial: () => user?.id ? deletePrivateKey(user.id) : Promise.resolve(),
     };
 }

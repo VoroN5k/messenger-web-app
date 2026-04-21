@@ -201,6 +201,17 @@ export async function savePrivateKey(userId: number, key: CryptoKey): Promise<vo
     await idbPut(db, `privkey_${KEY_VERSION}_${userId}`, encrypted);
 }
 
+export async function savePublicKey(userId: number, pubKey: string): Promise<void> {
+    const db = await openDB();
+    await idbPut(db, `pubkey_${KEY_VERSION}_${userId}`, pubKey);
+}
+
+export async function loadPublicKey(userId: number): Promise<string | null> {
+    const db = await openDB();
+    const stored = await idbGet(db, `pubkey_${KEY_VERSION}_${userId}`);
+    return typeof stored === 'string' ? stored : null;
+}
+
 export async function loadPrivateKey(userId: number): Promise<CryptoKey | null> {
     const db = await openDB();
 
@@ -239,6 +250,7 @@ export async function deletePrivateKey(userId: number): Promise<void> {
     await Promise.allSettled([
         idbDelete(db, `privkey_${KEY_VERSION}_${userId}`),
         idbDelete(db, `privkey_${KEY_VERSION_PREV}_${userId}`),
+        idbDelete(db, `pubkey_${KEY_VERSION}_${userId}`),
     ]);
 }
 
