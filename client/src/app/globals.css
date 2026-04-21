@@ -48,8 +48,15 @@
 
 /* ─── Mobile / PWA ───────────────────────────────────────────────────────── */
 html, body {
+    height: 100%;
+    overflow: hidden;
     overscroll-behavior: none;
     -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+}
+
+* {
+    box-sizing: border-box;
 }
 
 /* Safe-area utilities for iOS home indicator / notch */

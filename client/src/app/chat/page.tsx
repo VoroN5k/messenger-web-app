@@ -22,7 +22,7 @@ import { useRouter }              from "next/navigation";
 export default function ChatPage() {
     const { user, logout, _hasHydrated } = useAuthStore();
     const socket = useSocket();
-    const { needsRecovery, needsRecoverySetup, unlockWithPin, distributeMySenderKey, isReady: e2eReady, keysJustRotated, invalidatePeerKey } = useE2E();
+    const { needsRecovery, needsRecoverySetup, keysDesynced, unlockWithPin, distributeMySenderKey, isReady: e2eReady, keysJustRotated, invalidatePeerKey } = useE2E();
     const router = useRouter();
 
     const [selectedConv,   setSelectedConv]   = useState<Conversation | null>(null);
@@ -147,7 +147,18 @@ export default function ChatPage() {
     if (!isLoaded) return null;
 
     return (
-        <div className="flex h-screen flex-col overflow-hidden text-slate-200 bg-[#050505] selection:bg-violet-500/30">
+        <div className="flex flex-col overflow-hidden text-slate-200 bg-[#050505] selection:bg-violet-500/30" style={{ height: '100dvh' }}>
+
+            {keysDesynced && (
+                <div className="relative z-50 flex items-center justify-between gap-3 px-6 py-3 bg-red-600/10 border-b border-red-500/20">
+                    <div className="flex items-center gap-3">
+                        <div className="p-1.5 rounded-full bg-red-500/20 text-red-400"><ShieldAlert size={16} /></div>
+                        <span className="text-sm font-medium text-slate-200">
+                            Ключі розсинхронізовані — повідомлення можуть не розшифровуватись. Спробуйте скинути Recovery PIN.
+                        </span>
+                    </div>
+                </div>
+            )}
 
             {showBanner && (
                 <div className="relative z-50 flex items-center justify-between gap-3 px-6 py-3 bg-violet-600/10 border-b border-violet-500/20">
