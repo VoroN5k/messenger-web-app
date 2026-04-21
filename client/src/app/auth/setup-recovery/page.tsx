@@ -3,6 +3,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useE2E } from '@/src/hooks/useE2E';
 import { useAuthStore } from '@/src/store/useAuthStore';
@@ -51,6 +52,7 @@ function CyberPinStrength({ pin }: { pin: string }) {
 
 // ── Головна Сторінка ──
 export default function SetupRecoveryPage() {
+    const t = useTranslations('auth.setup_recovery');
     const router       = useRouter();
     const searchParams = useSearchParams();
     const isVerified   = searchParams.get('verified') === 'true';
@@ -119,8 +121,8 @@ export default function SetupRecoveryPage() {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (pin.length < 6) { setError('Мінімум 6 символів'); return; }
-        if (pin !== confirm) { setError('PIN-коди не збігаються'); return; }
+        if (pin.length < 6) { setError(t('pin_min')); return; }
+        if (pin !== confirm) { setError(t('confirm_mismatch')); return; }
         if (!isReady) { setError('Криптографічний модуль ініціалізується...'); return; }
         if (isReset && !twoFADone) { setError('Потрібне підтвердження 2FA'); return; }
 
@@ -130,7 +132,7 @@ export default function SetupRecoveryPage() {
             setSuccess(true);
         } catch (e: any) {
             const msg = e.response?.data?.message;
-            setError(Array.isArray(msg) ? msg[0] : (msg ?? 'Помилка збереження ключа.'));
+            setError(Array.isArray(msg) ? msg[0] : (msg ?? t('error_default')));
             if (isReset && e.response?.status === 401) {
                 setTwoFADone(false); setTwoFACode(''); setShow2FA(true);
             }
@@ -250,7 +252,7 @@ export default function SetupRecoveryPage() {
                                         // recovery vault setup
                                     </div>
                                     <h1 className="text-2xl font-bold" style={{ background: 'linear-gradient(135deg, #f1f5f9 0%, #c4b5fd 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                                        Встановіть PIN-код
+                                        {t('title')}
                                     </h1>
                                 </div>
 
@@ -266,12 +268,12 @@ export default function SetupRecoveryPage() {
                                         <>
                                             <div>
                                                 <CipherInput
-                                                    label="Recovery PIN"
+                                                    label={t('pin_label')}
                                                     type={showPin ? 'text' : 'password'}
                                                     value={pin}
                                                     onChange={e => { setPin(e.target.value); setError(''); }}
-                                                    placeholder="Мінімум 6 символів"
-                                                    hint="мін. 6 символів"
+                                                    placeholder={t('pin_placeholder')}
+                                                    hint={t('pin_min')}
                                                     icon={<svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>}
                                                     rightSlot={
                                                         <button type="button" onClick={() => setShowPin(s => !s)} className="transition-colors" style={{ color: showPin ? 'rgba(139,92,246,0.8)' : 'rgba(100,116,139,0.4)' }}>
@@ -283,11 +285,11 @@ export default function SetupRecoveryPage() {
                                             </div>
 
                                             <CipherInput
-                                                label="Підтвердження PIN"
+                                                label={t('confirm_label')}
                                                 type={showConf ? 'text' : 'password'}
                                                 value={confirm}
                                                 onChange={e => { setConfirm(e.target.value); setError(''); }}
-                                                placeholder="Повторіть PIN"
+                                                placeholder={t('confirm_placeholder')}
                                                 icon={<svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>}
                                                 rightSlot={
                                                     <button type="button" onClick={() => setShowConf(s => !s)} className="transition-colors" style={{ color: showConf ? 'rgba(139,92,246,0.8)' : 'rgba(100,116,139,0.4)' }}>
@@ -334,10 +336,10 @@ export default function SetupRecoveryPage() {
                                                     {loading ? (
                                                         <>
                                                             <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white" />
-                                                            Шифрування...
+                                                            {t('submitting')}
                                                         </>
                                                     ) : (
-                                                        'ENCRYPT_VAULT'
+                                                        t('submit')
                                                     )}
                                                 </span>
                                                 <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: 'rgba(255,255,255,0.05)' }} />
@@ -346,7 +348,7 @@ export default function SetupRecoveryPage() {
                                             {!isVerified && !isReset && (
                                                 <div className="text-center pt-2">
                                                     <button type="button" onClick={() => router.push('/chat')} className="text-[10px] font-mono text-slate-500 hover:text-slate-300 transition-colors uppercase">
-                                                        Пропустити (Небезпечно)
+                                                        {t('skip')}
                                                     </button>
                                                 </div>
                                             )}

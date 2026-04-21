@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { useAuthStore } from '@/src/store/useAuthStore';
 import api from '@/src/lib/axios';
 import { jwtDecode } from 'jwt-decode';
@@ -188,6 +189,7 @@ function CipherInput({
 
 // ── Main Login Page ───────────────────────────────────────────────────────────
 export default function LoginPage() {
+    const t = useTranslations('auth.login');
     const [isLoading, setIsLoading] = useState(false);
     const [showPass, setShowPass] = useState(false);
     const [globalError, setGlobalError] = useState('');
@@ -214,7 +216,7 @@ export default function LoginPage() {
             sessionStorage.setItem('freshLogin', 'true');
             window.location.href = '/chat';
         } catch (e: any) {
-            const msg = e.response?.data?.message || 'Помилка входу';
+            const msg = e.response?.data?.message || t('error_default');
             setGlobalError(Array.isArray(msg) ? msg[0] : msg);
         } finally {
             setIsLoading(false);
@@ -341,17 +343,17 @@ export default function LoginPage() {
                                 background: 'linear-gradient(135deg, #f1f5f9 0%, #c4b5fd 100%)',
                                 WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
                             }}>
-                                Ідентифікація
+                                {t('title')}
                             </h1>
                             <p className="text-xs mt-1" style={{ color: 'rgba(100,116,139,0.7)' }}>
-                                Введіть облікові дані для отримання токена доступу
+                                {t('subtitle')}
                             </p>
                         </div>
 
                         {/* Form */}
                         <form onSubmit={handleSubmit(onSubmit)} className="px-8 py-6 space-y-5">
                             <CipherInput
-                                label="Email / Ідентифікатор"
+                                label={t('email_label')}
                                 type="email"
                                 placeholder="user@domain.com"
                                 error={errors.email?.message as string}
@@ -362,13 +364,13 @@ export default function LoginPage() {
                                     </svg>
                                 }
                                 {...register('email', {
-                                    required: "Email обов'язковий",
-                                    pattern: { value: /^\S+@\S+$/i, message: 'Невірний формат' },
+                                    required: t('email_required'),
+                                    pattern: { value: /^\S+@\S+$/i, message: t('email_invalid') },
                                 })}
                             />
 
                             <CipherInput
-                                label="Пароль / Ключ доступу"
+                                label={t('password_label')}
                                 type={showPass ? 'text' : 'password'}
                                 placeholder="••••••••••••"
                                 error={errors.password?.message as string}
@@ -387,7 +389,7 @@ export default function LoginPage() {
                                         }
                                     </button>
                                 }
-                                {...register('password', { required: "Пароль обов'язковий" })}
+                                {...register('password', { required: t('password_required') })}
                             />
 
                             {/* Forgot password */}
@@ -396,7 +398,7 @@ export default function LoginPage() {
                                       style={{ color: 'rgba(139,92,246,0.6)' }}
                                       onMouseEnter={e => (e.currentTarget.style.color = 'rgba(196,181,253,0.9)')}
                                       onMouseLeave={e => (e.currentTarget.style.color = 'rgba(139,92,246,0.6)')}>
-                                    RESET_PASSWORD →
+                                    {t('forgot')}
                                 </Link>
                             </div>
 
@@ -432,14 +434,14 @@ export default function LoginPage() {
                               <circle cx="12" cy="12" r="10" stroke="rgba(196,181,253,0.3)" strokeWidth="3"/>
                               <path d="M12 2a10 10 0 0110 10" stroke="rgba(196,181,253,0.9)" strokeWidth="3" strokeLinecap="round"/>
                           </svg>
-                          Автентифікація...
+                          {t('submitting')}
                       </>
                   ) : (
                       <>
                           <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                               <path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4M10 17l5-5-5-5M13.8 12H3"/>
                           </svg>
-                          Отримати доступ
+                          {t('submit')}
                       </>
                   )}
                 </span>
@@ -451,12 +453,12 @@ export default function LoginPage() {
                         {/* Footer */}
                         <div className="px-8 pb-8 text-center">
                             <div className="text-[10px] font-mono" style={{ color: 'rgba(100,116,139,0.5)' }}>
-                                Немає акаунту?{' '}
+                                {t('no_account')}{' '}
                                 <Link href="/auth/register" className="transition-colors"
                                       style={{ color: 'rgba(139,92,246,0.8)' }}
                                       onMouseEnter={e => (e.currentTarget.style.color = 'rgba(196,181,253,1)')}
                                       onMouseLeave={e => (e.currentTarget.style.color = 'rgba(139,92,246,0.8)')}>
-                                    REGISTER_NEW_IDENTITY →
+                                    {t('register_link')}
                                 </Link>
                             </div>
                         </div>

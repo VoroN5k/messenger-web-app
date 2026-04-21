@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import api from '@/src/lib/axios';
 import { Loader2, KeyRound, Eye, EyeOff, CheckCircle, XCircle, ArrowLeft, AlertTriangle } from 'lucide-react';
 import { GridLines, BackgroundOrbs, NoiseOverlay } from "@/src/components/ui/BackgroundFx";
@@ -48,6 +49,7 @@ function CyberPasswordStrength({ password }: { password: string }) {
 }
 
 export default function ResetPasswordPage() {
+    const t = useTranslations('auth.reset_password');
     const searchParams = useSearchParams();
     const router       = useRouter();
     const token        = searchParams.get('token') ?? '';
@@ -70,9 +72,9 @@ export default function ResetPasswordPage() {
     }, [success, router]);
 
     const validate = () => {
-        if (!token) return 'Токен авторизації відсутній або застарілий.';
-        if (password.length < 6) return 'Пароль повинен містити мінімум 6 символів.';
-        if (password !== confirm) return 'Криптографічні хеші не збігаються.';
+        if (!token) return 'Invalid or expired token.';
+        if (password.length < 6) return t('password_min');
+        if (password !== confirm) return t('confirm_mismatch');
         return '';
     };
 
@@ -87,7 +89,7 @@ export default function ResetPasswordPage() {
             setSuccess(true);
         } catch (err: any) {
             const msg = err.response?.data?.message;
-            setError(Array.isArray(msg) ? msg[0] : (msg ?? 'Помилка виконання операції.'));
+            setError(Array.isArray(msg) ? msg[0] : (msg ?? t('error_default')));
         } finally {
             setLoading(false);
         }
@@ -145,8 +147,8 @@ export default function ResetPasswordPage() {
                                         <CheckCircle className="text-emerald-400" size={32} />
                                     </div>
                                 </div>
-                                <h1 className="text-2xl font-bold mb-2 text-white">Ключ оновлено</h1>
-                                <p className="text-xs text-slate-400 mb-6">Ваші облікові дані успішно змінено. Ініціалізуємо перехід...</p>
+                                <h1 className="text-2xl font-bold mb-2 text-white">{t('success')}</h1>
+                                <p className="text-xs text-slate-400 mb-6">{t('success')}</p>
                                 <div className="w-full bg-slate-800/50 rounded-full h-1 mb-2 overflow-hidden">
                                     <div className="bg-emerald-500 h-full animate-[progress_3s_ease-in-out_forwards]" />
                                 </div>
@@ -160,18 +162,18 @@ export default function ResetPasswordPage() {
                                         // set new credentials
                                     </div>
                                     <h1 className="text-2xl font-bold" style={{ background: 'linear-gradient(135deg, #f1f5f9 0%, #c4b5fd 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                                        Новий пароль
+                                        {t('title')}
                                     </h1>
                                 </div>
 
                                 <form onSubmit={handleSubmit} className="px-8 py-6 space-y-5">
                                     <div>
                                         <CipherInput
-                                            label="Новий пароль / Ключ"
+                                            label={t('password_label')}
                                             type={showPass ? 'text' : 'password'}
                                             value={password}
                                             onChange={e => { setPassword(e.target.value); setError(''); }}
-                                            placeholder="Мінімум 6 символів"
+                                            placeholder={t('password_label')}
                                             rightSlot={
                                                 <button type="button" onClick={() => setShowPass(s => !s)} className="transition-colors text-slate-400 hover:text-violet-400">
                                                     <EyeIcon show={showPass} />
@@ -182,11 +184,11 @@ export default function ResetPasswordPage() {
                                     </div>
 
                                     <CipherInput
-                                        label="Підтвердження"
+                                        label={t('confirm_label')}
                                         type={showConf ? 'text' : 'password'}
                                         value={confirm}
                                         onChange={e => { setConfirm(e.target.value); setError(''); }}
-                                        placeholder="Повторіть пароль"
+                                        placeholder={t('confirm_label')}
                                         rightSlot={
                                             <button type="button" onClick={() => setShowConf(s => !s)} className="transition-colors text-slate-400 hover:text-violet-400">
                                                 <EyeIcon show={showConf} />
@@ -212,7 +214,7 @@ export default function ResetPasswordPage() {
                                         }}
                                     >
                                         <span className="relative z-10 flex items-center justify-center gap-2.5">
-                                            {loading ? <><Loader2 size={14} className="animate-spin" /> UPDATING...</> : 'UPDATE_CREDENTIALS'}
+                                            {loading ? <><Loader2 size={14} className="animate-spin" /> {t('submitting')}</> : t('submit')}
                                         </span>
                                         <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-white/5" />
                                     </button>
@@ -224,7 +226,7 @@ export default function ResetPasswordPage() {
                     {!success && (
                         <div className="mt-6 text-center">
                             <Link href="/auth/login" className="inline-flex items-center gap-2 text-[10px] tracking-widest uppercase text-slate-500 hover:text-violet-400 transition-colors">
-                                <ArrowLeft size={12} /> ABORT_PROCESS
+                                <ArrowLeft size={12} /> {t('back_to_login')}
                             </Link>
                         </div>
                     )}

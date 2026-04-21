@@ -1,18 +1,12 @@
 'use client';
 
 import { RefObject, useState, useRef } from 'react';
-import { Send, Paperclip, Mic, Loader2, X, WifiOff, Calendar, Timer, Forward } from 'lucide-react';
+import { useTranslations } from 'next-intl';
+import { Send, Paperclip, Mic, Loader2, X, WifiOff, Calendar, Timer, Forward, ChevronLeft } from 'lucide-react';
 import { VoiceRecorder }  from '@/src/components/chat/VoiceRecorder';
 import { ScheduleModal }  from '@/src/components/chat/ScheduleModal';
 import { Message }        from '@/src/types/conversation.types';
 
-const DESTRUCT_OPTIONS = [
-    { label: 'Вимкнено',   value: null },
-    { label: '30 сек',     value: 30 },
-    { label: '5 хв',       value: 5 * 60 },
-    { label: '1 год',      value: 3600 },
-    { label: '24 год',     value: 24 * 3600 },
-];
 
 interface Props {
     canPost:           boolean;
@@ -47,22 +41,26 @@ export function ChatInput({
                               fileInputRef, inputRef, onInputChange, onSubmit, onFileSelect, onSendVoice, onCancelUpload,
                               onClearError, onSetReplyTo, onSetShowVoice, notifyTyping,
                           }: Readonly<Props>) {
-    const [showScheduleModal,   setShowScheduleModal]   = useState(false);
-    const [showDestructPicker,  setShowDestructPicker]  = useState(false);
+    const t = useTranslations('input');
+    const tMsg = useTranslations('message');
+    const [showScheduleModal,    setShowScheduleModal]    = useState(false);
+    const [showDestructPicker,   setShowDestructPicker]   = useState(false);
     const [destructAfterSeconds, setDestructAfterSeconds] = useState<number | null>(null);
-    const [focused, setFocused] = useState(false);
+    const [focused,              setFocused]              = useState(false);
+    // Mobile long-press menu
+    const [showMobileMenu, setShowMobileMenu] = useState(false);
+    const [mobilePage,     setMobilePage]     = useState<'main' | 'destruct'>('main');
+    const longPressRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const didLongPress   = useRef(false);
+    const justSentRef    = useRef(false);
+
+    const fireSubmit = (scheduledAt?: Date | null) => {
+        onSubmit({ preventDefault: () => {} } as React.FormEvent, scheduledAt ?? null, destructAfterSeconds);
+    };
 
     const handleSend = (e: React.FormEvent) => {
         e.preventDefault();
-        onSubmit(e, null, destructAfterSeconds);
-    };
-
-    const handleSendClick = (e: React.MouseEvent<HTMLButtonElement>) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (!inputValue.trim() && !pendingForward) return;
-        const syntheticEvent = { preventDefault: () => {} } as React.FormEvent;
-        onSubmit(syntheticEvent, null, destructAfterSeconds);
+        fireSubmit(null);
     };
 
     const handleScheduleConfirm = (scheduledAt: Date) => {
@@ -70,21 +68,54 @@ export function ChatInput({
         onSubmit({ preventDefault: () => {} } as React.FormEvent, scheduledAt, destructAfterSeconds);
     };
 
+    // ── Long-press on send button (mobile) ──────────────────────────────────
+    const onSendPointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+        // Only intercept left-button / touch
+        if (e.button !== undefined && e.button !== 0) return;
+        didLongPress.current = false;
+        longPressRef.current = setTimeout(() => {
+            didLongPress.current = true;
+            navigator.vibrate?.(25);
+            setMobilePage('main');
+            setShowMobileMenu(true);
+        }, 500);
+    };
+
+    const onSendPointerUp = (e: React.PointerEvent<HTMLButtonElement>) => {
+        e.preventDefault();
+        if (longPressRef.current) clearTimeout(longPressRef.current);
+        if (!didLongPress.current && canSend) {
+            justSentRef.current = true;
+            setTimeout(() => { justSentRef.current = false; }, 400);
+            fireSubmit(null);
+        }
+    };
+
+    const onSendPointerCancel = () => {
+        if (longPressRef.current) clearTimeout(longPressRef.current);
+    };
+
+    const DESTRUCT_OPTIONS = [
+        { label: 'Off',    value: null },
+        { label: '30 sec', value: 30 },
+        { label: '5 min',  value: 5 * 60 },
+        { label: '1 hr',   value: 3600 },
+        { label: '24 hr',  value: 24 * 3600 },
+    ];
     const destructLabel = destructAfterSeconds
         ? DESTRUCT_OPTIONS.find(o => o.value === destructAfterSeconds)?.label
         : null;
 
-    const hasText     = inputValue.trim().length > 0;
-    const hasFwd      = !!pendingForward;
-    const canSend     = hasText || hasFwd;
-    const isOffline   = !isOnline || !socketConnected;
+    const hasText  = inputValue.trim().length > 0;
+    const hasFwd   = !!pendingForward;
+    const canSend  = hasText || hasFwd;
+    const isOffline = !isOnline || !socketConnected;
 
-    // Sender name for the pending forward banner
     const fwdSenderName = pendingForward?.sender?.nickname
         ?? pendingForward?.forwardedFrom?.sender?.nickname
-        ?? 'Невідомий';
+        ?? '?';
     const fwdContent = pendingForward?.fileUrl
-        ? (pendingForward.fileType?.startsWith('audio/') ? '🎤 Голосове' : '📎 Файл')
+        ? (pendingForward.fileType?.startsWith('audio/') ? tMsg('voice') : tMsg('file'))
         : (pendingForward?.content ?? '');
 
     return (
@@ -97,8 +128,8 @@ export function ChatInput({
                      style={{ background: 'rgba(251,191,36,0.07)', borderBottom: '1px solid rgba(251,191,36,0.12)' }}>
                     <WifiOff size={12} className="text-amber-400 shrink-0" />
                     <span className="text-[11px]" style={{ color: 'rgba(251,191,36,0.8)' }}>
-                        Немає з'єднання — повідомлення надішлються автоматично
-                        {offlineQueueCount > 0 && ` (${offlineQueueCount} в черзі)`}
+                        {t('offline_banner')}
+                        {offlineQueueCount > 0 && ` (${offlineQueueCount})`}
                     </span>
                 </div>
             )}
@@ -114,8 +145,8 @@ export function ChatInput({
                         ))}
                     </div>
                     <span className="text-[11px]" style={{ color: 'var(--text-3)' }}>
-                        {typingUsers.map(t => t.nickname).join(', ')}
-                        {typingUsers.length === 1 ? ' друкує…' : ' друкують…'}
+                        {typingUsers.map(u => u.nickname).join(', ')}
+                        {' '}{typingUsers.length === 1 ? t('typing_one') : t('typing_many')}
                     </span>
                 </div>
             )}
@@ -158,7 +189,6 @@ export function ChatInput({
                 <div className="px-5 py-2 flex flex-col gap-1.5 slide-up"
                      style={{ borderBottom: '1px solid var(--border)' }}>
 
-                    {/* Reply banner */}
                     {replyTo && (
                         <div className="flex items-center gap-2.5">
                             <div className="w-0.5 h-7 rounded-full shrink-0" style={{ background: 'var(--accent)' }} />
@@ -167,7 +197,7 @@ export function ChatInput({
                                     {replyTo.sender?.nickname ?? 'Користувач'}
                                 </p>
                                 <p className="text-[11px] truncate" style={{ color: 'var(--text-3)' }}>
-                                    {replyTo.deletedAt ? 'Повідомлення видалено' : replyTo.content || 'Файл'}
+                                    {replyTo.deletedAt ? tMsg('deleted') : replyTo.content || tMsg('file')}
                                 </p>
                             </div>
                             <button onClick={() => onSetReplyTo(null)}
@@ -180,17 +210,15 @@ export function ChatInput({
                         </div>
                     )}
 
-                    {/* ── Pending forward banner ── */}
                     {pendingForward && (
                         <div className="flex items-center gap-2.5">
-                            {/* Left colored bar — blue-ish to distinguish from reply */}
                             <div className="w-0.5 h-8 rounded-full shrink-0"
                                  style={{ background: 'rgba(99,179,237,0.8)' }} />
                             <div className="flex items-center gap-1.5 min-w-0 flex-1">
                                 <Forward size={11} style={{ color: 'rgba(99,179,237,0.8)', flexShrink: 0 }} />
                                 <div className="min-w-0">
                                     <p className="text-[11px] font-medium" style={{ color: 'rgba(99,179,237,0.9)' }}>
-                                        Пересилання від {fwdSenderName}
+                                        {t('forward_from', { name: fwdSenderName })}
                                     </p>
                                     <p className="text-[11px] truncate" style={{ color: 'var(--text-3)' }}>
                                         {fwdContent || '…'}
@@ -207,7 +235,6 @@ export function ChatInput({
                         </div>
                     )}
 
-                    {/* Self-destruct label */}
                     {destructLabel && (
                         <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg self-end shrink-0"
                              style={{ background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.14)' }}>
@@ -261,7 +288,7 @@ export function ChatInput({
                         }
                     </button>
 
-                    {/* Text input + inline tools */}
+                    {/* Text input + desktop-only inline tools */}
                     <div
                         className="flex-1 flex items-center rounded-xl transition-all duration-200 px-3 gap-1"
                         style={{
@@ -282,18 +309,18 @@ export function ChatInput({
                                     handleSend(e as any);
                                 }
                             }}
-                            placeholder={pendingForward ? 'Напишіть щось перед пересиланням…' : 'Повідомлення…'}
+                            placeholder={pendingForward ? t('placeholder_forward') : t('placeholder')}
                             className="flex-1 bg-transparent outline-none py-2.5 min-w-0"
                             style={{ color: 'var(--text-1)', caretColor: 'var(--accent)', fontSize: '14px' }}
                         />
 
-                        {/* Schedule button */}
+                        {/* ── Desktop-only: Schedule + Self-destruct ── */}
                         <button
                             type="button"
                             onClick={() => setShowScheduleModal(true)}
-                            className="w-7 h-7 rounded-lg flex items-center justify-center cursor-pointer transition-all duration-150 shrink-0"
+                            className="hidden md:flex w-7 h-7 rounded-lg items-center justify-center cursor-pointer transition-all duration-150 shrink-0"
                             style={{ color: 'var(--text-3)' }}
-                            title="Запланувати"
+                            title={t('schedule')}
                             onMouseEnter={e => {
                                 (e.currentTarget as HTMLElement).style.color = 'var(--text-2)';
                                 (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.04)';
@@ -306,13 +333,12 @@ export function ChatInput({
                             <Calendar size={14} />
                         </button>
 
-                        {/* Self-destruct timer */}
-                        <div className="relative">
+                        <div className="hidden md:block relative">
                             <button
                                 type="button"
                                 onClick={() => setShowDestructPicker(v => !v)}
                                 className="w-7 h-7 rounded-lg flex items-center justify-center cursor-pointer transition-all duration-150 shrink-0"
-                                title="Самознищення"
+                                title={t('self_destruct')}
                                 style={{
                                     color: destructAfterSeconds ? 'var(--amber)' : 'var(--text-3)',
                                     background: destructAfterSeconds ? 'rgba(251,191,36,0.08)' : 'transparent',
@@ -338,7 +364,7 @@ export function ChatInput({
                                      style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-md)' }}>
                                     <p className="px-3 py-1.5 text-[9px] font-semibold uppercase tracking-widest"
                                        style={{ color: 'var(--text-3)' }}>
-                                        Самознищення
+                                        {t('self_destruct')}
                                     </p>
                                     {DESTRUCT_OPTIONS.map(opt => (
                                         <button
@@ -367,52 +393,184 @@ export function ChatInput({
                         </div>
                     </div>
 
-                    {/* Send button — shown when has text OR has pending forward */}
-                    {canSend ? (
-                        <button
-                            type="submit"
-                            onClick={handleSendClick}
-                            disabled={!canSend}
-                            className="w-9 h-9 rounded-xl flex items-center justify-center cursor-pointer transition-all duration-150 shrink-0 active:scale-95 disabled:opacity-40"
-                            style={{ background: hasFwd && !hasText ? 'rgba(99,179,237,0.2)' : 'var(--accent)' }}
-                            onMouseEnter={e => (e.currentTarget as HTMLElement).style.background =
-                                hasFwd && !hasText ? 'rgba(99,179,237,0.35)' : '#9060ff'}
-                            onMouseLeave={e => (e.currentTarget as HTMLElement).style.background =
-                                hasFwd && !hasText ? 'rgba(99,179,237,0.2)' : 'var(--accent)'}
-                        >
-                            {hasFwd && !hasText
-                                ? <Forward size={15} style={{ color: 'rgba(99,179,237,0.9)' }} />
-                                : <Send size={15} className="text-white ml-0.5" />
-                            }
-                        </button>
-                    ) : (
-                        /* Mic button when no text and no pending forward */
-                        <button
-                            type="button"
-                            onClick={() => onSetShowVoice(true)}
-                            disabled={uploadProgress !== null}
-                            className="w-9 h-9 rounded-xl flex items-center justify-center cursor-pointer transition-all duration-150 shrink-0 disabled:opacity-40"
-                            style={{
-                                background: 'rgba(255,255,255,0.04)',
-                                border: '1px solid var(--border)',
-                                color: 'var(--text-3)',
-                            }}
-                            onMouseEnter={e => {
-                                (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.07)';
-                                (e.currentTarget as HTMLElement).style.color = 'var(--text-2)';
-                            }}
-                            onMouseLeave={e => {
-                                (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.04)';
-                                (e.currentTarget as HTMLElement).style.color = 'var(--text-3)';
-                            }}
-                        >
-                            <Mic size={16} />
-                        </button>
-                    )}
+                    {/* ── Send / Mic / Long-press menu ── */}
+                    <div className="relative shrink-0">
+                        {/* Mobile long-press popup */}
+                        {showMobileMenu && (
+                            <>
+                                {/* Backdrop */}
+                                <div
+                                    className="fixed inset-0 z-40"
+                                    onClick={() => setShowMobileMenu(false)}
+                                />
+                                {/* Menu panel */}
+                                <div
+                                    className="absolute bottom-full right-0 mb-2 rounded-2xl shadow-2xl modal-enter z-50 overflow-hidden"
+                                    style={{
+                                        background: 'var(--bg-elevated)',
+                                        border: '1px solid var(--border-md)',
+                                        minWidth: '210px',
+                                    }}
+                                >
+                                    {mobilePage === 'main' ? (
+                                        <>
+                                            <div className="px-4 py-2.5"
+                                                 style={{ borderBottom: '1px solid var(--border)' }}>
+                                                <p className="text-[10px] font-semibold uppercase tracking-wider"
+                                                   style={{ color: 'var(--text-3)' }}>
+                                                    {t('send_as')}
+                                                </p>
+                                            </div>
+
+                                            {/* Send now */}
+                                            <button
+                                                type="button"
+                                                className="flex items-center gap-3 w-full px-4 py-3.5 text-[13px] cursor-pointer transition-colors duration-100"
+                                                style={{ color: 'var(--text-1)' }}
+                                                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
+                                                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
+                                                onClick={() => { setShowMobileMenu(false); fireSubmit(null); }}
+                                            >
+                                                <Send size={15} style={{ color: 'var(--accent)' }} />
+                                                {t('send_now')}
+                                            </button>
+
+                                            {/* Schedule */}
+                                            <button
+                                                type="button"
+                                                className="flex items-center gap-3 w-full px-4 py-3.5 text-[13px] cursor-pointer transition-colors duration-100"
+                                                style={{ color: 'var(--text-1)' }}
+                                                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
+                                                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
+                                                onClick={() => { setShowMobileMenu(false); setShowScheduleModal(true); }}
+                                            >
+                                                <Calendar size={15} style={{ color: 'var(--text-2)' }} />
+                                                {t('schedule')}
+                                            </button>
+
+                                            {/* Self-destruct */}
+                                            <button
+                                                type="button"
+                                                className="flex items-center gap-3 w-full px-4 py-3.5 text-[13px] cursor-pointer transition-colors duration-100"
+                                                style={{ color: 'var(--text-1)', borderTop: '1px solid var(--border)' }}
+                                                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
+                                                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
+                                                onClick={() => setMobilePage('destruct')}
+                                            >
+                                                <Timer size={15} style={{ color: destructAfterSeconds ? 'var(--amber)' : 'var(--text-2)' }} />
+                                                <span className="flex-1 text-left">{t('self_destruct')}</span>
+                                                {destructAfterSeconds && (
+                                                    <span className="text-[11px]" style={{ color: 'var(--amber)' }}>
+                                                        {destructLabel}
+                                                    </span>
+                                                )}
+                                                <ChevronLeft size={13} style={{ color: 'var(--text-3)', transform: 'rotate(180deg)' }} />
+                                            </button>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <button
+                                                type="button"
+                                                className="flex items-center gap-2 w-full px-4 py-2.5 cursor-pointer transition-colors duration-100"
+                                                style={{ borderBottom: '1px solid var(--border)', color: 'var(--text-2)' }}
+                                                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)'}
+                                                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
+                                                onClick={() => setMobilePage('main')}
+                                            >
+                                                <ChevronLeft size={14} />
+                                                <span className="text-[10px] font-semibold uppercase tracking-wider"
+                                                      style={{ color: 'var(--text-3)' }}>
+                                                    {t('self_destruct')}
+                                                </span>
+                                            </button>
+                                            {DESTRUCT_OPTIONS.map(opt => (
+                                                <button
+                                                    key={String(opt.value)}
+                                                    type="button"
+                                                    className="flex items-center gap-3 w-full px-4 py-3 text-[13px] cursor-pointer transition-colors duration-100"
+                                                    style={{
+                                                        color: destructAfterSeconds === opt.value ? 'var(--accent-bright)' : 'var(--text-2)',
+                                                        background: destructAfterSeconds === opt.value ? 'var(--accent-dim)' : 'transparent',
+                                                    }}
+                                                    onMouseEnter={e => {
+                                                        if (destructAfterSeconds !== opt.value)
+                                                            (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)';
+                                                    }}
+                                                    onMouseLeave={e => {
+                                                        if (destructAfterSeconds !== opt.value)
+                                                            (e.currentTarget as HTMLElement).style.background = 'transparent';
+                                                    }}
+                                                    onClick={() => {
+                                                        setDestructAfterSeconds(opt.value);
+                                                        setShowMobileMenu(false);
+                                                        setMobilePage('main');
+                                                    }}
+                                                >
+                                                    {destructAfterSeconds === opt.value
+                                                        ? <span className="w-3 text-center" style={{ color: 'var(--accent-bright)' }}>✓</span>
+                                                        : <span className="w-3" />
+                                                    }
+                                                    {opt.label}
+                                                </button>
+                                            ))}
+                                        </>
+                                    )}
+                                </div>
+                            </>
+                        )}
+
+                        {/* Send button */}
+                        {canSend ? (
+                            <button
+                                type="button"
+                                onPointerDown={onSendPointerDown}
+                                onPointerUp={onSendPointerUp}
+                                onPointerCancel={onSendPointerCancel}
+                                onPointerLeave={onSendPointerCancel}
+                                disabled={!canSend}
+                                className="w-9 h-9 rounded-xl flex items-center justify-center cursor-pointer transition-all duration-150 active:scale-95 disabled:opacity-40 select-none"
+                                style={{
+                                    background: hasFwd && !hasText ? 'rgba(99,179,237,0.2)' : 'var(--accent)',
+                                    touchAction: 'none',
+                                }}
+                                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background =
+                                    hasFwd && !hasText ? 'rgba(99,179,237,0.35)' : '#9060ff'}
+                                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background =
+                                    hasFwd && !hasText ? 'rgba(99,179,237,0.2)' : 'var(--accent)'}
+                            >
+                                {hasFwd && !hasText
+                                    ? <Forward size={15} style={{ color: 'rgba(99,179,237,0.9)' }} />
+                                    : <Send size={15} className="text-white ml-0.5" />
+                                }
+                            </button>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={() => { if (!justSentRef.current) onSetShowVoice(true); }}
+                                disabled={uploadProgress !== null}
+                                className="w-9 h-9 rounded-xl flex items-center justify-center cursor-pointer transition-all duration-150 shrink-0 disabled:opacity-40"
+                                style={{
+                                    background: 'rgba(255,255,255,0.04)',
+                                    border: '1px solid var(--border)',
+                                    color: 'var(--text-3)',
+                                }}
+                                onMouseEnter={e => {
+                                    (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.07)';
+                                    (e.currentTarget as HTMLElement).style.color = 'var(--text-2)';
+                                }}
+                                onMouseLeave={e => {
+                                    (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.04)';
+                                    (e.currentTarget as HTMLElement).style.color = 'var(--text-3)';
+                                }}
+                            >
+                                <Mic size={16} />
+                            </button>
+                        )}
+                    </div>
                 </form>
             ) : (
                 <div className="px-5 py-4 text-center text-[13px]" style={{ color: 'var(--text-3)' }}>
-                    Тільки адміни можуть писати в цьому каналі
+                    {t('channel_readonly')}
                 </div>
             )}
 

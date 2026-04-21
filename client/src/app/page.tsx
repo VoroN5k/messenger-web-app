@@ -2,9 +2,11 @@
 
 import { useEffect, useRef, useState, ReactNode } from 'react';
 import Link from 'next/link';
+import { useTranslations, useLocale } from 'next-intl';
+import { LanguageSwitcher } from '@/src/components/ui/LanguageSwitcher';
 
 // Анімація Самознищення повідомлення
-function SelfDestructVisual() {
+function SelfDestructVisual({ labelRead, labelDestroyed }: { labelRead: string; labelDestroyed: string }) {
     const [timeLeft, setTimeLeft] = useState(3);
     const [destroyed, setDestroyed] = useState(false);
 
@@ -46,13 +48,13 @@ function SelfDestructVisual() {
                 <p className="text-sm font-mono text-slate-200">
                     Код доступу до серверів: <span className="text-violet-300">8842-AX</span>
                 </p>
-                <div className="mt-2 text-[10px] text-slate-500 flex justify-end">Прочитано</div>
+                <div className="mt-2 text-[10px] text-slate-500 flex justify-end">{labelRead}</div>
             </div>
 
             {destroyed && (
                 <div className="absolute inset-0 flex items-center justify-center">
                     <span className="text-xs font-mono tracking-widest uppercase text-slate-500 animate-pulse">
-                        [ Повідомлення знищено ]
+                        {labelDestroyed}
                     </span>
                 </div>
             )}
@@ -61,7 +63,7 @@ function SelfDestructVisual() {
 }
 
 //Animated Lock SVG
-function AnimatedLock() {
+function AnimatedLock({ labelLocked, labelVerifying, labelSecured }: { labelLocked: string; labelVerifying: string; labelSecured: string }) {
     const [unlocked, setUnlocked] = useState(false);
     const [phase, setPhase]       = useState<'locked' | 'unlocking' | 'unlocked'>('locked');
 
@@ -182,9 +184,9 @@ function AnimatedLock() {
                     textShadow: unlocked ? '0 0 10px rgba(139,92,246,0.8)' : 'none',
                 }}
             >
-                {phase === 'locked' && '[ LOCKED ]'}
-                {phase === 'unlocking' && '[ VERIFY... ]'}
-                {phase === 'unlocked' && '[ SECURED ]'}
+                {phase === 'locked' && labelLocked}
+                {phase === 'unlocking' && labelVerifying}
+                {phase === 'unlocked' && labelSecured}
             </div>
 
             <style jsx>{`
@@ -356,6 +358,8 @@ function FeatureCard({ icon, title, desc, delay = 0 }: { icon: ReactNode; title:
 
 // MAIN PAGE
 export default function LandingPage() {
+    const t = useTranslations('landing');
+    const locale = useLocale();
     const [scrolled, setScrolled] = useState(false);
 
     useEffect(() => {
@@ -367,33 +371,33 @@ export default function LandingPage() {
     const features = [
         {
             icon: <svg width="20" height="20" fill="none" stroke="rgba(139,92,246,0.9)" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>,
-            title: 'End-to-End шифрування',
-            desc: 'Ваші ключі генеруються локально і ніколи не залишають пристрій.',
+            title: t('feature_e2e_title'),
+            desc: t('feature_e2e_desc'),
         },
         {
             icon: <svg width="20" height="20" fill="none" stroke="rgba(139,92,246,0.9)" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>,
-            title: 'WebRTC дзвінки',
-            desc: 'Peer-to-peer дзвінки з наскрізним шифруванням. Без серверів-посередників.',
+            title: t('feature_webrtc_title'),
+            desc: t('feature_webrtc_desc'),
         },
         {
             icon: <svg width="20" height="20" fill="none" stroke="rgba(139,92,246,0.9)" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>,
-            title: 'Захищені групи',
-            desc: 'Кожен учасник шифрує власним ключем за допомогою Sender Key протоколу.',
+            title: t('feature_groups_title'),
+            desc: t('feature_groups_desc'),
         },
         {
             icon: <svg width="20" height="20" fill="none" stroke="rgba(139,92,246,0.9)" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 00-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0020 4.77 5.07 5.07 0 0019.91 1S18.73.65 16 2.48a13.38 13.38 0 00-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 005 4.77a5.44 5.44 0 00-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 009 18.13V22"/></svg>,
-            title: 'Recovery PIN',
-            desc: 'PBKDF2 хешування дозволяє відновити ключі при втраті телефону.',
+            title: t('feature_recovery_title'),
+            desc: t('feature_recovery_desc'),
         },
         {
             icon: <svg width="20" height="20" fill="none" stroke="rgba(139,92,246,0.9)" strokeWidth="1.8" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>,
-            title: 'Анонімні канали',
-            desc: 'Публічні канали без збору метаданих читачів.',
+            title: t('feature_channels_title'),
+            desc: t('feature_channels_desc'),
         },
         {
             icon: <svg width="20" height="20" fill="none" stroke="rgba(139,92,246,0.9)" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>,
-            title: 'Медіа без слідів',
-            desc: 'Всі фото та аудіо шифруються перед завантаженням на сервер.',
+            title: t('feature_media_title'),
+            desc: t('feature_media_desc'),
         },
     ];
 
@@ -428,21 +432,25 @@ export default function LandingPage() {
                     </div>
 
                     <div className="hidden md:flex items-center gap-8">
-                        {['Функції', 'Безпека', 'Протокол'].map(item => (
+                        {[t('nav_features'), t('nav_security'), t('nav_protocol')].map(item => (
                             <a key={item} href="#features" className="text-xs font-mono tracking-widest text-slate-400 hover:text-violet-300 transition-colors uppercase">
                                 {item}
                             </a>
                         ))}
                     </div>
 
-                    <div className="flex items-center gap-3">
-                        <Link href="/auth/login" className="px-4 py-2 text-xs font-mono tracking-widest uppercase text-slate-300 hover:text-violet-300 transition-colors">Вхід</Link>
+                    <div className="flex items-center gap-2">
+                        <LanguageSwitcher
+                            currentLocale={locale}
+                            className="text-[10px] font-mono tracking-widest text-slate-500 hover:text-violet-300"
+                        />
+                        <Link href="/auth/login" className="px-4 py-2 text-xs font-mono tracking-widest uppercase text-slate-300 hover:text-violet-300 transition-colors">{t('nav_login')}</Link>
                         <Link
                             href="/auth/register"
                             className="relative px-5 py-2 text-xs font-mono tracking-widest uppercase text-white rounded-lg overflow-hidden group transition-all"
                             style={{ background: 'rgba(109,40,217,0.25)', border: '1px solid rgba(139,92,246,0.4)', boxShadow: '0 0 20px rgba(109,40,217,0.2)' }}
                         >
-                            <span className="relative z-10">Реєстрація</span>
+                            <span className="relative z-10">{t('nav_register')}</span>
                             <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" style={{ background: 'rgba(109,40,217,0.35)' }} />
                         </Link>
                     </div>
@@ -458,23 +466,22 @@ export default function LandingPage() {
                     style={{ background: 'rgba(109,40,217,0.1)', border: '1px solid rgba(139,92,246,0.25)', color: 'rgba(196,181,253,0.8)' }}
                 >
                     <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'rgba(139,92,246,0.9)', boxShadow: '0 0 6px rgba(139,92,246,1)' }} />
-                    Наскрізне шифрування активне
+                    {t('badge')}
                 </div>
 
-                <div className="mb-10"><AnimatedLock /></div>
+                <div className="mb-10"><AnimatedLock labelLocked={t('lock_locked')} labelVerifying={t('lock_verifying')} labelSecured={t('lock_secured')} /></div>
 
                 <h1 className="text-center font-bold leading-tight mb-6 max-w-3xl" style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 'clamp(2rem, 5vw, 3.5rem)', letterSpacing: '-0.02em' }}>
                     <span style={{ background: 'linear-gradient(135deg, #f1f5f9 0%, #c4b5fd 50%, #818cf8 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                        Повідомлення, яких
+                        {t('hero_title_1')}
                     </span><br />
                     <span style={{ background: 'linear-gradient(135deg, #818cf8 0%, #7c3aed 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                        ніхто не прочитає
+                        {t('hero_title_2')}
                     </span>
                 </h1>
 
                 <p className="text-center max-w-xl mb-10 leading-relaxed" style={{ color: 'rgba(148,163,184,0.7)', fontSize: '15px', fontFamily: "'JetBrains Mono', monospace" }}>
-                    Месенджер з X25519 + AES-256-GCM шифруванням, WebRTC дзвінками
-                    та повним контролем над приватністю. Без збору даних.
+                    {t('hero_desc')}
                 </p>
 
                 <div className="flex flex-col sm:flex-row items-center gap-4 mb-16">
@@ -484,7 +491,7 @@ export default function LandingPage() {
                         style={{ background: 'linear-gradient(135deg, rgba(109,40,217,0.8) 0%, rgba(79,70,229,0.8) 100%)', border: '1px solid rgba(139,92,246,0.5)', boxShadow: '0 0 40px rgba(109,40,217,0.25)' }}
                     >
                         <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4M10 17l5-5-5-5M13.8 12H3"/></svg>
-                        Почати безкоштовно
+                        {t('hero_cta')}
                         <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-400" style={{ background: 'linear-gradient(135deg, rgba(139,92,246,0.3) 0%, rgba(99,102,241,0.3) 100%)' }} />
                     </Link>
                 </div>
@@ -494,7 +501,7 @@ export default function LandingPage() {
                     <div className="w-px h-10 hidden sm:block" style={{ background: 'rgba(109,40,217,0.25)' }} />
                     <Stat value="X25519" label="ECDH" />
                     <div className="w-px h-10 hidden sm:block" style={{ background: 'rgba(109,40,217,0.25)' }} />
-                    <Stat value="0" label="збережених ключів" />
+                    <Stat value="0" label={t('stat_keys_label')} />
                 </div>
             </section>
 
@@ -504,15 +511,15 @@ export default function LandingPage() {
                     <RevealWrapper>
                         <div className="grid md:grid-cols-2 gap-16 items-center">
                             <div>
-                                <div className="text-xs font-mono tracking-[0.3em] uppercase mb-4 text-violet-400">// архітектура</div>
+                                <div className="text-xs font-mono tracking-[0.3em] uppercase mb-4 text-violet-400">// {t('protocol_label')}</div>
                                 <h2 className="text-3xl font-bold mb-6 font-mono bg-gradient-to-br from-violet-200 to-violet-400 bg-clip-text text-transparent">
-                                    Нульова довіра до сервера
+                                    {t('protocol_title')}
                                 </h2>
                                 <p className="text-slate-400 text-sm leading-relaxed mb-8">
-                                    Сервер бачить лише зашифровані пакети. Ваші приватні ключі генеруються у браузері через Web Crypto API та ніколи не пересилаються по мережі. Навіть ми не можемо прочитати ваші повідомлення.
+                                    {t('protocol_desc')}
                                 </p>
                                 <ul className="space-y-4">
-                                    {['Обмін ключами через X25519', 'Шифрування даних AES-256-GCM', 'Локальне сховище (IndexedDB)'].map((item, i) => (
+                                    {[t('protocol_item_1'), t('protocol_item_2'), t('protocol_item_3')].map((item, i) => (
                                         <li key={i} className="flex items-center gap-3 text-sm font-mono text-slate-300">
                                             <div className="w-1.5 h-1.5 rounded-full bg-violet-500" /> {item}
                                         </li>
@@ -557,17 +564,17 @@ export default function LandingPage() {
                         <div className="grid md:grid-cols-2 gap-16 items-center">
                             {/* Visual Left */}
                             <div className="order-2 md:order-1 flex justify-center">
-                                <SelfDestructVisual />
+                                <SelfDestructVisual labelRead={t('destruct_read')} labelDestroyed={t('destruct_destroyed')} />
                             </div>
 
                             {/* Text Right */}
                             <div className="order-1 md:order-2">
-                                <div className="text-xs font-mono tracking-[0.3em] uppercase mb-4 text-violet-400">// ефемерність</div>
+                                <div className="text-xs font-mono tracking-[0.3em] uppercase mb-4 text-violet-400">// {t('destruct_label')}</div>
                                 <h2 className="text-3xl font-bold mb-6 font-mono bg-gradient-to-br from-violet-200 to-violet-400 bg-clip-text text-transparent">
-                                    Самознищувані повідомлення
+                                    {t('destruct_title')}
                                 </h2>
                                 <p className="text-slate-400 text-sm leading-relaxed mb-6">
-                                    Деякі розмови не повинні залишати слідів. Налаштуйте таймер самознищення, і повідомлення буде видалено з пристроїв обох користувачів одразу після прочитання.
+                                    {t('destruct_desc')}
                                 </p>
                                 <div className="flex gap-3">
                                     {['30 сек', '5 хв', '1 год', '24 год'].map(time => (
@@ -587,9 +594,9 @@ export default function LandingPage() {
                 <div className="max-w-6xl mx-auto">
                     <RevealWrapper>
                         <div className="text-center mb-16">
-                            <div className="text-xs font-mono tracking-[0.3em] uppercase mb-4 text-violet-400">// можливості</div>
+                            <div className="text-xs font-mono tracking-[0.3em] uppercase mb-4 text-violet-400">// {t('features_label')}</div>
                             <h2 className="text-3xl font-bold font-mono bg-gradient-to-br from-violet-200 to-violet-400 bg-clip-text text-transparent">
-                                Більше ніж просто чат
+                                {t('features_title')}
                             </h2>
                         </div>
                     </RevealWrapper>
@@ -606,13 +613,12 @@ export default function LandingPage() {
             <section className="relative z-10 py-32 px-6">
                 <RevealWrapper>
                     <div className="max-w-2xl mx-auto text-center">
-                        <div className="text-xs font-mono tracking-[0.3em] uppercase mb-4 text-violet-400">// фінал</div>
-                        <h2 className="text-4xl font-bold mb-6 font-mono bg-gradient-to-br from-slate-100 to-violet-300 bg-clip-text text-transparent">
-                            Ваша приватність —<br />ваше право
+                        <div className="text-xs font-mono tracking-[0.3em] uppercase mb-4 text-violet-400">// {t('cta_label')}</div>
+                        <h2 className="text-4xl font-bold mb-6 font-mono bg-gradient-to-br from-slate-100 to-violet-300 bg-clip-text text-transparent whitespace-pre-line">
+                            {t('cta_title')}
                         </h2>
-                        <p className="text-slate-500 text-sm font-mono mb-10 leading-relaxed">
-                            Реєстрація безкоштовна. Ключі генеруються у вашому браузері.<br />
-                            Приєднуйтесь до безпечного спілкування.
+                        <p className="text-slate-500 text-sm font-mono mb-10 leading-relaxed whitespace-pre-line">
+                            {t('cta_desc')}
                         </p>
                         <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
                             <Link
@@ -620,7 +626,7 @@ export default function LandingPage() {
                                 className="relative flex items-center justify-center gap-3 px-10 py-4 rounded-xl text-sm font-mono tracking-widest uppercase text-white overflow-hidden group w-full sm:w-auto"
                                 style={{ background: 'linear-gradient(135deg, rgba(109,40,217,0.9) 0%, rgba(79,70,229,0.9) 100%)', border: '1px solid rgba(139,92,246,0.6)', boxShadow: '0 0 50px rgba(109,40,217,0.3)' }}
                             >
-                                Створити акаунт
+                                {t('cta_button')}
                                 <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
                                 <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-400 bg-white/10" />
                             </Link>
@@ -636,8 +642,8 @@ export default function LandingPage() {
                         © 2026 Vesper — Encrypted Communications.
                     </span>
                     <div className="flex items-center gap-6">
-                        {['Приватність', 'GitHub', 'Документація'].map(item => (
-                            <a key={item} href="#" className="text-xs font-mono text-slate-500 hover:text-violet-400 transition-colors uppercase">
+                        {[t('footer_privacy'), t('footer_github'), t('footer_docs')].map(item => (
+                            <a key={item} href="https://github.com/VoroN5k/messenger-web-app.git" className="text-xs font-mono text-slate-500 hover:text-violet-400 transition-colors uppercase">
                                 {item}
                             </a>
                         ))}

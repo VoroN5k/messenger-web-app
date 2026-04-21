@@ -9,6 +9,7 @@ import { usePushNotifications }   from '@/src/hooks/usePushNotifications';
 import api, { refreshAccessToken } from '@/src/lib/axios';
 import { jwtDecode }              from 'jwt-decode';
 import { Bell, X, ShieldAlert }   from 'lucide-react';
+import { useTranslations }         from 'next-intl';
 import Sidebar                    from '@/src/components/chat/SideBar';
 import ChatArea                   from '@/src/components/chat/ChatArea';
 import { Conversation, Message }  from '@/src/types/conversation.types';
@@ -20,6 +21,7 @@ import { RecoveryUnlockModal }    from "@/src/components/chat/RecoveryUnlockModa
 import { useRouter }              from "next/navigation";
 
 export default function ChatPage() {
+    const t = useTranslations();
     const { user, logout, _hasHydrated } = useAuthStore();
     const socket = useSocket();
     const { needsRecovery, needsRecoverySetup, keysDesynced, unlockWithPin, distributeMySenderKey, isReady: e2eReady, keysJustRotated, invalidatePeerKey } = useE2E();
@@ -154,7 +156,7 @@ export default function ChatPage() {
                     <div className="flex items-center gap-3">
                         <div className="p-1.5 rounded-full bg-red-500/20 text-red-400"><ShieldAlert size={16} /></div>
                         <span className="text-sm font-medium text-slate-200">
-                            Ключі розсинхронізовані — повідомлення можуть не розшифровуватись. Спробуйте скинути Recovery PIN.
+                            {t('chat.keys_desynced')}
                         </span>
                     </div>
                 </div>
@@ -165,13 +167,13 @@ export default function ChatPage() {
                     <div className="flex items-center gap-3">
                         <div className="p-1.5 rounded-full bg-violet-500/20 text-violet-400"><Bell size={16} /></div>
                         <span className="text-sm font-medium text-slate-200">
-                            Увімкніть Push-сповіщення, щоб не пропускати повідомлення у фоновому режимі.
+                            {t('notifications.banner')}
                         </span>
                     </div>
                     <div className="flex items-center gap-4 shrink-0">
                         <button onClick={async () => { setShowBanner(false); await requestPermission(); }}
                                 className="text-sm font-semibold text-violet-400 hover:text-violet-300 transition-colors cursor-pointer">
-                            Увімкнути
+                            {t('notifications.enable')}
                         </button>
                         <button onClick={() => { setShowBanner(false); localStorage.setItem('push-banner-dismissed', '1'); }}
                                 className="text-slate-500 hover:text-slate-300 transition-colors cursor-pointer p-1">
@@ -243,13 +245,13 @@ export default function ChatPage() {
                         <ShieldAlert size={20} className="text-amber-500" />
                     </div>
                     <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-slate-100 mb-1">Ключі не захищені</p>
+                        <p className="text-sm font-semibold text-slate-100 mb-1">{t('settings.keys_not_protected')}</p>
                         <p className="text-xs text-slate-400 leading-relaxed mb-3">
-                            Встановіть Recovery PIN, інакше ви втратите історію чатів при виході з акаунту.
+                            {t('settings.keys_setup_warning')}
                         </p>
                         <button onClick={() => router.push('/auth/setup-recovery')}
                                 className="text-sm font-semibold text-violet-400 hover:text-violet-300 transition-colors cursor-pointer">
-                            Налаштувати зараз
+                            {t('settings.recovery_setup')}
                         </button>
                     </div>
                 </div>

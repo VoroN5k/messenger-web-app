@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import api from '@/src/lib/axios';
 import Link from 'next/link';
 import {TosModal} from "@/src/components/auth/TosModal";
@@ -241,6 +242,7 @@ function PasswordStrength({ password }: { password: string }) {
 
 // ── MAIN REGISTER PAGE ────────────────────────────────────────────────────────
 export default function RegisterPage() {
+    const t = useTranslations('auth.register');
     const [isLoading, setIsLoading] = useState(false);
     const [showPass, setShowPass]   = useState(false);
     const [showConf, setShowConf]   = useState(false);
@@ -258,7 +260,7 @@ export default function RegisterPage() {
 
     useEffect(() => { setTimeout(() => setMounted(true), 50); }, []);
 
-    const stepLabels = ['IDENTITY', 'CREDENTIALS', 'CONFIRM'];
+    const stepLabels = [t('step_identity'), t('step_credentials'), t('step_confirm')];
 
     const handleNext = async () => {
         let fields: string[] = [];
@@ -281,7 +283,7 @@ export default function RegisterPage() {
             });
             router.push(`/auth/verify-pending?email=${encodeURIComponent(data.email)}`);
         } catch (e: any) {
-            const msg = e.response?.data?.message || 'Помилка реєстрації';
+            const msg = e.response?.data?.message || t('error_default');
             setGlobalError(Array.isArray(msg) ? msg[0] : msg);
             setStep(0);
         } finally {
@@ -392,10 +394,10 @@ export default function RegisterPage() {
                                         background: 'linear-gradient(135deg, #f1f5f9 0%, #c4b5fd 100%)',
                                         WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
                                     }}>
-                                        Створити акаунт
+                                        {t('title')}
                                     </h1>
                                     <p className="text-xs mt-1" style={{ color: 'rgba(100,116,139,0.6)' }}>
-                                        Крок {step + 1} з {stepLabels.length} — {stepLabels[step]}
+                                        {t('step_label', { current: step + 1, total: stepLabels.length })} — {stepLabels[step]}
                                     </p>
                                 </div>
                                 <StepIndicator current={step} total={stepLabels.length} />
@@ -410,25 +412,25 @@ export default function RegisterPage() {
                                 {step === 0 && (
                                     <div className="space-y-5 transition-all">
                                         <CipherInput
-                                            label="Нікнейм / Псевдонім"
-                                            placeholder="cipher_agent_7"
-                                            hint="мін. 3 символи"
+                                            label={t('nickname_label')}
+                                            placeholder={t('nickname_placeholder')}
+                                            hint={t('nickname_hint')}
                                             error={errors.nickname?.message as string}
                                             icon={<svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>}
                                             {...register('nickname', {
-                                                required: "Нікнейм обов'язковий",
-                                                minLength: { value: 3, message: 'Мінімум 3 символи' },
+                                                required: t('nickname_required'),
+                                                minLength: { value: 3, message: t('nickname_min') },
                                             })}
                                         />
                                         <CipherInput
-                                            label="Email / Ідентифікатор"
+                                            label={t('email_label')}
                                             type="email"
-                                            placeholder="agent@domain.com"
+                                            placeholder={t('email_placeholder')}
                                             error={errors.email?.message as string}
                                             icon={<svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>}
                                             {...register('email', {
-                                                required: "Email обов'язковий",
-                                                pattern: { value: /^\S+@\S+$/i, message: 'Невірний формат' },
+                                                required: t('email_required'),
+                                                pattern: { value: /^\S+@\S+$/i, message: t('email_invalid') },
                                             })}
                                         />
                                         <div className="rounded-lg px-4 py-3" style={{
@@ -436,7 +438,7 @@ export default function RegisterPage() {
                                             border: '1px solid rgba(109,40,217,0.15)',
                                         }}>
                                             <p className="text-[10px] font-mono leading-relaxed" style={{ color: 'rgba(148,163,184,0.5)' }}>
-                                                Email використовується лише для підтвердження акаунту та відновлення доступу. Не передається третім особам.
+                                                {t('email_note')}
                                             </p>
                                         </div>
                                     </div>
@@ -446,10 +448,10 @@ export default function RegisterPage() {
                                 {step === 1 && (
                                     <div className="space-y-5">
                                         <CipherInput
-                                            label="Пароль / Ключ"
+                                            label={t('password_label')}
                                             type={showPass ? 'text' : 'password'}
-                                            placeholder="мінімум 6 символів"
-                                            hint="мін. 6 символів"
+                                            placeholder={t('password_placeholder')}
+                                            hint={t('password_hint')}
                                             error={errors.password?.message as string}
                                             icon={<svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>}
                                             rightSlot={
@@ -459,16 +461,16 @@ export default function RegisterPage() {
                                                 </button>
                                             }
                                             {...register('password', {
-                                                required: "Пароль обов'язковий",
-                                                minLength: { value: 6, message: 'Мінімум 6 символів' },
+                                                required: t('password_required'),
+                                                minLength: { value: 6, message: t('password_min') },
                                             })}
                                         />
                                         <PasswordStrength password={password} />
 
                                         <CipherInput
-                                            label="Підтвердження паролю"
+                                            label={t('confirm_label')}
                                             type={showConf ? 'text' : 'password'}
-                                            placeholder="повторіть пароль"
+                                            placeholder={t('confirm_placeholder')}
                                             error={errors.confirmPassword?.message as string}
                                             icon={<svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>}
                                             rightSlot={
@@ -478,8 +480,8 @@ export default function RegisterPage() {
                                                 </button>
                                             }
                                             {...register('confirmPassword', {
-                                                required: 'Потрібно підтвердити пароль',
-                                                validate: v => v === password || 'Паролі не збігаються',
+                                                required: t('confirm_required'),
+                                                validate: v => v === password || t('confirm_mismatch'),
                                             })}
                                         />
                                     </div>
@@ -527,7 +529,7 @@ export default function RegisterPage() {
                                                 <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
                                             </svg>
                                             <p className="text-[10px] font-mono leading-relaxed" style={{ color: 'rgba(251,191,36,0.6)' }}>
-                                                Після реєстрації на вашу пошту надійде лист підтвердження. Перевірте папку Spam.
+                                                {t('confirm_email_note')}
                                             </p>
                                         </div>
 
@@ -549,7 +551,7 @@ export default function RegisterPage() {
                                                 </svg>
                                             </div>
                                             <p className="text-[11px] font-mono leading-relaxed" style={{ color: 'rgba(148,163,184,0.8)' }}>
-                                                Я погоджуюсь з{' '}
+                                                {t('tos_agree')}{' '}
                                                 <button
                                                     type="button"
                                                     onClick={e => { e.preventDefault(); setShowTos(true); }}
@@ -558,7 +560,7 @@ export default function RegisterPage() {
                                                     onMouseEnter={e => (e.currentTarget.style.color = 'rgba(196,181,253,1)')}
                                                     onMouseLeave={e => (e.currentTarget.style.color = 'rgba(139,92,246,0.9)')}
                                                 >
-                                                    Умовами використання та Політикою конфіденційності
+                                                    {t('tos_link')}
                                                 </button>
                                             </p>
                                         </label>
@@ -590,7 +592,7 @@ export default function RegisterPage() {
                                                     border: '1px solid rgba(109,40,217,0.2)',
                                                     color: 'rgba(148,163,184,0.6)',
                                                 }}>
-                                            ← BACK
+                                            {t('back')}
                                         </button>
                                     )}
 
@@ -603,7 +605,7 @@ export default function RegisterPage() {
                                                     boxShadow: '0 0 25px rgba(109,40,217,0.18)',
                                                 }}>
                       <span className="relative z-10 flex items-center justify-center gap-2">
-                        NEXT_STEP
+                        {t('next')}
                         <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
                           <path d="M5 12h14M12 5l7 7-7 7"/>
                         </svg>
@@ -626,14 +628,14 @@ export default function RegisterPage() {
                                     <circle cx="12" cy="12" r="10" stroke="rgba(196,181,253,0.3)" strokeWidth="3"/>
                                     <path d="M12 2a10 10 0 0110 10" stroke="rgba(196,181,253,0.9)" strokeWidth="3" strokeLinecap="round"/>
                                 </svg>
-                                Реєстрація...
+                                {t('submitting')}
                             </>
                         ) : (
                             <>
                                 <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                                     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
                                 </svg>
-                                ACTIVATE_IDENTITY
+                                {t('submit')}
                             </>
                         )}
                       </span>
@@ -645,12 +647,12 @@ export default function RegisterPage() {
                                 {/* Login link */}
                                 <div className="text-center">
                   <span className="text-[10px] font-mono" style={{ color: 'rgba(100,116,139,0.5)' }}>
-                    Вже є акаунт?{' '}
+                    {t('has_account')}{' '}
                       <Link href="/auth/login" className="transition-colors"
                             style={{ color: 'rgba(139,92,246,0.8)' }}
                             onMouseEnter={e => (e.currentTarget.style.color = 'rgba(196,181,253,1)')}
                             onMouseLeave={e => (e.currentTarget.style.color = 'rgba(139,92,246,0.8)')}>
-                      AUTH_LOGIN →
+                      {t('login_link')}
                     </Link>
                   </span>
                                 </div>

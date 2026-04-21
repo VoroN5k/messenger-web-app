@@ -2,12 +2,14 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import api from '@/src/lib/axios';
 import { Loader2, Mail, ArrowLeft, CheckCircle, AlertTriangle, ShieldAlert } from 'lucide-react';
 import { GridLines, BackgroundOrbs, NoiseOverlay } from "@/src/components/ui/BackgroundFx";
 import { CipherInput } from "@/src/components/ui/CipherInput";
 
 export default function ForgotPasswordPage() {
+    const t = useTranslations('auth.forgot_password');
     const [email,   setEmail]   = useState('');
     const [loading, setLoading] = useState(false);
     const [sent,    setSent]    = useState(false);
@@ -18,14 +20,14 @@ export default function ForgotPasswordPage() {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!email.trim()) { setError("Ідентифікатор обов'язковий"); return; }
+        if (!email.trim()) { setError(t('email_label') + ' required'); return; }
         setLoading(true); setError('');
         try {
             await api.post('/auth/forgot-password', { email: email.trim() });
             setSent(true);
         } catch (err: any) {
             const msg = err.response?.data?.message;
-            setError(Array.isArray(msg) ? msg[0] : (msg ?? 'Помилка передачі пакету.'));
+            setError(Array.isArray(msg) ? msg[0] : (msg ?? t('error_default')));
         } finally {
             setLoading(false);
         }
@@ -113,13 +115,13 @@ export default function ForgotPasswordPage() {
                                     </div>
                                 </div>
                                 <h1 className="text-2xl font-bold mb-3 text-white drop-shadow-[0_0_10px_rgba(52,211,153,0.5)]">
-                                    Пакет надіслано
+                                    {t('success')}
                                 </h1>
                                 <p className="text-xs leading-relaxed text-slate-400 mb-8">
-                                    Якщо ідентифікатор <span className="text-emerald-400 font-bold">[{email}]</span> зареєстровано в системі, ми надіслали інструкції. Перевірте папку Spam.
+                                    <span className="text-emerald-400 font-bold">[{email}]</span>
                                 </p>
                                 <Link href="/auth/login" className="w-full inline-flex items-center justify-center gap-2 py-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 font-mono text-xs uppercase tracking-widest hover:bg-emerald-500/20 transition-all">
-                                    <ArrowLeft size={14} /> Повернутись до входу
+                                    <ArrowLeft size={14} /> {t('back_to_login')}
                                 </Link>
                             </div>
                         ) : (
@@ -133,13 +135,13 @@ export default function ForgotPasswordPage() {
                                         background: 'linear-gradient(135deg, #f1f5f9 0%, #c4b5fd 100%)',
                                         WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
                                     }}>
-                                        Забули пароль?
+                                        {t('title')}
                                     </h1>
                                 </div>
 
                                 <form onSubmit={handleSubmit} className="px-8 py-6 space-y-5">
                                     <CipherInput
-                                        label="Email / Ідентифікатор"
+                                        label={t('email_label')}
                                         type="email"
                                         value={email}
                                         onChange={e => { setEmail(e.target.value); setError(''); }}
@@ -165,14 +167,14 @@ export default function ForgotPasswordPage() {
                                         }}
                                     >
                                         <span className="relative z-10 flex items-center justify-center gap-2.5">
-                                            {loading ? <><Loader2 size={14} className="animate-spin" /> GENERATING...</> : 'SEND_RESET_LINK'}
+                                            {loading ? <><Loader2 size={14} className="animate-spin" /> {t('submitting')}</> : t('submit')}
                                         </span>
                                         <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: 'rgba(255,255,255,0.05)' }} />
                                     </button>
 
                                     <div className="pt-5 border-t border-violet-500/10 text-center">
                                         <Link href="/auth/login" className="inline-flex items-center gap-2 text-[10px] font-mono tracking-widest uppercase text-slate-500 hover:text-violet-400 transition-colors">
-                                            <ArrowLeft size={12} /> AUTH_LOGIN
+                                            <ArrowLeft size={12} /> {t('back_to_login')}
                                         </Link>
                                     </div>
                                 </form>

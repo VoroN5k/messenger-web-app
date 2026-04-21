@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import api from '@/src/lib/axios';
 import { Mail, ArrowLeft, RefreshCw, CheckCircle, Clock, AlertTriangle } from 'lucide-react';
 import { GridLines, BackgroundOrbs, NoiseOverlay } from "@/src/components/ui/BackgroundFx";
@@ -10,6 +11,7 @@ import { GridLines, BackgroundOrbs, NoiseOverlay } from "@/src/components/ui/Bac
 const RESEND_COOLDOWN = 60; // seconds
 
 export default function VerifyPendingPage() {
+    const t = useTranslations('auth.verify_pending');
     const searchParams = useSearchParams();
     const email = searchParams.get('email') ?? '';
 
@@ -155,10 +157,10 @@ export default function VerifyPendingPage() {
                                     background: 'linear-gradient(135deg, #f1f5f9 0%, #c4b5fd 100%)',
                                     WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
                                 }}>
-                                    Перевірте пошту
+                                    {t('title')}
                                 </h1>
                                 <p className="text-xs leading-relaxed" style={{ color: 'rgba(148,163,184,0.8)' }}>
-                                    Запит на активацію надіслано на ідентифікатор:
+                                    {t('subtitle', { email })}
                                 </p>
                                 <div className="mt-3 inline-block px-4 py-2 rounded-lg border border-violet-500/20 bg-violet-500/5 font-mono text-sm text-violet-300 tracking-wide break-all shadow-[inset_0_0_15px_rgba(109,40,217,0.1)]">
                                     {email || '[ UNKNOWN_ID ]'}
@@ -169,7 +171,7 @@ export default function VerifyPendingPage() {
                             <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3 mb-6 flex items-start gap-3">
                                 <AlertTriangle size={14} className="text-amber-500 mt-0.5 shrink-0" />
                                 <p className="text-[11px] font-mono leading-relaxed text-amber-500/80">
-                                    Не бачите листа? Перевірте папку <b>Spam</b>. Передача пакету може зайняти до 2 хвилин через сервери ретрансляції.
+                                    {t('spam_note')}
                                 </p>
                             </div>
 
@@ -178,7 +180,7 @@ export default function VerifyPendingPage() {
                                 <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-4 py-3 mb-6 flex items-center gap-3 animate-in fade-in duration-300">
                                     <CheckCircle size={14} className="text-emerald-400 shrink-0" />
                                     <p className="text-[11px] font-mono text-emerald-400/90">
-                                        [STATUS: OK] Новий пакет успішно надіслано.
+                                        {t('resent')}
                                     </p>
                                 </div>
                             )}
@@ -208,11 +210,11 @@ export default function VerifyPendingPage() {
                             >
                                 <span className="relative z-10 flex items-center justify-center gap-2.5">
                                     {sending ? (
-                                        <><RefreshCw size={14} className="animate-spin" /> TRANSMITTING...</>
+                                        <><RefreshCw size={14} className="animate-spin" /> {t('resending')}</>
                                     ) : cooldown > 0 ? (
-                                        <><Clock size={14} /> COOLDOWN [{cooldown}s]</>
+                                        <><Clock size={14} /> [{cooldown}s]</>
                                     ) : (
-                                        <><RefreshCw size={14} className="group-hover:rotate-180 transition-transform duration-500" /> RESEND_PAYLOAD</>
+                                        <><RefreshCw size={14} className="group-hover:rotate-180 transition-transform duration-500" /> {t('resend')}</>
                                     )}
                                 </span>
                                 {!(sending || cooldown > 0) && (
@@ -227,7 +229,7 @@ export default function VerifyPendingPage() {
                                     className="inline-flex items-center justify-center gap-2 text-[10px] font-mono tracking-widest uppercase text-slate-500 hover:text-violet-400 transition-colors"
                                 >
                                     <ArrowLeft size={12} />
-                                    AUTH_LOGIN
+                                    {t('back_to_login')}
                                 </Link>
                                 <Link
                                     href="/auth/forgot-password"
