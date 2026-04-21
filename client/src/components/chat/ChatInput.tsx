@@ -28,6 +28,7 @@ interface Props {
     socketConnected:   boolean;
     offlineQueueCount: number;
     fileInputRef:      RefObject<HTMLInputElement | null>;
+    inputRef?:         RefObject<HTMLInputElement | null>;
     onInputChange:     (v: string) => void;
     onSubmit:          (e: React.FormEvent, scheduledAt?: Date | null, destructAfterSeconds?: number | null) => void;
     onFileSelect:      (file: File) => void;
@@ -43,7 +44,7 @@ export function ChatInput({
                               canPost, inputValue, replyTo, pendingForward, onClearPendingForward,
                               typingUsers, showVoice,
                               uploadProgress, uploadError, isOnline, socketConnected, offlineQueueCount,
-                              fileInputRef, onInputChange, onSubmit, onFileSelect, onSendVoice, onCancelUpload,
+                              fileInputRef, inputRef, onInputChange, onSubmit, onFileSelect, onSendVoice, onCancelUpload,
                               onClearError, onSetReplyTo, onSetShowVoice, notifyTyping,
                           }: Readonly<Props>) {
     const [showScheduleModal,   setShowScheduleModal]   = useState(false);
@@ -270,6 +271,7 @@ export function ChatInput({
                         }}
                     >
                         <input
+                            ref={inputRef as any}
                             value={inputValue}
                             onChange={e => { onInputChange(e.target.value); notifyTyping(); }}
                             onFocus={() => setFocused(true)}
@@ -281,8 +283,8 @@ export function ChatInput({
                                 }
                             }}
                             placeholder={pendingForward ? 'Напишіть щось перед пересиланням…' : 'Повідомлення…'}
-                            className="flex-1 bg-transparent outline-none text-[14px] py-2.5 min-w-0"
-                            style={{ color: 'var(--text-1)', caretColor: 'var(--accent)' }}
+                            className="flex-1 bg-transparent outline-none py-2.5 min-w-0"
+                            style={{ color: 'var(--text-1)', caretColor: 'var(--accent)', fontSize: '14px' }}
                         />
 
                         {/* Schedule button */}

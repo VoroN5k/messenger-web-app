@@ -66,6 +66,7 @@ export default function ChatArea({
 
     const abortRef       = useRef<AbortController | null>(null);
     const fileInputRef   = useRef<HTMLInputElement>(null);
+    const inputRef       = useRef<HTMLInputElement>(null);
     const editInputRef   = useRef<HTMLInputElement>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -195,6 +196,14 @@ export default function ChatArea({
     useEffect(() => {
         if (isSearchOpen) setTimeout(() => searchInputRef.current?.focus(), 50);
     }, [isSearchOpen]);
+
+    useEffect(() => {
+        if (replyTo) inputRef.current?.focus();
+    }, [replyTo]);
+
+    useEffect(() => {
+        if (pendingForward) setTimeout(() => inputRef.current?.focus(), 50);
+    }, [pendingForward]);
 
     const handleScroll = async (e: UIEvent<HTMLDivElement>) => {
         const el = e.currentTarget;
@@ -478,7 +487,7 @@ export default function ChatArea({
 
     return (
         <main
-            className="flex-1 flex flex-col relative min-w-0"
+            className="flex-1 flex flex-col relative min-w-0 overflow-x-hidden"
             style={{ background: 'var(--bg-base)' }}
             onDragEnter={onDragEnter}
             onDragLeave={onDragLeave}
@@ -562,7 +571,7 @@ export default function ChatArea({
 
             {/* ── Messages ── */}
             <div ref={scrollRef} onScroll={handleScroll}
-                 className="flex-1 overflow-y-auto py-4 chat-scroll"
+                 className="flex-1 overflow-y-auto overflow-x-hidden py-4 chat-scroll"
                  style={{ paddingBottom: '8px' }}>
                 {isLoadingMore && (
                     <div className="flex justify-center py-3">
@@ -632,6 +641,7 @@ export default function ChatArea({
                 socketConnected={!!socket?.connected}
                 offlineQueueCount={offlineQueueCount}
                 fileInputRef={fileInputRef}
+                inputRef={inputRef}
                 onInputChange={setInputValue}
                 onSubmit={handleSubmit}
                 onFileSelect={handleFileSelect}

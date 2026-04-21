@@ -49,10 +49,17 @@
 /* ─── Mobile / PWA ───────────────────────────────────────────────────────── */
 html, body {
     height: 100%;
-    overflow: hidden;
     overscroll-behavior: none;
     -webkit-overflow-scrolling: touch;
     max-width: 100%;
+    overflow-x: hidden;
+}
+
+/* Prevent iOS Safari from zooming on input focus (triggered when font-size < 16px) */
+@media (max-width: 768px) {
+    input, textarea, select {
+        font-size: 16px !important;
+    }
 }
 
 * {
