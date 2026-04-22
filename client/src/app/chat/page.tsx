@@ -31,6 +31,7 @@ export default function ChatPage() {
     const [isLoaded,       setIsLoaded]       = useState(false);
     const [showBanner,     setShowBanner]     = useState(false);
     const [pendingForward, setPendingForward] = useState<Message | null>(null);
+    const [serverWaking, setServerWaking] = useState(false);
 
     useEffect(() => {
         if (!_hasHydrated) return;
@@ -56,9 +57,12 @@ export default function ChatPage() {
     useEffect(() => {
         if (!_hasHydrated) return;
         if (!useAuthStore.getState().accessToken) {
-            refreshAccessToken().then((token) => {
+            setServerWaking(true);
+            refreshAccessToken()
+                .then((token) => {
                 if (!token) window.location.href = '/auth/login';
-            });
+            })
+            .finally(() => setServerWaking(false));
         }
     }, [_hasHydrated]);
 
@@ -150,6 +154,17 @@ export default function ChatPage() {
 
     return (
         <div className="flex flex-col overflow-hidden text-slate-200 bg-[#050505] selection:bg-violet-500/30" style={{ height: '100dvh' }}>
+
+            {serverWaking && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#050505]/80 backdrop-blur-sm">
+                    <div className="flex flex-col items-center gap-3 text-slate-400">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-violet-500" />
+                        <p className="text-xs font-mono tracking-widest uppercase">
+                            Connecting to server...
+                        </p>
+                    </div>
+                </div>
+            )}
 
             {keysDesynced && (
                 <div className="relative z-50 flex items-center justify-between gap-3 px-6 py-3 bg-red-600/10 border-b border-red-500/20">

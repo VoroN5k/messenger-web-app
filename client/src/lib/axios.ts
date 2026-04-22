@@ -1,6 +1,8 @@
 import axios from 'axios';
 import { useAuthStore } from '../store/useAuthStore';
 
+const RETRY_DELAYS_MS = [1_000, 3_000, 6_000]; // 1s, 3s, 6s
+
 const api = axios.create({
     baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api',
     withCredentials: true,
@@ -29,30 +31,51 @@ export async function refreshAccessToken(): Promise<string | null> {
 
 async function _doRefresh(): Promise<string | null> {
     const execute = async (): Promise<string | null> => {
-        try {
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
-            const { data } = await axios.post(
-                `${apiUrl}/auth/refresh`,
-                {},
-                { withCredentials: true },
-            );
-            const newToken: string = data.accessToken;
-            const currentUser = useAuthStore.getState().user;
+        let lastError: unknown;
 
-            if (currentUser) {
-                useAuthStore.getState().setAuth(currentUser, newToken);
-            } else {
-                // Store not yet hydrated — update only the token, user will hydrate from localStorage
-                useAuthStore.setState({ accessToken: newToken });
+        for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+            try {
+                const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
+                const { data } = await axios.post(
+                    `${apiUrl}/auth/refresh`,
+                    {},
+                    {
+                        withCredentials: true,
+                        timeout: 12_000, // явний таймаут на cold start
+                    },
+                );
+
+                const newToken: string = data.accessToken;
+                const currentUser = useAuthStore.getState().user;
+
+                if (currentUser) {
+                    useAuthStore.getState().setAuth(currentUser, newToken);
+                } else {
+                    useAuthStore.setState({ accessToken: newToken });
+                }
+                return newToken;
+
+            } catch (err: any) {
+                lastError = err;
+
+                const status = err?.response?.status;
+                // 401/403 — токен справді невалідний, retry не допоможе
+                if (status === 401 || status === 403) break;
+
+                // Остання спроба
+                if (attempt === RETRY_DELAYS_MS.length) break;
+
+                // Сервер спить — чекаємо і пробуємо ще
+                await new Promise(res => setTimeout(res, RETRY_DELAYS_MS[attempt]));
             }
-            return newToken;
-        } catch {
-            useAuthStore.getState().logout();
-            if (typeof window !== 'undefined' && window.location.pathname !== '/auth/login') {
-                window.location.href = '/auth/login';
-            }
-            return null;
         }
+
+        // Всі спроби вичерпано
+        useAuthStore.getState().logout();
+        if (typeof window !== 'undefined' && window.location.pathname !== '/auth/login') {
+            window.location.href = '/auth/login';
+        }
+        return null;
     };
 
     if (typeof navigator !== 'undefined' && navigator.locks) {
