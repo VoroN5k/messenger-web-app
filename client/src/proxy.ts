@@ -29,6 +29,8 @@ export function proxy(request: NextRequest) {
 
     // Scenario B only: redirect already-authenticated users away from auth pages.
     if (isAuthRoute && refreshToken) {
+        const authStorage = request.cookies.get('auth-storage')?.value;
+
         return NextResponse.redirect(new URL('/chat', request.url));
     }
 

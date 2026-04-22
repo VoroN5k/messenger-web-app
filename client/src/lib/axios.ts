@@ -34,10 +34,7 @@ async function _doRefresh(): Promise<string | null> {
                 const { data } = await axios.post(
                     `${apiUrl}/auth/refresh`,
                     {},
-                    {
-                        withCredentials: true,
-                        timeout: 15_000,
-                    },
+                    { withCredentials: true, timeout: 15_000 },
                 );
 
                 const newToken: string = data.accessToken;
@@ -52,10 +49,8 @@ async function _doRefresh(): Promise<string | null> {
             } catch (err: any) {
                 lastStatus = err?.response?.status ?? null;
 
-                // Тільки 401/403 означають що токен справді невалідний
-                // Все інше (network error, 502, 503, timeout) — сервер просто спить
                 if (lastStatus === 401 || lastStatus === 403) {
-                    break;
+                    break; // справжній невалідний токен
                 }
 
                 if (attempt < RETRY_DELAYS_MS.length) {
@@ -63,15 +58,23 @@ async function _doRefresh(): Promise<string | null> {
                     continue;
                 }
 
-                // Всі спроби вичерпано, але це НЕ auth помилка —
-                // повертаємо null без logout (сервер недоступний тимчасово)
-                console.warn('[Auth] Server unavailable after retries, staying logged in');
+                console.warn('[Auth] Server unavailable after retries');
                 return null;
             }
         }
 
-        // Тільки сюди потрапляємо при 401/403 — справжній logout
+        // ГОЛОВНИЙ FIX: викликаємо /auth/logout щоб сервер очистив httpOnly cookie
+        // Без цього middleware бачить cookie і редіректить назад на /chat
+        try {
+            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
+            await axios.post(`${apiUrl}/auth/logout`, {}, { withCredentials: true });
+        } catch {
+            // ігноруємо помилку - головне що cookie буде спроба очистити
+        }
+
         useAuthStore.getState().logout();
+        localStorage.removeItem('auth-storage');
+
         if (typeof window !== 'undefined' && window.location.pathname !== '/auth/login') {
             window.location.href = '/auth/login';
         }

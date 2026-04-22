@@ -118,8 +118,21 @@ export class AuthController {
 
     @UseGuards(JwtAuthGuard)
     @Post('logout-all')
-    async logoutAll(@CurrentUser('sub') userId: number) {
-        return this.authService.logoutAll(userId);
+    async logoutAll(
+      @CurrentUser('sub') userId: number,
+      @Res({ passthrough: true }) res: Response,
+      ) {
+        await this.authService.logoutAll(userId);
+
+        const secure = process.env.COOKIE_SECURE === 'true';
+        res.clearCookie('refreshToken', {
+          httpOnly: true,
+          secure,
+          sameSite: secure ? 'none' : 'lax',
+          path: '/',
+        });
+
+        return { message: 'All sessions terminated' };
     }
 
     @UseGuards(JwtAuthGuard)
