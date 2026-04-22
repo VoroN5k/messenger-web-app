@@ -3,6 +3,7 @@
 import {createContext, ReactNode, useContext, useEffect, useState} from "react";
 import {io, Socket} from "socket.io-client";
 import {useAuthStore} from "@/src/store/useAuthStore";
+import {refreshAccessToken} from "@/src/lib/axios";
 
 const SocketContext = createContext<Socket | null>(null);
 
@@ -51,16 +52,32 @@ export function SocketProvider({ children }: { children: ReactNode}) {
 
         socket.on('pushResubscribe', handlePushSubscription);
 
-        const handleTokenUpdated = ({ success }: { success: boolean }) => {
+        const handleTokenUpdated = async ({ success }: { success: boolean }) => {
             if (!success) {
-                console.warn('[Socket] Token rejected, reconnecting...');
-                socket.disconnect().connect();
+                console.warn('[Socket] Token rejected, refreshing...');
+                const newToken = await refreshAccessToken();
+                if (newToken) {
+                    socket.auth = { token: newToken };
+                    socket.disconnect().connect();
+                }
+                // If no token, logout was triggered → accessToken→null → disconnect via effect
+            }
+        };
+
+        const handleConnectError = async (err: Error) => {
+            if (/auth|unauthorized|token/i.test(err.message)) {
+                const newToken = await refreshAccessToken();
+                if (newToken) {
+                    socket.auth = { token: newToken };
+                }
             }
         };
 
         socket.on('tokenUpdated', handleTokenUpdated);
+        socket.on('connect_error', handleConnectError);
         return () => {
             socket.off('tokenUpdated', handleTokenUpdated);
+            socket.off('connect_error', handleConnectError);
             socket.off('pushResubscribe', handlePushSubscription);
         };
     }, [socket]);

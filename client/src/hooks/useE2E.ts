@@ -615,83 +615,94 @@ export function useE2E() {
 
             let hasMySenderKey = false;
             let decryptFailCount = 0;
+            // Tracks whether own key failed because AES-GCM tag mismatched (genuine wrong key)
+            // vs getSessionKey returned null (transient network error).
+            // Only redistribute when genuinely wrong — a transient error must never generate a new key
+            // because that permanently breaks old message history.
+            let myKeyGenuinelyBroken = false;
+
+            const tryDecrypt = async (senderId: number, encryptedKey: string, forceRefresh = false) => {
+                const cacheKey = `${conversationId}:${senderId}`;
+                if (peerSenderKeys.has(cacheKey)) return true;
+                const sessionKey = await getSessionKey(senderId, forceRefresh);
+                if (!sessionKey) return false; // transient — no session key available
+                const rawKey = await aesDecryptRaw(sessionKey, encryptedKey); // throws on wrong key
+                const aesKey = await crypto.subtle.importKey(
+                    'raw',
+                    rawKey.buffer.slice(rawKey.byteOffset, rawKey.byteOffset + rawKey.byteLength) as ArrayBuffer,
+                    { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'],
+                );
+                peerSenderKeys.set(cacheKey, aesKey);
+                if (senderId === myUserId) {
+                    mySenderKeys.set(conversationId, aesKey);
+                    hasMySenderKey = true;
+                }
+                return true;
+            };
 
             await Promise.all(
-                data.map(async ({senderId, encryptedKey}) => {
-                    const cacheKey = `${conversationId}:${senderId}`;
-                    if (peerSenderKeys.has(cacheKey)) return;
-
+                data.map(async ({ senderId, encryptedKey }) => {
                     try {
-                        const sessionKey = await getSessionKey(senderId);
-                        if (!sessionKey) { decryptFailCount++; return; }
-                        const rawKey = await aesDecryptRaw(sessionKey, encryptedKey);
-                        const aesKey = await crypto.subtle.importKey(
-                            'raw',
-                            rawKey.buffer.slice(rawKey.byteOffset, rawKey.byteOffset + rawKey.byteLength) as ArrayBuffer,
-                            {name: 'AES-GCM'},
-                            false,
-                            ['encrypt', 'decrypt'],
-                        );
-                        peerSenderKeys.set(cacheKey, aesKey);
-
-                        if (senderId === myUserId) {
-                            mySenderKeys.set(conversationId, aesKey);
-                            hasMySenderKey = true;
-                        }
+                        const ok = await tryDecrypt(senderId, encryptedKey);
+                        if (!ok) decryptFailCount++;
                     } catch {
+                        // AES-GCM auth tag mismatch — session key was valid but key is wrong
                         decryptFailCount++;
+                        if (senderId === myUserId) myKeyGenuinelyBroken = true;
                     }
                 }),
             );
 
-            // Повторна спроба з force-refresh для ключів що не розшифрувались
+            // Retry with force-refresh for keys that failed
             if (decryptFailCount > 0) {
                 await Promise.all(
-                    data.map(async ({senderId, encryptedKey}) => {
-                        const cacheKey = `${conversationId}:${senderId}`;
-                        if (peerSenderKeys.has(cacheKey)) return;
+                    data.map(async ({ senderId, encryptedKey }) => {
+                        if (peerSenderKeys.has(`${conversationId}:${senderId}`)) return;
                         try {
-                            const freshKey = await getSessionKey(senderId, true);
-                            if (!freshKey) return;
-                            const rawKey = await aesDecryptRaw(freshKey, encryptedKey);
-                            const aesKey = await crypto.subtle.importKey(
-                                'raw',
-                                rawKey.buffer.slice(rawKey.byteOffset, rawKey.byteOffset + rawKey.byteLength) as ArrayBuffer,
-                                {name: 'AES-GCM'}, false, ['encrypt', 'decrypt'],
-                            );
-                            peerSenderKeys.set(cacheKey, aesKey);
-                            if (senderId === myUserId) {
-                                mySenderKeys.set(conversationId, aesKey);
-                                hasMySenderKey = true;
-                            }
-                        } catch {}
+                            const ok = await tryDecrypt(senderId, encryptedKey, true);
+                            if (!ok) return;
+                            if (senderId === myUserId) myKeyGenuinelyBroken = false;
+                        } catch {
+                            // Still failing with a fresh session key → key is genuinely wrong
+                            if (senderId === myUserId) myKeyGenuinelyBroken = true;
+                        }
                     }),
                 );
 
-                // Для peers чиї ключі все ще не декриптуються — запитуємо перерозподіл
+                // Request redistribution for peers whose keys are still undecryptable.
+                // Remove from prefetchedConvs so we re-fetch after they respond.
                 if (socket) {
+                    let requestedRedistribution = false;
                     for (const { senderId } of data) {
                         if (senderId === myUserId) continue;
                         if (!peerSenderKeys.has(`${conversationId}:${senderId}`)) {
-                            socket.emit('requestSenderKeyRedistribution', {
-                                conversationId,
-                                targetUserId: senderId,
-                            });
+                            socket.emit('requestSenderKeyRedistribution', { conversationId, targetUserId: senderId });
+                            requestedRedistribution = true;
                         }
+                    }
+                    if (requestedRedistribution) {
+                        // Allow re-prefetch after the peer has had time to redistribute
+                        prefetchedConvs.delete(conversationId);
                     }
                 }
             }
 
-            const mySenderKeyExistsOnServer = data.some(({senderId}) => senderId === myUserId);
+            const mySenderKeyExistsOnServer = data.some(({ senderId }) => senderId === myUserId);
 
             if (!hasMySenderKey && !mySenderKeyExistsOnServer) {
-                // Ключа немає взагалі — новий учасник або перший вхід у групу
+                // No key at all — first entry into group or new member
                 await distributeMySenderKey(conversationId, memberUserIds);
             } else if (!hasMySenderKey && mySenderKeyExistsOnServer) {
-                // Ключ є на сервері але не вдалось розшифрувати (застарілий після зміни ключів).
-                // Upsert на сервері дозволяє перезаписати — розповсюджуємо новий ключ.
-                console.warn(`[E2E] Cannot decrypt own sender key for conv ${conversationId}, redistributing new key`);
-                await distributeMySenderKey(conversationId, memberUserIds);
+                if (myKeyGenuinelyBroken) {
+                    // Have a session key but AES-GCM still fails → key on server is wrong → redistribute
+                    console.warn(`[E2E] Own sender key genuinely broken for conv ${conversationId}, redistributing`);
+                    await distributeMySenderKey(conversationId, memberUserIds);
+                } else {
+                    // Session key was unavailable (transient network error) → do NOT redistribute
+                    // Allow retry on next open
+                    console.warn(`[E2E] Own sender key: session key unavailable (transient), will retry next open`);
+                    prefetchedConvs.delete(conversationId);
+                }
             }
         } catch (err) {
             console.warn(`[E2E] prefetchGroupSenderKeys failed for conv ${conversationId}:`, err);

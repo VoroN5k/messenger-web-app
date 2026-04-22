@@ -15,7 +15,7 @@ import {
     Loader2, KeyRound, Languages,
     Monitor, Smartphone, Globe, Laptop,
     LogOut, Trash2, AlertTriangle, X,
-    Wifi, Clock, RefreshCw, ShieldCheck, RotateCcw,
+    Wifi, Clock, RefreshCw, ShieldCheck, RotateCcw, MapPin,
 } from 'lucide-react';
 import { TwoFactorSection } from "@/src/components/settings/TwoFactorSection";
 import { deletePrivateKey } from '@/src/lib/crypto';
@@ -45,20 +45,26 @@ function parseUA(ua: string | null): { browser: string; os: string } {
     const s = ua;
 
     let browser = 'Браузер';
-    if (/Edg\//i.test(s))     browser = 'Microsoft Edge';
-    else if (/OPR\//i.test(s)) browser = 'Opera';
-    else if (/Chrome\//i.test(s)) browser = 'Chrome';
-    else if (/Firefox\//i.test(s)) browser = 'Firefox';
-    else if (/Safari\//i.test(s)) browser = 'Safari';
+    // iOS-specific tokens must come before generic Chrome/Firefox/Safari checks
+    if      (/EdgiOS/i.test(s))      browser = 'Edge';
+    else if (/Edg\//i.test(s))       browser = 'Edge';
+    else if (/OPiOS/i.test(s))       browser = 'Opera';
+    else if (/OPR\//i.test(s))       browser = 'Opera';
+    else if (/CriOS/i.test(s))       browser = 'Chrome';      // Chrome on iOS
+    else if (/FxiOS/i.test(s))       browser = 'Firefox';     // Firefox on iOS
+    else if (/YaBrowser\//i.test(s)) browser = 'Yandex';
+    else if (/Chrome\//i.test(s))    browser = 'Chrome';
+    else if (/Firefox\//i.test(s))   browser = 'Firefox';
+    else if (/Safari\//i.test(s))    browser = 'Safari';
 
     let os = 'ОС';
-    if (/Windows NT 10/i.test(s)) os = 'Windows 10/11';
-    else if (/Windows/i.test(s))  os = 'Windows';
-    else if (/iPhone/i.test(s))   os = 'iPhone';
-    else if (/iPad/i.test(s))     os = 'iPad';
-    else if (/Android/i.test(s))  os = 'Android';
-    else if (/Mac OS X/i.test(s)) os = 'macOS';
-    else if (/Linux/i.test(s))    os = 'Linux';
+    if      (/Windows NT 10/i.test(s)) os = 'Windows 10/11';
+    else if (/Windows/i.test(s))       os = 'Windows';
+    else if (/iPhone/i.test(s))        os = 'iPhone';
+    else if (/iPad/i.test(s))          os = 'iPad';
+    else if (/Android/i.test(s))       os = 'Android';
+    else if (/Mac OS X/i.test(s))      os = 'macOS';
+    else if (/Linux/i.test(s))         os = 'Linux';
 
     return { browser, os };
 }
@@ -189,10 +195,40 @@ export default function SettingsPage() {
 }
 
 // =============================================================================
+// GEOLOCATION (client-side, cached per page load)
+// =============================================================================
+const locCache = new Map<string, string>();
+const locInFlight = new Map<string, Promise<string>>();
+
+function isPrivateIp(ip: string): boolean {
+    return /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|::1$|^localhost)/i.test(ip);
+}
+
+async function getLocation(ip: string | null): Promise<string> {
+    if (!ip || isPrivateIp(ip)) return '';
+    if (locCache.has(ip)) return locCache.get(ip)!;
+    if (locInFlight.has(ip)) return locInFlight.get(ip)!;
+
+    const promise = fetch(`https://ipapi.co/${ip}/json/`)
+        .then(r => r.json())
+        .then((d: any) => {
+            const loc = d.error ? '' : [d.city, d.country_code].filter(Boolean).join(', ');
+            locCache.set(ip, loc);
+            return loc;
+        })
+        .catch(() => { locCache.set(ip, ''); return ''; })
+        .finally(() => locInFlight.delete(ip));
+
+    locInFlight.set(ip, promise);
+    return promise;
+}
+
+// =============================================================================
 // ACTIVE DEVICES SECTION
 // =============================================================================
 function ActiveDevicesSection() {
     const [sessions,      setSessions]      = useState<Session[]>([]);
+    const [locations,     setLocations]     = useState<Map<string, string>>(new Map());
     const [loading,       setLoading]       = useState(true);
     const [terminatingId, setTerminatingId] = useState<number | null>(null);
     const [terminatingAll,setTerminatingAll]= useState(false);
@@ -207,6 +243,13 @@ function ActiveDevicesSection() {
             const sorted = [...res.data].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
             const marked = sorted.map((s, i) => ({ ...s, isCurrent: i === 0 }));
             setSessions(marked);
+
+            // Fetch locations for unique IPs in parallel
+            const uniqueIps = [...new Set(marked.map(s => s.ipAddress).filter((ip): ip is string => !!ip && !isPrivateIp(ip)))];
+            if (uniqueIps.length) {
+                const pairs = await Promise.all(uniqueIps.map(async ip => [ip, await getLocation(ip)] as const));
+                setLocations(new Map(pairs));
+            }
         } catch { setError('Не вдалося завантажити сесії'); }
         finally { setLoading(false); }
     }, []);
@@ -228,7 +271,7 @@ function ActiveDevicesSection() {
             await api.post('/auth/logout-all');
             useAuthStore.getState().logout();
             localStorage.removeItem('auth-storage');
-            router.push('/auth/login');
+            window.location.href = '/auth/login';
         } catch { setError('Не вдалося завершити всі сесії'); setTerminatingAll(false); }
     };
 
@@ -260,7 +303,7 @@ function ActiveDevicesSection() {
                     <p className="text-[11px] font-semibold text-violet-600 dark:text-violet-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
                         <Wifi size={12} /> Поточний пристрій
                     </p>
-                    <SessionRow session={currentSession} isCurrent />
+                    <SessionRow session={currentSession} isCurrent location={locations.get(currentSession.ipAddress ?? '')} />
                 </div>
             )}
 
@@ -279,7 +322,7 @@ function ActiveDevicesSection() {
                         {otherSessions.map(session => (
                             <div key={session.id} className="flex items-center gap-3 group hover:bg-slate-50 dark:hover:bg-slate-800/50 p-2 -mx-2 rounded-xl transition-colors">
                                 <div className="flex-1 min-w-0">
-                                    <SessionRow session={session} />
+                                    <SessionRow session={session} location={locations.get(session.ipAddress ?? '')} />
                                 </div>
                                 <button onClick={() => terminateSession(session.id)} disabled={terminatingId === session.id}
                                         className="shrink-0 p-2 rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 opacity-0 group-hover:opacity-100 transition-all cursor-pointer">
@@ -294,7 +337,7 @@ function ActiveDevicesSection() {
     );
 }
 
-function SessionRow({ session, isCurrent }: { session: Session; isCurrent?: boolean }) {
+function SessionRow({ session, isCurrent, location }: { session: Session; isCurrent?: boolean; location?: string }) {
     const { browser, os } = parseUA(session.userAgent);
     return (
         <div className="flex items-center gap-3">
@@ -303,11 +346,15 @@ function SessionRow({ session, isCurrent }: { session: Session; isCurrent?: bool
                 <DeviceIcon ua={session.userAgent} size={20} />
             </div>
             <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                    <p className="text-[14px] font-medium text-slate-800 dark:text-slate-200 truncate">{browser} · {os}</p>
-                </div>
+                <p className="text-[14px] font-medium text-slate-800 dark:text-slate-200 truncate">{browser} · {os}</p>
                 <div className="flex items-center gap-1.5 mt-0.5 text-[12px] text-slate-500 dark:text-slate-400 flex-wrap">
-                    {session.ipAddress && <span className="font-mono text-[11px]">{session.ipAddress}</span>}
+                    {location ? (
+                        <span className="flex items-center gap-1">
+                            <MapPin size={10} className="shrink-0" />{location}
+                        </span>
+                    ) : session.ipAddress ? (
+                        <span className="font-mono text-[11px]">{session.ipAddress}</span>
+                    ) : null}
                     <span>·</span>
                     <span className="flex items-center gap-1"><Clock size={10} /> {formatSessionDate(session.createdAt)}</span>
                 </div>

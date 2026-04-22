@@ -222,8 +222,13 @@ export class AuthController {
     }
 
     private extractMeta(req: Request) {
+        // fly.io sets Fly-Client-IP with the real browser IP (most reliable behind BFF proxy).
+        // Fall back to first entry of X-Forwarded-For, then req.ip.
+        const flyIp = req.headers['fly-client-ip']?.toString();
+        const xff   = req.headers['x-forwarded-for']?.toString();
+        const ip    = flyIp || (xff ? xff.split(',')[0].trim() : (req.ip ?? 'unknown'));
         return {
-            ip: req.ip || req.headers['x-forwarded-for']?.toString() || 'unknown',
+            ip,
             userAgent: req.headers['user-agent'] || 'unknown',
         };
     }
