@@ -21,7 +21,7 @@ async function bootstrap() {
   app.setGlobalPrefix('api');
   app.use(cookieParser());
 
-  app.set('trust proxy', 2);
+  app.set('trust proxy', true);
 
   app.enableCors({
     origin: (origin, callback) => {

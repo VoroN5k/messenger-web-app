@@ -17,6 +17,9 @@ import { generateToken, hashToken } from './utils/token.util.js';
 import { EmailService } from './email/email.service.js';
 import { authenticator } from '@otplib/preset-default';
 import * as QRCode from 'qrcode';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const geoip = require('geoip-lite') as typeof import('geoip-lite');
 
 @Injectable()
 export class AuthService {
@@ -311,7 +314,7 @@ export class AuthService {
 
   // SESSIONS
   async getUserSessions(userId: number) {
-    return this.prisma.session.findMany({
+    const sessions = await this.prisma.session.findMany({
       where: { userId },
       select: {
         id: true,
@@ -322,6 +325,25 @@ export class AuthService {
       },
       orderBy: { createdAt: 'desc' },
     });
+
+    return sessions.map(session => {
+      let location: string | null = null;
+
+      if (session.ipAddress && !this.isPrivateIp(session.ipAddress)) {
+        const geo = geoip.lookup(session.ipAddress);
+        if (geo) {
+          location = [geo.city, geo.region, geo.country]
+            .filter(Boolean)
+            .join(', ') || null;
+        }
+      }
+
+      return { ...session, location };
+    });
+  }
+
+  private isPrivateIp(ip: string): boolean {
+    return /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|::1$|localhost)/i.test(ip);
   }
 
   // INTERNALS

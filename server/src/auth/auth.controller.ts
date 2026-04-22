@@ -7,7 +7,7 @@ import {
     UseGuards,
     Get,
     Query,
-    UnauthorizedException, Patch, Delete, Param, ParseIntPipe,
+    UnauthorizedException, Patch, Delete, Param, ParseIntPipe, Logger
 } from '@nestjs/common';
 import { AuthService } from './auth.service.js';
 import { RegisterDto } from './dto/register.dto.js';
@@ -24,7 +24,10 @@ import {Disable2FADto, Enable2FADto} from "./dto/twoFactor.dto.js";
 
 @Controller('auth')
 export class AuthController {
-    constructor(private readonly authService: AuthService) {}
+    private readonly logger = new Logger(AuthController.name);
+    constructor(
+      private readonly authService: AuthService,
+    ) {}
 
     @Throttle({ default: { ttl: 60000, limit: 3 } })
     @Post('register')
@@ -235,22 +238,31 @@ export class AuthController {
     }
 
   private extractMeta(req: Request) {
-    // Fly.io guarantees Fly-Client-IP = real browser IP
-    const flyIp = req.headers['fly-client-ip']?.toString().trim();
+    const headers = req.headers;
 
-    // Cloudflare (якщо буде CDN)
-    const cfIp = req.headers['cf-connecting-ip']?.toString().trim();
-
-    // X-Forwarded-For: <client>, <proxy1>, <proxy2>
-    // З trust proxy=2 Express сам виставляє правильний req.ip
-    const xff = req.headers['x-forwarded-for']?.toString();
+    const xff = headers['x-forwarded-for'] as string;
     const xffFirst = xff ? xff.split(',')[0].trim() : null;
 
-    const ip = flyIp || cfIp || xffFirst || req.ip || 'unknown';
+    // ПРІОРИТЕТ:
+    // 1. req.ip (Express з trust proxy вже розпарсив XFF)
+    // 2. xffFirst (якщо Express чомусь не впорався)
+    // 3. fly-client-ip (як останній шанс)
+    let ip = req.ip || xffFirst || (headers['fly-client-ip'] as string) || 'unknown';
+
+    // Очищення від IPv6-mapping префікса
+    if (ip.includes('::ffff:')) {
+      ip = ip.split(':').reverse()[0];
+    }
+
+    if (ip.startsWith('2001:19f0') && xffFirst) {
+      ip = xffFirst;
+    }
+
+    this.logger.debug(`FINAL IP DECISION: ${ip} (req.ip: ${req.ip}, xff: ${xffFirst}, fly: ${headers['fly-client-ip']})`);
 
     return {
       ip,
-      userAgent: req.headers['user-agent'] || 'unknown',
+      userAgent: headers['user-agent'] || 'unknown',
     };
   }
 }
