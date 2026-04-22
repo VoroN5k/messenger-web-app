@@ -234,15 +234,23 @@ export class AuthController {
         });
     }
 
-    private extractMeta(req: Request) {
-        // fly.io sets Fly-Client-IP with the real browser IP (most reliable behind BFF proxy).
-        // Fall back to first entry of X-Forwarded-For, then req.ip.
-        const flyIp = req.headers['fly-client-ip']?.toString();
-        const xff   = req.headers['x-forwarded-for']?.toString();
-        const ip    = flyIp || (xff ? xff.split(',')[0].trim() : (req.ip ?? 'unknown'));
-        return {
-            ip,
-            userAgent: req.headers['user-agent'] || 'unknown',
-        };
-    }
+  private extractMeta(req: Request) {
+    // Fly.io guarantees Fly-Client-IP = real browser IP
+    const flyIp = req.headers['fly-client-ip']?.toString().trim();
+
+    // Cloudflare (якщо буде CDN)
+    const cfIp = req.headers['cf-connecting-ip']?.toString().trim();
+
+    // X-Forwarded-For: <client>, <proxy1>, <proxy2>
+    // З trust proxy=2 Express сам виставляє правильний req.ip
+    const xff = req.headers['x-forwarded-for']?.toString();
+    const xffFirst = xff ? xff.split(',')[0].trim() : null;
+
+    const ip = flyIp || cfIp || xffFirst || req.ip || 'unknown';
+
+    return {
+      ip,
+      userAgent: req.headers['user-agent'] || 'unknown',
+    };
+  }
 }
