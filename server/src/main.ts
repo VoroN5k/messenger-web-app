@@ -37,6 +37,14 @@ async function bootstrap() {
   });
 
   await app.listen(process.env.PORT || 4000);
+
+  if (process.env.NODE_ENV !== 'production') {
+    const SELF_URL = process.env.SELF_URL ?? 'http://localhost:4000';
+    setInterval(() => {
+      fetch(`${SELF_URL}/api/health`).catch(() => {});
+    }, 4 * 60 * 1000);
+  }
+
   console.log(`Server running on http://localhost:${process.env.PORT || 4000}`);
 }
 
