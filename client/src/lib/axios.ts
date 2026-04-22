@@ -1,8 +1,6 @@
 import axios from 'axios';
 import { useAuthStore } from '../store/useAuthStore';
 
-const RETRY_DELAYS_MS = [1_000, 3_000, 6_000]; // 1s, 3s, 6s
-
 const api = axios.create({
     baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api',
     withCredentials: true,
@@ -17,21 +15,18 @@ api.interceptors.request.use((config) => {
 let refreshPromise: Promise<string | null> | null = null;
 
 export async function refreshAccessToken(): Promise<string | null> {
-    // Встановлюємо refreshPromise СИНХРОННО до будь-яких await —
-    // це унеможливлює race condition коли два виклики одночасно
-    // проходять перевірку `if (refreshPromise)`
     if (refreshPromise) return refreshPromise;
-
     refreshPromise = _doRefresh().finally(() => {
         refreshPromise = null;
     });
-
     return refreshPromise;
 }
 
+const RETRY_DELAYS_MS = [2_000, 5_000, 8_000];
+
 async function _doRefresh(): Promise<string | null> {
     const execute = async (): Promise<string | null> => {
-        let lastError: unknown;
+        let lastStatus: number | null = null;
 
         for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
             try {
@@ -41,13 +36,12 @@ async function _doRefresh(): Promise<string | null> {
                     {},
                     {
                         withCredentials: true,
-                        timeout: 12_000, // явний таймаут на cold start
+                        timeout: 15_000,
                     },
                 );
 
                 const newToken: string = data.accessToken;
                 const currentUser = useAuthStore.getState().user;
-
                 if (currentUser) {
                     useAuthStore.getState().setAuth(currentUser, newToken);
                 } else {
@@ -56,21 +50,27 @@ async function _doRefresh(): Promise<string | null> {
                 return newToken;
 
             } catch (err: any) {
-                lastError = err;
+                lastStatus = err?.response?.status ?? null;
 
-                const status = err?.response?.status;
-                // 401/403 — токен справді невалідний, retry не допоможе
-                if (status === 401 || status === 403) break;
+                // Тільки 401/403 означають що токен справді невалідний
+                // Все інше (network error, 502, 503, timeout) — сервер просто спить
+                if (lastStatus === 401 || lastStatus === 403) {
+                    break;
+                }
 
-                // Остання спроба
-                if (attempt === RETRY_DELAYS_MS.length) break;
+                if (attempt < RETRY_DELAYS_MS.length) {
+                    await new Promise(res => setTimeout(res, RETRY_DELAYS_MS[attempt]));
+                    continue;
+                }
 
-                // Сервер спить — чекаємо і пробуємо ще
-                await new Promise(res => setTimeout(res, RETRY_DELAYS_MS[attempt]));
+                // Всі спроби вичерпано, але це НЕ auth помилка —
+                // повертаємо null без logout (сервер недоступний тимчасово)
+                console.warn('[Auth] Server unavailable after retries, staying logged in');
+                return null;
             }
         }
 
-        // Всі спроби вичерпано
+        // Тільки сюди потрапляємо при 401/403 — справжній logout
         useAuthStore.getState().logout();
         if (typeof window !== 'undefined' && window.location.pathname !== '/auth/login') {
             window.location.href = '/auth/login';
@@ -94,10 +94,8 @@ api.interceptors.response.use(
 
         if (error.response?.status === 401 && !originalRequest._retry && !isBypassUrl) {
             originalRequest._retry = true;
-
             const newToken = await refreshAccessToken();
             if (!newToken) return Promise.reject(error);
-
             originalRequest.headers.Authorization = `Bearer ${newToken}`;
             return api(originalRequest);
         }
