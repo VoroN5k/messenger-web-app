@@ -243,13 +243,9 @@ export class AuthController {
     const xff = headers['x-forwarded-for'] as string;
     const xffFirst = xff ? xff.split(',')[0].trim() : null;
 
-    // ПРІОРИТЕТ:
-    // 1. req.ip (Express з trust proxy вже розпарсив XFF)
-    // 2. xffFirst (якщо Express чомусь не впорався)
-    // 3. fly-client-ip (як останній шанс)
     let ip = req.ip || xffFirst || (headers['fly-client-ip'] as string) || 'unknown';
 
-    // Очищення від IPv6-mapping префікса
+    //clean up
     if (ip.includes('::ffff:')) {
       ip = ip.split(':').reverse()[0];
     }
@@ -257,8 +253,6 @@ export class AuthController {
     if (ip.startsWith('2001:19f0') && xffFirst) {
       ip = xffFirst;
     }
-
-    this.logger.debug(`FINAL IP DECISION: ${ip} (req.ip: ${req.ip}, xff: ${xffFirst}, fly: ${headers['fly-client-ip']})`);
 
     return {
       ip,
