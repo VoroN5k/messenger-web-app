@@ -43,6 +43,10 @@ function FileSkeleton({ isMe }: { isMe: boolean }) {
 export function FileBubble({ msg, isMe, onDecrypt }: Props) {
     const signedSrc = useSignedUrl(msg.fileUrl);
 
+    useEffect(() => {
+        setErr(false);
+    }, [signedSrc]);
+
     const [err,        setErr]        = useState(false);
     const [blobUrl,    setBlobUrl]    = useState<string | null>(null);
     const [decrypting, setDecrypting] = useState(false);
