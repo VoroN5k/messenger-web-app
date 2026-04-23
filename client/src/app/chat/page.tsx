@@ -56,15 +56,41 @@ export default function ChatPage() {
 
     useEffect(() => {
         if (!_hasHydrated) return;
-        if (!useAuthStore.getState().accessToken) {
+
+        const token = useAuthStore.getState().accessToken;
+        const isStale = !token || (() => {
+            try {
+                const { exp } = jwtDecode<{ exp: number }>(token);
+                return exp * 1000 < Date.now();
+            } catch { return true; }
+        })();
+
+        if (isStale) {
             setServerWaking(true);
             refreshAccessToken()
-                .then((token) => {
-                if (!token) window.location.href = '/auth/login';
-            })
-            .finally(() => setServerWaking(false));
+                .then(t => { if (!t) window.location.href = '/auth/login'; })
+                .finally(() => setServerWaking(false));
         }
     }, [_hasHydrated]);
+
+    useEffect(() => {
+        const handleVisible = async () => {
+            if (document.visibilityState !== 'visible') return;
+            const token = useAuthStore.getState().accessToken;
+            if (!token) return;
+            try {
+                const { exp } = jwtDecode<{ exp: number }>(token);
+                if (exp * 1000 < Date.now() + 60_000) {
+                    await refreshAccessToken();
+                }
+            } catch {
+                await refreshAccessToken();
+            }
+        };
+
+        document.addEventListener('visibilitychange', handleVisible);
+        return () => document.removeEventListener('visibilitychange', handleVisible);
+    }, []);
 
     // Відповідаємо на запити перерозподілу sender key від інших учасників груп
     useEffect(() => {
