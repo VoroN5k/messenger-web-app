@@ -73,7 +73,7 @@ export function useSignedUrl(fileUrl: string | null | undefined): string | null 
             .catch(() => {
                 // Graceful fallback - show original URL (may fail for private bucket but
                 // doesn't crash the UI)
-                if (alive) setUrl(fileUrl ?? null);
+                if (alive) setUrl(null);
             });
 
         return () => { alive = false; };

@@ -39,10 +39,10 @@ type Phase = 'starting' | 'recording' | 'preview' | 'sending';
 // best format for recording (Opus > WebM > Ogg > MP4)
 function getBestMimeType(): string {
     const candidates = [
+        'audio/mp4',
         'audio/webm;codecs=opus',
         'audio/webm',
         'audio/ogg;codecs=opus',
-        'audio/mp4',
     ];
     return candidates.find((t) => MediaRecorder.isTypeSupported(t)) ?? '';
 }

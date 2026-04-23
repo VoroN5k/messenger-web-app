@@ -150,8 +150,12 @@ export function VoiceBubble({ fileUrl, metadata, isMe, onDecrypt }: Props) {
     const isEncrypted = isEncryptedFlag && !!onDecrypt;
 
     useEffect(() => {
-
         if (!signedSrc) return;
+
+        if (signedSrc.startsWith('/storage')) {
+            setStatus('error');
+            return;
+        }
 
         const myId = ++loadIdRef.current;
         setStatus('loading'); setPlaying(false); setProgress(0);
@@ -300,7 +304,7 @@ export function VoiceBubble({ fileUrl, metadata, isMe, onDecrypt }: Props) {
         return (
             <div className={`flex items-center gap-2 text-xs py-1 ${isMe ? 'text-indigo-200' : 'text-slate-400'}`}>
                 <span>🎙 Не вдалося відтворити</span>
-                <a href={fileUrl} download target="_blank" rel="noopener noreferrer"
+                <a href={signedSrc ?? fileUrl} download target="_blank" rel="noopener noreferrer"
                    className={`underline cursor-pointer ${isMe ? 'text-indigo-200' : 'text-violet-500'}`}>
                     Завантажити
                 </a>
