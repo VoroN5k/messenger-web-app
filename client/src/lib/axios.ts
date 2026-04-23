@@ -1,13 +1,28 @@
 import axios from 'axios';
 import { useAuthStore } from '../store/useAuthStore';
+import { jwtDecode } from 'jwt-decode';
 
 const api = axios.create({
     baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api',
     withCredentials: true,
 });
 
-api.interceptors.request.use((config) => {
-    const token = useAuthStore.getState().accessToken;
+api.interceptors.request.use(async (config) => {
+    let token = useAuthStore.getState().accessToken;
+
+    if(token) {
+        try {
+            const { exp } = jwtDecode<{ exp: number }>(token);
+            // If token is expired or will expire in the next 10 seconds, refresh it now
+            // before request, not after 401 response
+            if (exp * 1000 < Date.now() + 10_000) {
+                const refreshed = await refreshAccessToken();
+                token = refreshed;
+            }
+        } catch {
+            // skip ( jwtDecode failed, token is invalid - will be handled by response interceptor )
+        }
+    }
     if (token) config.headers.Authorization = `Bearer ${token}`;
     return config;
 });
