@@ -243,16 +243,18 @@ export class AuthController {
     const xff = headers['x-forwarded-for'] as string;
     const xffFirst = xff ? xff.split(',')[0].trim() : null;
 
-    let ip = req.ip || xffFirst || (headers['fly-client-ip'] as string) || 'unknown';
+    let ip = xffFirst || req.ip || (headers['fly-client-ip'] as string) || 'unknown';
 
     //clean up
     if (ip.includes('::ffff:')) {
       ip = ip.split(':').reverse()[0];
     }
 
-    if (ip.startsWith('2001:19f0') && xffFirst) {
-      ip = xffFirst;
+    if (ip.startsWith('2001:19f0') && req.ip && !req.ip.startsWith('2001:19f0')) {
+      ip = req.ip;
     }
+
+    this.logger.debug(`IP Resolved: ${ip}`);
 
     return {
       ip,
