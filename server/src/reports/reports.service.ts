@@ -29,8 +29,7 @@ export class ReportsService {
     // Notify admins via email
     const adminEmail = process.env.ADMIN_EMAIL;
     if (adminEmail) {
-      this.email
-        .sendAdminReportNotification(adminEmail, {
+      this.email.sendAdminReportNotification(adminEmail, {
           id: report.id,
           type: report.type,
           title: report.title,

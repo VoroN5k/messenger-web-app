@@ -12,6 +12,7 @@ import { KeysModule } from './keys/keys.module.js';
 import { OGModule } from './og/og.module.js';
 import { FilesModule } from './files/files.module.js';
 import { HealthController } from './health/health.controller.js';
+import { ReportsModule } from './reports/reports.module.js';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { HealthController } from './health/health.controller.js';
     KeysModule,
     OGModule,
     FilesModule,
+    ReportsModule,
   ],
   controllers: [HealthController],
 })

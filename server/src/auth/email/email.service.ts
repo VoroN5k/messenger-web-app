@@ -46,4 +46,41 @@ export class EmailService {
             `,
         });
     }
+
+  async sendAdminReportNotification(adminEmail: string, data: {
+    id: number; type: string; title: string;
+    nickname: string; email: string; page: string;
+  }) {
+    const adminUrl = process.env.CLIENT_URL ?? 'http://localhost:3000';
+    await this.mailer.sendMail({
+      to:      adminEmail,
+      subject: `[Vesper Report #${data.id}] ${data.type}: ${data.title}`,
+      html: `
+      <div style="font-family:monospace;max-width:600px;margin:0 auto;
+                  background:#09090f;color:#eeeef5;padding:32px;border-radius:12px">
+        <h2 style="color:#9d77ff;margin:0 0 24px">
+          🐛 New Report #${data.id}
+        </h2>
+        <table style="width:100%;border-collapse:collapse">
+          ${[
+        ['Type',     data.type],
+        ['Title',    data.title],
+        ['User',     `${data.nickname} &lt;${data.email}&gt;`],
+        ['Page',     data.page],
+      ].map(([k, v]) => `
+            <tr>
+              <td style="padding:8px 12px;color:#7c4dff;width:80px">${k}</td>
+              <td style="padding:8px 12px;border-left:2px solid #7c4dff">${v}</td>
+            </tr>
+          `).join('')}
+        </table>
+        <a href="${adminUrl}/admin/reports"
+           style="display:inline-block;margin-top:24px;padding:10px 24px;
+                  background:#7c4dff;color:#fff;border-radius:8px;text-decoration:none">
+          View in Admin Panel →
+        </a>
+      </div>
+    `,
+    });
+  }
 }
