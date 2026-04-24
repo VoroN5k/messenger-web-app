@@ -2,12 +2,32 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { Reaction, ReactionUser } from '@/src/types/conversation.types';
-import { Avatar } from '@/src/components/chat/Avatar';
+import { useSignedUrl } from '@/src/hooks/useSignedUrl';
 
 interface Props {
     reactions:     Reaction[];
     currentUserId: number | string;
     onToggle:      (emoji: string) => void;
+}
+
+function SignedAvatar({ user, className }: { user: ReactionUser; className?: string }) {
+    const signedUrl = useSignedUrl(user.avatarUrl);
+    const bg = avatarBg(user.nickname);
+
+    if (signedUrl) {
+        return (
+            <img
+                src={signedUrl}
+                alt={user.nickname}
+                className={`w-full h-full object-cover ${className ?? ''}`}
+            />
+        );
+    }
+    return (
+        <div className={`w-full h-full flex items-center justify-center text-[8px] font-bold text-white ${bg} ${className ?? ''}`}>
+            {user.nickname.slice(0, 1).toUpperCase()}
+        </div>
+    );
 }
 
 // Tooltip showing who reacted
@@ -41,7 +61,9 @@ function ReactionTooltip({
                     const isMe = String(u.id) === String(currentUserId);
                     return (
                         <div key={u.id} className="flex items-center gap-2">
-                            <Avatar user={u} size="sm" />
+                            <div className="w-4 h-4 rounded-full ring-1 ring-slate-700 overflow-hidden shrink-0">
+                                <SignedAvatar user={u} />
+                            </div>
                             <span className={`text-xs font-medium truncate ${isMe ? 'text-violet-300' : 'text-slate-200'}`}>
                                 {isMe ? 'Ви' : u.nickname}
                             </span>
@@ -96,18 +118,15 @@ function ReactionButton({
                     ? 'bg-indigo-100 dark:bg-indigo-900/40 border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-900/60'
                     : 'bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600'}`}
             >
-                {/* Stacked mini-avatars (up to 3) */}
+                {/* Stacked mini-avatars (up to 3) — now using signed URLs */}
                 {reaction.users.length > 0 && reaction.users.length <= 3 && (
                     <div className="flex -space-x-1.5 mr-0.5">
                         {reaction.users.slice(0, 3).map(u => (
-                            <div key={u.id} className="w-4 h-4 rounded-full ring-1 ring-white dark:ring-slate-700 overflow-hidden shrink-0">
-                                {u.avatarUrl
-                                    ? <img src={u.avatarUrl} alt={u.nickname} className="w-full h-full object-cover" />
-                                    : <div className={`w-full h-full flex items-center justify-center text-[8px] font-bold text-white
-                                                       ${avatarBg(u.nickname)}`}>
-                                        {u.nickname.slice(0, 1).toUpperCase()}
-                                    </div>
-                                }
+                            <div
+                                key={u.id}
+                                className="w-4 h-4 rounded-full ring-1 ring-white dark:ring-slate-700 overflow-hidden shrink-0"
+                            >
+                                <SignedAvatar user={u} />
                             </div>
                         ))}
                     </div>
