@@ -19,6 +19,7 @@ import { ActiveCallOverlay }      from '@/src/components/call/ActiveCallOverlay'
 import { useE2E }                 from '@/src/hooks/useE2E';
 import { RecoveryUnlockModal }    from "@/src/components/chat/RecoveryUnlockModal";
 import { useRouter }              from "next/navigation";
+import {ReportButton} from "@/src/components/chat/ReportModal";
 
 export default function ChatPage() {
     const t = useTranslations();
@@ -297,6 +298,8 @@ export default function ChatPage() {
                     </div>
                 </div>
             )}
+
+            <ReportButton />
         </div>
     );
 }
