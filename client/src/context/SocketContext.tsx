@@ -66,9 +66,14 @@ export function SocketProvider({ children }: { children: ReactNode}) {
 
         const handleConnectError = async (err: Error) => {
             if (/auth|unauthorized|token/i.test(err.message)) {
-                const newToken = await refreshAccessToken();
-                if (newToken) {
-                    socket.auth = { token: newToken };
+                const currentToken = useAuthStore.getState().accessToken;
+                if (currentToken) {
+                    socket.auth = { token: currentToken };
+                } else {
+                    const newToken = await refreshAccessToken();
+                    if (newToken) {
+                        socket.auth = { token: newToken };
+                    }
                 }
             }
         };
