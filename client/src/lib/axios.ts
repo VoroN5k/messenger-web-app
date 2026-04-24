@@ -41,7 +41,10 @@ const RETRY_DELAYS_MS = [2_000, 5_000, 8_000];
 
 async function _doRefresh(): Promise<string | null> {
     const execute = async (): Promise<string | null> => {
-        let lastStatus: number | null = null;
+        // Retry включно з одним повтором після 401
+        // (401 може бути транзієнтним при wakeup або race на RT rotation)
+        const MAX_401_RETRIES = 1;
+        let unauthorizedCount = 0;
 
         for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
             try {
@@ -62,10 +65,17 @@ async function _doRefresh(): Promise<string | null> {
                 return newToken;
 
             } catch (err: any) {
-                lastStatus = err?.response?.status ?? null;
+                const status = err?.response?.status ?? null;
 
-                if (lastStatus === 401 || lastStatus === 403) {
-                    break; // справжній невалідний токен
+                if (status === 401 || status === 403) {
+                    unauthorizedCount++;
+                    // Даємо один шанс — 401 може бути через race на RT rotation
+                    if (unauthorizedCount <= MAX_401_RETRIES && attempt < RETRY_DELAYS_MS.length) {
+                        await new Promise(res => setTimeout(res, RETRY_DELAYS_MS[attempt]));
+                        continue;
+                    }
+                    // Тільки після повторного 401
+                    break;
                 }
 
                 if (attempt < RETRY_DELAYS_MS.length) {
@@ -78,14 +88,11 @@ async function _doRefresh(): Promise<string | null> {
             }
         }
 
-        // ГОЛОВНИЙ FIX: викликаємо /auth/logout щоб сервер очистив httpOnly cookie
-        // Без цього middleware бачить cookie і редіректить назад на /chat
+        // логаут тільки тут
         try {
             const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
             await axios.post(`${apiUrl}/auth/logout`, {}, { withCredentials: true });
-        } catch {
-            // ігноруємо помилку - головне що cookie буде спроба очистити
-        }
+        } catch {}
 
         useAuthStore.getState().logout();
         localStorage.removeItem('auth-storage');
