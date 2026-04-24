@@ -87,6 +87,20 @@ export function SocketProvider({ children }: { children: ReactNode}) {
         };
     }, [socket]);
 
+    useEffect(() => {
+        if (!socket) return;
+
+        const unsub = useAuthStore.subscribe(
+            (s) => s.accessToken,
+            (newToken) => {
+                if (!newToken || !socket.connected) return;
+                socket.emit('updateToken', { token: newToken });
+            }
+        );
+
+        return () => unsub();
+    }, [socket]);
+
     return (
         <SocketContext.Provider value={socket}>
             {children}
