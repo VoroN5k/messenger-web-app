@@ -305,12 +305,16 @@ export class ConversationsService {
         const member = !cursor
             ? await this.prisma.conversationMember.findUnique({
                 where:  { conversationId_userId: { conversationId, userId } },
-                select: { lastReadAt: true },
+                select: { lastReadAt: true, clearedAt: true },
             })
             : null;
 
         const msgs = await this.prisma.message.findMany({
-            where:   { conversationId, ...this.scheduledFilter(userId) },
+            where:   {
+              conversationId,
+              ...(member?.clearedAt ? { createdAt: { gt: member.clearedAt } } : {}),
+              ...this.scheduledFilter(userId)
+            },
             select:  MSG_SELECT,
             take:    30,
             ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
@@ -334,8 +338,18 @@ export class ConversationsService {
 
     async getMessagesAround(userId: number, conversationId: number, around: number) {
         await this.assertMember(userId, conversationId);
+
+        const member = await this.prisma.conversationMember.findUnique({
+          where: { conversationId_userId: { conversationId, userId } },
+          select: { clearedAt: true },
+        });
+
         const msgs = await this.prisma.message.findMany({
-            where: { conversationId, id: { lte: around }, ...this.scheduledFilter(userId) },
+            where: {
+              conversationId,
+              id: { lte: around },
+              ...(member?.clearedAt ? { createdAt: { gt: member.clearedAt } } : {}),
+              ...this.scheduledFilter(userId) },
             select: MSG_SELECT, take: 30, orderBy: { id: 'desc' },
         });
         const otherMembersLastRead = await this.getOtherMembersLastRead(conversationId, userId);
@@ -344,8 +358,18 @@ export class ConversationsService {
 
     async getMessagesAfter(userId: number, conversationId: number, after: number) {
         await this.assertMember(userId, conversationId);
+
+        const member = await this.prisma.conversationMember.findUnique({
+            where: { conversationId_userId: { conversationId, userId } },
+            select: { clearedAt: true },
+        });
+
         const msgs = await this.prisma.message.findMany({
-            where: { conversationId, id: { gt: after }, ...this.scheduledFilter(userId) },
+            where: {
+              conversationId,
+              id: { gt: after },
+              ...(member?.clearedAt ? { createdAt: { gt: member.clearedAt } } : {}),
+              ...this.scheduledFilter(userId) },
             select: MSG_SELECT, take: 30, orderBy: { id: 'asc' },
         });
         const otherMembersLastRead = await this.getOtherMembersLastRead(conversationId, userId);
