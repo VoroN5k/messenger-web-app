@@ -23,6 +23,7 @@ import { Conversation, Message } from '@/src/types/conversation.types';
 import { User }                  from '@/src/types/auth.types';
 import { Socket }                from 'socket.io-client';
 import { EDIT_WINDOW_MS, looksEncrypted } from '@/src/lib/chatFormatters';
+import {UserProfilePanel} from "@/src/components/chat/UserProfilePanel";
 
 interface ChatAreaProps {
     currentUser:           User | null;
@@ -59,6 +60,7 @@ export default function ChatArea({
     const [uploadProgress, setUploadProgress] = useState<number | null>(null);
     const [uploadError,    setUploadError]    = useState<string | null>(null);
     const [showVoice,      setShowVoice]      = useState(false);
+    const [showProfile, setShowProfile] = useState(false);
     // forwardMsg: the message user clicked "forward" on — used to open ForwardModal
     const [forwardMsg,     setForwardMsg]     = useState<Message | null>(null);
     const [showMedia,      setShowMedia]      = useState(false);
@@ -530,6 +532,7 @@ export default function ChatArea({
                 onStartCall={onStartCall}
                 onJumpToMessage={jumpToMessage}
                 onBack={onBack}
+                onOpenProfile={() => setShowProfile(true)}
             />
 
             {/* ── Pinned message ── */}
@@ -680,6 +683,22 @@ export default function ChatArea({
                     onCancel={handleCancelImagePreview}
                 />
             )}
+
+            {showProfile && conversation && (
+                   <UserProfilePanel
+                     conversation={conversation}
+                     currentUser={currentUser}
+                     peer={peer}
+                     onClose={() => setShowProfile(false)}
+                     onStartCall={onStartCall}
+                     onToggleSearch={handleToggleSearch}
+                     onToggleMedia={handleToggleMedia}
+                     onChatCleared={handleChatCleared}
+                     onRemoveFriend={onRemoveFriend}
+                   />
+                 )}
+
+
         </main>
     );
 }

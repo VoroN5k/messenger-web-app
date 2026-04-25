@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-    X, Phone, Video, Search, LayoutGrid, Bell, BellOff,
+    X, Phone, Video, Search, LayoutGrid,
     Trash2, UserMinus, ChevronRight, Shield, Clock, Calendar,
-    ArrowLeft, AlertTriangle, Check, Loader2, Image, Mic, Paperclip,
+    AlertTriangle, Check, Loader2, Image, Mic, Paperclip,
+    MessageSquare, Users, Hash,
 } from 'lucide-react';
 import { Avatar } from '@/src/components/chat/Avatar';
 import { useSignedUrl } from '@/src/hooks/useSignedUrl';
@@ -14,41 +15,32 @@ import api from '@/src/lib/axios';
 import { formatLastSeen } from '@/src/lib/chatFormatters';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-interface MediaCount {
-    photos:  number;
-    voice:   number;
-    files:   number;
-}
+interface MediaCount { photos: number; voice: number; files: number }
+type ClearScope = 'self' | 'both';
 
 export interface UserProfilePanelProps {
-    /** The conversation the profile belongs to */
-    conversation:  Conversation;
-    currentUser:   User | null;
-    /** The peer user (for DIRECT) — derived from conversation.members */
-    peer:          ConvUser | null;
-    onClose:       () => void;
-    onStartCall?:  (convId: number, targetUserId: number, type: 'audio' | 'video') => void;
+    conversation:   Conversation;
+    currentUser:    User | null;
+    peer:           ConvUser | null;
+    onClose:        () => void;
+    onStartCall?:   (convId: number, targetUserId: number, type: 'audio' | 'video') => void;
     onToggleSearch?: () => void;
     onToggleMedia?:  () => void;
-    /** Called after chat is cleared so parent can refresh messages */
     onChatCleared?:  () => void;
     onRemoveFriend?: (friendId: number) => void;
 }
 
-// ── Large signed avatar ───────────────────────────────────────────────────────
-function LargeAvatar({ user }: { user: ConvUser | { nickname: string; avatarUrl?: string | null } }) {
+// ── Large avatar (uses signed URL) ───────────────────────────────────────────
+function LargeAvatar({ user }: { user: { nickname: string; avatarUrl?: string | null } }) {
     const signed = useSignedUrl(user.avatarUrl);
-    const initials = user.nickname.slice(0, 2).toUpperCase();
-    const PALETTE = [
-        '#7c4dff', '#5c6bc0', '#26a69a', '#66bb6a',
-        '#ef5350', '#ec407a', '#ab47bc', '#42a5f5',
-    ];
+    const [errored, setErrored] = useState(false);
+
+    const PALETTE = ['#7c4dff','#5c6bc0','#26a69a','#66bb6a','#ef5350','#ec407a','#ab47bc','#42a5f5'];
     let hash = 0;
     for (let i = 0; i < user.nickname.length; i++)
         hash = user.nickname.charCodeAt(i) + ((hash << 5) - hash);
     const bg = PALETTE[Math.abs(hash) % PALETTE.length];
-
-    const [errored, setErrored] = useState(false);
+    const initials = user.nickname.slice(0, 2).toUpperCase();
 
     return signed && !errored ? (
         <img
@@ -59,7 +51,7 @@ function LargeAvatar({ user }: { user: ConvUser | { nickname: string; avatarUrl?
         />
     ) : (
         <div
-            className="w-full h-full flex items-center justify-center text-4xl font-bold text-white select-none"
+            className="w-full h-full flex items-center justify-center text-3xl font-bold text-white select-none"
             style={{ background: bg }}
         >
             {initials}
@@ -67,15 +59,9 @@ function LargeAvatar({ user }: { user: ConvUser | { nickname: string; avatarUrl?
     );
 }
 
-// ── Clear chat modal ──────────────────────────────────────────────────────────
-type ClearScope = 'self' | 'both';
-
+// ── Clear chat confirmation modal ─────────────────────────────────────────────
 function ClearChatModal({
-                            convName,
-                            isDirect,
-                            isAdmin,
-                            onConfirm,
-                            onClose,
+                            convName, isDirect, isAdmin, onConfirm, onClose,
                         }: {
     convName:  string;
     isDirect:  boolean;
@@ -84,17 +70,22 @@ function ClearChatModal({
     onClose:   () => void;
 }) {
     const [scope, setScope] = useState<ClearScope>('self');
-
     const canDeleteBoth = isDirect || isAdmin;
+
+    useEffect(() => {
+        const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+        document.addEventListener('keydown', h);
+        return () => document.removeEventListener('keydown', h);
+    }, [onClose]);
 
     return (
         <div
             className="fixed inset-0 z-[300] flex items-center justify-center p-4"
-            style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}
+            style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(10px)' }}
             onClick={e => { if (e.target === e.currentTarget) onClose(); }}
         >
             <div
-                className="w-full max-w-sm rounded-2xl overflow-hidden"
+                className="w-full max-w-sm rounded-2xl overflow-hidden modal-enter"
                 style={{
                     background: 'var(--bg-elevated)',
                     border: '1px solid var(--border-md)',
@@ -102,110 +93,91 @@ function ClearChatModal({
                 }}
             >
                 {/* Header */}
-                <div className="px-5 py-4" style={{ borderBottom: '1px solid var(--border)' }}>
-                    <h3 className="text-[15px] font-semibold" style={{ color: 'var(--text-1)' }}>
-                        Очистити переписку
-                    </h3>
-                    <p className="text-[12px] mt-0.5 truncate" style={{ color: 'var(--text-3)' }}>
-                        {convName}
-                    </p>
+                <div className="px-5 py-4 flex items-center gap-3" style={{ borderBottom: '1px solid var(--border)' }}>
+                    <div
+                        className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+                        style={{ background: 'rgba(255,77,106,0.12)', border: '1px solid rgba(255,77,106,0.2)' }}
+                    >
+                        <Trash2 size={15} style={{ color: 'var(--red)' }} />
+                    </div>
+                    <div>
+                        <h3 className="text-[14px] font-semibold" style={{ color: 'var(--text-1)' }}>
+                            Очистити переписку
+                        </h3>
+                        <p className="text-[11px] truncate max-w-[200px]" style={{ color: 'var(--text-3)' }}>
+                            {convName}
+                        </p>
+                    </div>
                 </div>
 
                 {/* Options */}
                 <div className="p-5 space-y-3">
-                    <label className="flex items-start gap-3 cursor-pointer group">
-                        <div className="relative mt-0.5 shrink-0">
-                            <input
-                                type="radio"
-                                name="scope"
-                                value="self"
-                                checked={scope === 'self'}
-                                onChange={() => setScope('self')}
-                                className="appearance-none w-4 h-4 rounded-full border-2 transition-all cursor-pointer"
-                                style={{
-                                    borderColor: scope === 'self' ? 'var(--accent)' : 'rgba(255,255,255,0.2)',
-                                    background:  scope === 'self' ? 'var(--accent)' : 'transparent',
-                                }}
-                            />
-                            {scope === 'self' && (
-                                <div
-                                    className="absolute inset-[3px] rounded-full"
-                                    style={{ background: '#fff' }}
-                                />
-                            )}
-                        </div>
-                        <div>
-                            <p className="text-[13px] font-medium" style={{ color: 'var(--text-1)' }}>
-                                Видалити лише для мене
-                            </p>
-                            <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: 'var(--text-3)' }}>
-                                Повідомлення зникнуть тільки у вас. Співрозмовник їх не побачить.
-                            </p>
-                        </div>
-                    </label>
+                    {/* Self */}
+                    <ScopeOption
+                        value="self"
+                        current={scope}
+                        label="Видалити тільки у мене"
+                        description="Повідомлення зникнуть лише у вашому чаті. Інші учасники їх не побачать."
+                        onChange={setScope}
+                        color="var(--accent)"
+                    />
 
+                    {/* Both */}
                     {canDeleteBoth && (
-                        <label className="flex items-start gap-3 cursor-pointer group">
-                            <div className="relative mt-0.5 shrink-0">
-                                <input
-                                    type="radio"
-                                    name="scope"
-                                    value="both"
-                                    checked={scope === 'both'}
-                                    onChange={() => setScope('both')}
-                                    className="appearance-none w-4 h-4 rounded-full border-2 transition-all cursor-pointer"
-                                    style={{
-                                        borderColor: scope === 'both' ? 'var(--red)' : 'rgba(255,255,255,0.2)',
-                                        background:  scope === 'both' ? 'var(--red)' : 'transparent',
-                                    }}
-                                />
-                                {scope === 'both' && (
-                                    <div
-                                        className="absolute inset-[3px] rounded-full"
-                                        style={{ background: '#fff' }}
-                                    />
-                                )}
-                            </div>
-                            <div>
-                                <p className="text-[13px] font-medium" style={{ color: 'var(--text-1)' }}>
-                                    Видалити для обох
-                                </p>
-                                <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: 'var(--text-3)' }}>
-                                    Повідомлення зникнуть у всіх учасників переписки.
-                                </p>
-                            </div>
-                        </label>
+                        <ScopeOption
+                            value="both"
+                            current={scope}
+                            label="Видалити для всіх"
+                            description="Всі повідомлення зникнуть у кожного учасника переписки."
+                            onChange={setScope}
+                            color="var(--red)"
+                        />
                     )}
 
+                    {/* Warning for "both" */}
                     {scope === 'both' && (
                         <div
-                            className="flex items-start gap-2 rounded-xl px-3 py-2.5"
-                            style={{ background: 'rgba(255,77,106,0.08)', border: '1px solid rgba(255,77,106,0.18)' }}
+                            className="flex items-start gap-2.5 rounded-xl px-3.5 py-3 slide-up"
+                            style={{
+                                background: 'rgba(255,77,106,0.07)',
+                                border: '1px solid rgba(255,77,106,0.18)',
+                            }}
                         >
                             <AlertTriangle size={13} className="text-red-400 shrink-0 mt-0.5" />
                             <p className="text-[11px] leading-relaxed" style={{ color: 'rgba(248,113,113,0.85)' }}>
-                                Всі повідомлення буде безповоротно видалено для всіх учасників. Цю дію не можна скасувати.
+                                Всі повідомлення буде безповоротно видалено для всіх учасників.
+                                Ця дія незворотна.
                             </p>
                         </div>
                     )}
                 </div>
 
-                {/* Buttons */}
-                <div className="px-5 pb-5 flex gap-2">
+                {/* Actions */}
+                <div className="px-5 pb-5 flex gap-2.5">
                     <button
                         onClick={onClose}
-                        className="flex-1 py-2.5 rounded-xl text-[13px] font-medium cursor-pointer transition-colors"
-                        style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)', color: 'var(--text-2)' }}
+                        className="flex-1 py-2.5 rounded-xl text-[13px] font-medium cursor-pointer transition-all"
+                        style={{
+                            background: 'rgba(255,255,255,0.04)',
+                            border: '1px solid var(--border)',
+                            color: 'var(--text-2)',
+                        }}
+                        onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.07)'}
+                        onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.04)'}
                     >
                         Скасувати
                     </button>
                     <button
                         onClick={() => onConfirm(scope)}
-                        className="flex-1 py-2.5 rounded-xl text-[13px] font-semibold cursor-pointer transition-colors"
+                        className="flex-1 py-2.5 rounded-xl text-[13px] font-semibold cursor-pointer transition-all"
                         style={{
-                            background: scope === 'both' ? 'rgba(255,77,106,0.85)' : 'var(--accent)',
+                            background: scope === 'both'
+                                ? 'rgba(255,77,106,0.85)'
+                                : 'var(--accent)',
                             color: '#fff',
-                            boxShadow: scope === 'both' ? '0 4px 20px rgba(255,77,106,0.3)' : '0 4px 20px rgba(124,77,255,0.3)',
+                            boxShadow: scope === 'both'
+                                ? '0 4px 20px rgba(255,77,106,0.3)'
+                                : '0 4px 20px rgba(124,77,255,0.3)',
                         }}
                     >
                         Очистити
@@ -216,73 +188,111 @@ function ClearChatModal({
     );
 }
 
+function ScopeOption({
+                         value, current, label, description, onChange, color,
+                     }: {
+    value: ClearScope; current: ClearScope;
+    label: string; description: string;
+    onChange: (v: ClearScope) => void;
+    color: string;
+}) {
+    const active = value === current;
+    return (
+        <label
+            className="flex items-start gap-3 cursor-pointer rounded-xl p-3.5 transition-all duration-150"
+            style={{
+                background: active ? `${color}10` : 'rgba(255,255,255,0.02)',
+                border: `1px solid ${active ? `${color}40` : 'var(--border)'}`,
+            }}
+        >
+            {/* Radio */}
+            <div
+                className="relative flex items-center justify-center mt-0.5 shrink-0 w-4 h-4 rounded-full border-2 transition-all"
+                style={{ borderColor: active ? color : 'rgba(255,255,255,0.2)' }}
+                onClick={() => onChange(value)}
+            >
+                {active && (
+                    <div
+                        className="w-2 h-2 rounded-full"
+                        style={{ background: color }}
+                    />
+                )}
+            </div>
+            <div onClick={() => onChange(value)}>
+                <p className="text-[13px] font-medium" style={{ color: 'var(--text-1)' }}>{label}</p>
+                <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: 'var(--text-3)' }}>{description}</p>
+            </div>
+        </label>
+    );
+}
+
 // ── 5-second undo toast ───────────────────────────────────────────────────────
 function UndoToast({
-                       scope,
-                       onUndo,
-                       onExpired,
+                       scope, onUndo, onExpired,
                    }: {
-    scope:     ClearScope;
-    onUndo:    () => void;
+    scope: ClearScope;
+    onUndo: () => void;
     onExpired: () => void;
 }) {
     const [remaining, setRemaining] = useState(5);
     const expiredRef = useRef(false);
+    const TOTAL = 5;
 
     useEffect(() => {
         const interval = setInterval(() => {
             setRemaining(r => {
                 if (r <= 1) {
                     clearInterval(interval);
-                    if (!expiredRef.current) {
-                        expiredRef.current = true;
-                        onExpired();
-                    }
+                    if (!expiredRef.current) { expiredRef.current = true; onExpired(); }
                     return 0;
                 }
                 return r - 1;
             });
         }, 1_000);
         return () => clearInterval(interval);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleUndo = () => {
         expiredRef.current = true;
         onUndo();
     };
 
-    const pct = ((5 - remaining) / 5) * 100;
+    const pct    = ((TOTAL - remaining) / TOTAL) * 100;
+    const r      = 14;
+    const circ   = 2 * Math.PI * r;
+    const offset = circ * (1 - pct / 100);
 
     return (
         <div
-            className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[400] flex items-center gap-4 px-5 py-3.5 rounded-2xl shadow-2xl"
+            className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[500] flex items-center gap-4 px-5 py-3.5 rounded-2xl shadow-2xl modal-enter"
             style={{
                 background: 'var(--bg-elevated)',
                 border: '1px solid var(--border-md)',
-                boxShadow: '0 16px 40px rgba(0,0,0,0.5)',
-                minWidth: '320px',
+                boxShadow: '0 16px 50px rgba(0,0,0,0.6)',
+                minWidth: '300px',
                 maxWidth: '90vw',
             }}
         >
-            {/* Progress ring */}
-            <div className="relative shrink-0">
-                <svg width="36" height="36" viewBox="0 0 36 36">
-                    <circle cx="18" cy="18" r="15" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="3" />
+            {/* Countdown ring */}
+            <div className="relative shrink-0 w-9 h-9">
+                <svg width="36" height="36" viewBox="0 0 36 36" className="rotate-[-90deg]">
+                    <circle cx="18" cy="18" r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="3" />
                     <circle
-                        cx="18" cy="18" r="15" fill="none"
+                        cx="18" cy="18" r={r} fill="none"
                         stroke="var(--red)"
                         strokeWidth="3"
                         strokeLinecap="round"
-                        strokeDasharray={`${2 * Math.PI * 15}`}
-                        strokeDashoffset={`${2 * Math.PI * 15 * (1 - pct / 100)}`}
-                        transform="rotate(-90 18 18)"
+                        strokeDasharray={circ}
+                        strokeDashoffset={offset}
                         style={{ transition: 'stroke-dashoffset 0.9s linear' }}
                     />
-                    <text x="18" y="22" textAnchor="middle" fontSize="11" fontWeight="700" fill="var(--red)">
-                        {remaining}
-                    </text>
                 </svg>
+                <span
+                    className="absolute inset-0 flex items-center justify-center text-[11px] font-bold tabular-nums"
+                    style={{ color: 'var(--red)' }}
+                >
+                    {remaining}
+                </span>
             </div>
 
             <div className="flex-1 min-w-0">
@@ -302,7 +312,7 @@ function UndoToast({
                     border: '1px solid var(--border-accent)',
                     color: 'var(--accent-bright)',
                 }}
-                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(124,77,255,0.25)'}
+                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(124,77,255,0.28)'}
                 onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'rgba(124,77,255,0.15)'}
             >
                 Скасувати
@@ -311,15 +321,15 @@ function UndoToast({
     );
 }
 
-// ── Stat pill (media count) ───────────────────────────────────────────────────
+// ── Stat pill ─────────────────────────────────────────────────────────────────
 function StatPill({ icon, count, label }: { icon: React.ReactNode; count: number; label: string }) {
     return (
         <div
-            className="flex flex-col items-center gap-1 px-4 py-3 rounded-xl flex-1"
+            className="flex flex-col items-center gap-1.5 px-4 py-3 rounded-xl flex-1"
             style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border)' }}
         >
             <div style={{ color: 'var(--accent-bright)' }}>{icon}</div>
-            <span className="text-[14px] font-bold" style={{ color: 'var(--text-1)' }}>{count}</span>
+            <span className="text-[15px] font-bold tabular-nums" style={{ color: 'var(--text-1)' }}>{count}</span>
             <span className="text-[10px]" style={{ color: 'var(--text-3)' }}>{label}</span>
         </div>
     );
@@ -336,7 +346,7 @@ function ActionBtn({
         <button
             onClick={onClick}
             disabled={disabled}
-            className="flex flex-col items-center gap-1.5 px-3 py-3 rounded-xl cursor-pointer transition-all disabled:opacity-40 disabled:cursor-not-allowed flex-1"
+            className="flex flex-col items-center gap-2 px-3 py-3 rounded-xl cursor-pointer transition-all disabled:opacity-40 disabled:cursor-not-allowed flex-1"
             style={{
                 background: danger ? 'rgba(255,77,106,0.08)' : 'rgba(255,255,255,0.04)',
                 border: `1px solid ${danger ? 'rgba(255,77,106,0.18)' : 'var(--border)'}`,
@@ -353,32 +363,35 @@ function ActionBtn({
             <div style={{ color: danger ? 'var(--red)' : 'var(--accent-bright)' }}>{icon}</div>
             <span className="text-[10px] font-medium text-center leading-tight"
                   style={{ color: danger ? 'var(--red)' : 'var(--text-2)' }}>
-        {label}
-      </span>
+                {label}
+            </span>
         </button>
     );
 }
 
-// ── Row item ──────────────────────────────────────────────────────────────────
-function RowItem({
+// ── Info row ──────────────────────────────────────────────────────────────────
+function InfoRow({
                      icon, label, value, onClick, danger = false,
                  }: {
     icon: React.ReactNode; label: string; value?: string;
     onClick?: () => void; danger?: boolean;
 }) {
+    const Tag = onClick ? 'button' : 'div';
     return (
-        <button
+        <Tag
             onClick={onClick}
-            className="w-full flex items-center gap-3 px-4 py-3 cursor-pointer transition-all text-left"
-            style={{ color: 'inherit' }}
-            onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.04)'}
-            onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
+            className="w-full flex items-center gap-3 px-4 py-3 transition-all text-left"
+            style={{ cursor: onClick ? 'pointer' : 'default' }}
+            onMouseEnter={e => onClick && ((e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.04)')}
+            onMouseLeave={e => onClick && ((e.currentTarget as HTMLElement).style.background = 'transparent')}
         >
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-                 style={{
-                     background: danger ? 'rgba(255,77,106,0.1)' : 'rgba(255,255,255,0.05)',
-                     color: danger ? 'var(--red)' : 'var(--text-3)',
-                 }}>
+            <div
+                className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                style={{
+                    background: danger ? 'rgba(255,77,106,0.1)' : 'rgba(255,255,255,0.05)',
+                    color: danger ? 'var(--red)' : 'var(--text-3)',
+                }}
+            >
                 {icon}
             </div>
             <div className="flex-1 min-w-0">
@@ -387,26 +400,27 @@ function RowItem({
                     {label}
                 </p>
                 {value && (
-                    <p className="text-[11px] truncate" style={{ color: 'var(--text-3)' }}>{value}</p>
+                    <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-3)' }}>
+                        {value}
+                    </p>
                 )}
             </div>
-            <ChevronRight size={14} style={{ color: 'var(--text-3)' }} />
-        </button>
+            {onClick && <ChevronRight size={14} style={{ color: 'var(--text-3)', flexShrink: 0 }} />}
+        </Tag>
     );
+}
+
+// ── Section divider ───────────────────────────────────────────────────────────
+function Divider() {
+    return <div className="mx-4 my-1" style={{ borderTop: '1px solid var(--border)' }} />;
 }
 
 // ── Main panel ────────────────────────────────────────────────────────────────
 export function UserProfilePanel({
-                                     conversation,
-                                     currentUser,
-                                     peer,
-                                     onClose,
-                                     onStartCall,
-                                     onToggleSearch,
-                                     onToggleMedia,
-                                     onChatCleared,
-                                     onRemoveFriend,
-                                 }: UserProfilePanelProps) {
+                                     conversation, currentUser, peer, onClose,
+                                     onStartCall, onToggleSearch, onToggleMedia,
+                                     onChatCleared, onRemoveFriend,
+                                 }: Readonly<UserProfilePanelProps>) {
     const isDirect  = conversation.type === 'DIRECT';
     const isGroup   = conversation.type === 'GROUP';
     const isChannel = conversation.type === 'CHANNEL';
@@ -415,21 +429,27 @@ export function UserProfilePanel({
     const myMember = conversation.members.find(m => m.userId === currentUser?.id);
     const isAdmin  = myMember?.role === 'OWNER' || myMember?.role === 'ADMIN';
 
-    // Display data
-    const displayName   = isSelf ? 'Збережені' : (peer?.nickname ?? conversation.name ?? 'Chat');
+    const displayName   = isSelf ? 'Збережені повідомлення' : (peer?.nickname ?? conversation.name ?? 'Chat');
     const displayAvatar = peer ?? { nickname: displayName, avatarUrl: conversation.avatarUrl };
-    const isOnline      = isDirect && !isSelf ? peer?.isOnline : false;
+    const isOnline      = isDirect && !isSelf ? (peer?.isOnline ?? false) : false;
     const lastSeen      = isDirect && !isSelf && peer?.lastSeen
         ? formatLastSeen(peer.lastSeen)
         : null;
 
-    // Join date for groups
     const joinedAt = myMember?.joinedAt
-        ? new Date(myMember.joinedAt).toLocaleDateString('uk-UA', { day: 'numeric', month: 'long', year: 'numeric' })
+        ? new Date(myMember.joinedAt).toLocaleDateString('uk-UA', {
+            day: 'numeric', month: 'long', year: 'numeric',
+        })
         : null;
 
-    // Media counts
-    const [mediaCount, setMediaCount] = useState<MediaCount>({ photos: 0, voice: 0, files: 0 });
+    const memberLabel = isGroup
+        ? `${conversation.members.length} учасників`
+        : isChannel
+            ? `${conversation.members.length} підписників`
+            : null;
+
+    // ── Media counts ──────────────────────────────────────────────────────────
+    const [mediaCount,   setMediaCount]   = useState<MediaCount>({ photos: 0, voice: 0, files: 0 });
     const [mediaLoading, setMediaLoading] = useState(true);
 
     useEffect(() => {
@@ -440,9 +460,9 @@ export function UserProfilePanel({
                 for (const m of data) {
                     if (!m.fileUrl) continue;
                     const mime: string = m.fileType ?? '';
-                    if (mime.startsWith('image/'))       photos++;
-                    else if (mime.startsWith('audio/'))  voice++;
-                    else                                  files++;
+                    if (mime.startsWith('image/'))      photos++;
+                    else if (mime.startsWith('audio/')) voice++;
+                    else                                 files++;
                 }
                 setMediaCount({ photos, voice, files });
             })
@@ -450,14 +470,14 @@ export function UserProfilePanel({
             .finally(() => setMediaLoading(false));
     }, [conversation.id]);
 
-    // Clear chat flow
+    // ── Clear chat flow ───────────────────────────────────────────────────────
     const [showClearModal, setShowClearModal] = useState(false);
     const [pendingScope,   setPendingScope]   = useState<ClearScope | null>(null);
     const [clearing,       setClearing]       = useState(false);
 
     const handleClearConfirm = (scope: ClearScope) => {
         setShowClearModal(false);
-        setPendingScope(scope);  // triggers undo toast
+        setPendingScope(scope); // triggers undo toast
     };
 
     const handleUndoExpired = useCallback(async () => {
@@ -469,45 +489,46 @@ export function UserProfilePanel({
             await api.delete(`/conversations/${conversation.id}/messages?scope=${scope}`);
             onChatCleared?.();
         } catch (err: any) {
-            console.error('Clear chat failed:', err.message);
+            console.error('[ClearChat] failed:', err.message);
         } finally {
             setClearing(false);
         }
     }, [pendingScope, conversation.id, onChatCleared]);
 
-    const handleUndo = () => {
+    const handleUndo = useCallback(() => {
         setPendingScope(null);
-    };
+    }, []);
 
-    // Member count label
-    const memberLabel = isGroup
-        ? `${conversation.members.length} учасників`
-        : isChannel
-            ? `${conversation.members.length} підписників`
-            : null;
+    // ── Close on Escape ───────────────────────────────────────────────────────
+    useEffect(() => {
+        const h = (e: KeyboardEvent) => { if (e.key === 'Escape' && !showClearModal) onClose(); };
+        document.addEventListener('keydown', h);
+        return () => document.removeEventListener('keydown', h);
+    }, [onClose, showClearModal]);
 
     const peerId = peer?.id;
+    const totalMedia = mediaCount.photos + mediaCount.voice + mediaCount.files;
 
     return (
         <>
-            {/* Backdrop — on mobile only */}
+            {/* ── Mobile backdrop ── */}
             <div
-                className="fixed inset-0 z-30 md:hidden"
-                style={{ background: 'rgba(0,0,0,0.4)' }}
+                className="fixed inset-0 z-30 md:hidden backdrop-enter"
+                style={{ background: 'rgba(0,0,0,0.5)' }}
                 onClick={onClose}
             />
 
-            {/* Panel */}
+            {/* ── Panel ── */}
             <div
                 className="absolute top-0 right-0 h-full z-30 flex flex-col overflow-hidden panel-enter"
                 style={{
                     width: '300px',
                     background: 'var(--bg-surface)',
                     borderLeft: '1px solid var(--border)',
-                    boxShadow: '-8px 0 32px rgba(0,0,0,0.35)',
+                    boxShadow: '-12px 0 40px rgba(0,0,0,0.4)',
                 }}
             >
-                {/* Close bar */}
+                {/* ── Close bar ── */}
                 <div
                     className="flex items-center gap-2 px-4 py-3 shrink-0"
                     style={{ borderBottom: '1px solid var(--border)' }}
@@ -522,67 +543,76 @@ export function UserProfilePanel({
                         <X size={16} />
                     </button>
                     <span className="text-[13px] font-semibold" style={{ color: 'var(--text-1)' }}>
-            {isDirect ? 'Профіль' : isGroup ? 'Група' : 'Канал'}
-          </span>
+                        {isDirect ? 'Профіль' : isGroup ? 'Інформація про групу' : 'Канал'}
+                    </span>
                 </div>
 
-                {/* Scrollable content */}
+                {/* ── Scrollable content ── */}
                 <div className="flex-1 overflow-y-auto chat-scroll">
 
-                    {/* ── Hero: avatar + name ── */}
-                    <div className="flex flex-col items-center px-4 pt-6 pb-5">
+                    {/* ── Hero ── */}
+                    <div className="flex flex-col items-center px-4 pt-7 pb-5">
                         {/* Avatar */}
-                        <div className="w-24 h-24 rounded-full overflow-hidden mb-3 ring-2"
-                             style={{ boxShadow: '0 0 0 2px var(--border-accent)' }}>
+                        <div
+                            className="w-24 h-24 rounded-full overflow-hidden mb-4 ring-2 shrink-0"
+                            style={{ boxShadow: '0 0 0 2px var(--border-accent), 0 8px 30px rgba(0,0,0,0.4)' }}
+                        >
                             <LargeAvatar user={displayAvatar} />
                         </div>
 
                         {/* Name */}
-                        <h2 className="text-[17px] font-bold text-center leading-tight mb-1"
+                        <h2 className="text-[17px] font-bold text-center leading-tight mb-1.5 px-2"
                             style={{ color: 'var(--text-1)' }}>
                             {displayName}
                         </h2>
 
-                        {/* Status / member count */}
+                        {/* Status */}
                         {isOnline && (
                             <span className="text-[12px] font-medium" style={{ color: 'var(--green)' }}>
-                В мережі
-              </span>
+                                В мережі
+                            </span>
                         )}
                         {!isOnline && lastSeen && (
                             <span className="text-[12px]" style={{ color: 'var(--text-3)' }}>
-                {lastSeen}
-              </span>
+                                {lastSeen}
+                            </span>
                         )}
                         {memberLabel && (
                             <span className="text-[12px]" style={{ color: 'var(--text-3)' }}>
-                {memberLabel}
-              </span>
+                                {memberLabel}
+                            </span>
                         )}
 
                         {/* E2E badge */}
                         {(isDirect || isGroup) && (
-                            <div className="flex items-center gap-1 mt-2 px-2.5 py-1 rounded-full"
-                                 style={{ background: 'var(--accent-dim)', border: '1px solid var(--border-accent)' }}>
+                            <div
+                                className="flex items-center gap-1.5 mt-3 px-2.5 py-1.5 rounded-full"
+                                style={{
+                                    background: 'var(--accent-dim)',
+                                    border: '1px solid var(--border-accent)',
+                                }}
+                            >
                                 <Shield size={10} style={{ color: 'var(--accent)' }} />
-                                <span className="text-[10px] font-mono" style={{ color: 'var(--accent)' }}>E2E encrypted</span>
+                                <span className="text-[10px] font-mono" style={{ color: 'var(--accent)' }}>
+                                    End-to-end encrypted
+                                </span>
                             </div>
                         )}
                     </div>
 
-                    {/* ── Action buttons row ── */}
+                    {/* ── Quick action buttons ── */}
                     {!isSelf && (
                         <div className="px-4 pb-4">
                             <div className="flex gap-2">
                                 {isDirect && peerId && onStartCall && (
                                     <>
                                         <ActionBtn
-                                            icon={<Phone size={18} />}
+                                            icon={<Phone size={17} />}
                                             label="Аудіо"
                                             onClick={() => onStartCall(conversation.id, peerId, 'audio')}
                                         />
                                         <ActionBtn
-                                            icon={<Video size={18} />}
+                                            icon={<Video size={17} />}
                                             label="Відео"
                                             onClick={() => onStartCall(conversation.id, peerId, 'video')}
                                         />
@@ -590,14 +620,14 @@ export function UserProfilePanel({
                                 )}
                                 {onToggleSearch && (
                                     <ActionBtn
-                                        icon={<Search size={18} />}
+                                        icon={<Search size={17} />}
                                         label="Пошук"
                                         onClick={() => { onToggleSearch(); onClose(); }}
                                     />
                                 )}
                                 {onToggleMedia && (
                                     <ActionBtn
-                                        icon={<LayoutGrid size={18} />}
+                                        icon={<LayoutGrid size={17} />}
                                         label="Медіа"
                                         onClick={() => { onToggleMedia(); onClose(); }}
                                     />
@@ -606,74 +636,87 @@ export function UserProfilePanel({
                         </div>
                     )}
 
-                    <div className="mx-4 mb-1" style={{ borderTop: '1px solid var(--border)' }} />
+                    <Divider />
 
                     {/* ── Media stats ── */}
-                    {(mediaCount.photos > 0 || mediaCount.voice > 0 || mediaCount.files > 0 || mediaLoading) && (
-                        <div className="px-4 py-3">
-                            <p className="text-[10px] font-semibold uppercase tracking-widest mb-3"
-                               style={{ color: 'var(--text-3)' }}>
-                                Вкладення
-                            </p>
-                            <div className="flex gap-2">
-                                {mediaLoading ? (
-                                    <div className="flex-1 h-16 rounded-xl" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                                        <div className="w-full h-full flex items-center justify-center">
-                                            <Loader2 size={14} className="animate-spin" style={{ color: 'var(--text-3)' }} />
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <>
-                                        {mediaCount.photos > 0 && (
-                                            <StatPill icon={<Image size={14} />} count={mediaCount.photos} label="Фото" />
-                                        )}
-                                        {mediaCount.voice > 0 && (
-                                            <StatPill icon={<Mic size={14} />} count={mediaCount.voice} label="Голос" />
-                                        )}
-                                        {mediaCount.files > 0 && (
-                                            <StatPill icon={<Paperclip size={14} />} count={mediaCount.files} label="Файли" />
-                                        )}
-                                    </>
-                                )}
-                            </div>
+                    <div className="px-4 py-4">
+                        <p
+                            className="text-[10px] font-semibold uppercase tracking-widest mb-3"
+                            style={{ color: 'var(--text-3)' }}
+                        >
+                            Вкладення
+                        </p>
+                        <div className="flex gap-2">
+                            {mediaLoading ? (
+                                <div
+                                    className="flex-1 h-20 rounded-xl flex items-center justify-center"
+                                    style={{ background: 'rgba(255,255,255,0.03)' }}
+                                >
+                                    <Loader2 size={14} className="animate-spin" style={{ color: 'var(--text-3)' }} />
+                                </div>
+                            ) : totalMedia === 0 ? (
+                                <div
+                                    className="flex-1 h-16 rounded-xl flex items-center justify-center"
+                                    style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)' }}
+                                >
+                                    <span className="text-[12px]" style={{ color: 'var(--text-3)' }}>Немає вкладень</span>
+                                </div>
+                            ) : (
+                                <>
+                                    {mediaCount.photos > 0 && (
+                                        <StatPill icon={<Image size={14} />} count={mediaCount.photos} label="Фото" />
+                                    )}
+                                    {mediaCount.voice > 0 && (
+                                        <StatPill icon={<Mic size={14} />} count={mediaCount.voice} label="Голос" />
+                                    )}
+                                    {mediaCount.files > 0 && (
+                                        <StatPill icon={<Paperclip size={14} />} count={mediaCount.files} label="Файли" />
+                                    )}
+                                </>
+                            )}
                         </div>
-                    )}
+                    </div>
 
-                    <div className="mx-4 mb-1" style={{ borderTop: '1px solid var(--border)' }} />
+                    <Divider />
 
                     {/* ── Info rows ── */}
                     <div className="py-1">
                         {joinedAt && (
-                            <RowItem
-                                icon={<Calendar size={15} />}
-                                label={isGroup ? 'Ви приєднались' : 'В чаті з'}
+                            <InfoRow
+                                icon={<Calendar size={14} />}
+                                label={isGroup ? 'Ви приєднались' : 'Чат розпочато'}
                                 value={joinedAt}
-                                onClick={() => {}}
                             />
                         )}
                         {peer && !isSelf && (
-                            <RowItem
-                                icon={<Clock size={15} />}
+                            <InfoRow
+                                icon={<Clock size={14} />}
                                 label="Останній сеанс"
-                                value={lastSeen ?? (isOnline ? 'зараз в мережі' : 'невідомо')}
-                                onClick={() => {}}
+                                value={lastSeen ?? (isOnline ? 'Зараз в мережі' : 'Невідомо')}
+                            />
+                        )}
+                        {isGroup && (
+                            <InfoRow
+                                icon={<Users size={14} />}
+                                label="Учасники"
+                                value={`${conversation.members.length} учасників`}
                             />
                         )}
                     </div>
 
-                    <div className="mx-4 my-1" style={{ borderTop: '1px solid var(--border)' }} />
+                    <Divider />
 
                     {/* ── Danger zone ── */}
                     <div className="py-1">
-                        <RowItem
-                            icon={<Trash2 size={15} />}
+                        <InfoRow
+                            icon={<Trash2 size={14} />}
                             label="Очистити переписку"
                             onClick={() => setShowClearModal(true)}
                             danger
                         />
                         {isDirect && !isSelf && peerId && onRemoveFriend && (
-                            <RowItem
-                                icon={<UserMinus size={15} />}
+                            <InfoRow
+                                icon={<UserMinus size={14} />}
                                 label="Видалити з контактів"
                                 onClick={() => { onRemoveFriend(peerId); onClose(); }}
                                 danger
@@ -681,25 +724,26 @@ export function UserProfilePanel({
                         )}
                     </div>
 
-                    {/* Bottom padding */}
                     <div className="h-6" />
                 </div>
 
-                {/* Clearing overlay */}
+                {/* ── Clearing overlay ── */}
                 {clearing && (
-                    <div className="absolute inset-0 flex items-center justify-center"
-                         style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}>
+                    <div
+                        className="absolute inset-0 flex items-center justify-center backdrop-enter"
+                        style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}
+                    >
                         <div className="flex flex-col items-center gap-3">
-                            <Loader2 size={28} className="animate-spin" style={{ color: 'var(--accent-bright)' }} />
+                            <Loader2 size={26} className="animate-spin" style={{ color: 'var(--accent-bright)' }} />
                             <p className="text-[12px] font-mono" style={{ color: 'var(--text-2)' }}>
-                                Очищення...
+                                Очищення…
                             </p>
                         </div>
                     </div>
                 )}
             </div>
 
-            {/* ── Clear chat modal ── */}
+            {/* ── Clear modal ── */}
             {showClearModal && (
                 <ClearChatModal
                     convName={displayName}

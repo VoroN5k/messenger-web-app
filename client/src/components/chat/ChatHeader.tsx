@@ -1,12 +1,15 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Users, Hash, Search, LayoutGrid, Phone, Video, Lock, Pin, ChevronUp, ChevronLeft } from 'lucide-react';
+import {
+    Users, Hash, Search, LayoutGrid, Phone, Video, Lock,
+    Pin, ChevronUp, ChevronLeft, Info,
+} from 'lucide-react';
 import { Avatar }       from '@/src/components/chat/Avatar';
 import { Conversation } from '@/src/types/conversation.types';
 import { User }         from '@/src/types/auth.types';
 import api              from '@/src/lib/axios';
-import {formatLastSeen} from "@/src/lib/chatFormatters";
+import { formatLastSeen } from '@/src/lib/chatFormatters';
 
 interface PinnedMessageData {
     messageId: number;
@@ -29,13 +32,15 @@ interface Props {
     onStartCall?:   (convId: number, targetUserId: number, type: 'audio' | 'video') => void;
     onJumpToMessage?: (messageId: number) => void;
     onBack?: () => void;
+
+    onOpenProfile?: () => void;
 }
 
 export function ChatHeader({
                                conversation, currentUser,
                                isSearchOpen, showMedia,
                                onToggleSearch, onToggleMedia, onStartCall,
-                               onJumpToMessage, onBack,
+                               onJumpToMessage, onBack, onOpenProfile,
                            }: Readonly<Props>) {
     const currentUserId = currentUser?.id;
     const isGroup   = conversation.type === 'GROUP';
@@ -45,12 +50,12 @@ export function ChatHeader({
         ? conversation.members.find(m => m.userId !== currentUserId)
         : null;
 
-    const memberCountLabel = `${conversation.members.length} ${isGroup ? 'members' : 'subscribers'}`;
+    const memberCountLabel = `${conversation.members.length} ${isGroup ? 'учасників' : 'підписників'}`;
 
     // Multi-pin state
-    const [pinnedMessages, setPinnedMessages]     = useState<PinnedMessageData[]>([]);
-    const [pinnedIndex,    setPinnedIndex]        = useState(0); // which one to show in banner
-    const [loadingPinned,  setLoadingPinned]      = useState(false);
+    const [pinnedMessages, setPinnedMessages] = useState<PinnedMessageData[]>([]);
+    const [pinnedIndex,    setPinnedIndex]    = useState(0);
+    const [loadingPinned,  setLoadingPinned]  = useState(false);
 
     const fetchPinnedMessages = useCallback(async () => {
         setLoadingPinned(true);
@@ -69,7 +74,6 @@ export function ChatHeader({
         fetchPinnedMessages();
     }, [fetchPinnedMessages]);
 
-    // Cycle to next pinned message (Telegram-style — cycles backwards through the list)
     const cyclePinned = () => {
         if (pinnedMessages.length === 0) return;
         const nextIdx = (pinnedIndex + 1) % pinnedMessages.length;
@@ -78,7 +82,6 @@ export function ChatHeader({
         if (msg && onJumpToMessage) onJumpToMessage(msg.message.id);
     };
 
-    // Jump to the currently shown pinned message on click
     const jumpToCurrent = () => {
         const msg = pinnedMessages[pinnedIndex];
         if (msg && onJumpToMessage) onJumpToMessage(msg.message.id);
@@ -99,96 +102,137 @@ export function ChatHeader({
         <div>
             {/* ── Main header bar ── */}
             <header
-                className="flex items-center justify-between px-5 py-3 shrink-0 z-10"
+                className="flex items-center justify-between px-4 py-2.5 shrink-0 z-10"
                 style={{
                     background: 'var(--bg-surface)',
-                    borderBottom: hasPinned ? '1px solid var(--border)' : '1px solid var(--border)',
+                    borderBottom: '1px solid var(--border)',
                     minHeight: '60px',
                 }}
             >
-                {/* Left: info */}
-                <div className="flex items-center gap-3 min-w-0">
+                {/* Left: back + avatar + info — CLICKABLE to open profile */}
+                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                    {/* Back button (mobile) */}
                     {onBack && (
                         <button
                             onClick={onBack}
-                            className="md:hidden flex items-center justify-center w-8 h-8 rounded-full shrink-0 transition-colors"
+                            className="md:hidden flex items-center justify-center w-8 h-8 rounded-full shrink-0 transition-colors cursor-pointer"
                             style={{ color: 'var(--text-2)' }}
                             aria-label="Back"
                         >
                             <ChevronLeft size={22} />
                         </button>
                     )}
-                    {conversation.avatarUrl || conversation.type === 'DIRECT' ? (
-                        <div className="relative shrink-0">
-                            <Avatar
-                                user={{ nickname: conversation.name ?? '?', avatarUrl: conversation.avatarUrl }}
-                                size="md"
-                                className="w-9 h-9"
-                            />
-                            {conversation.type === 'DIRECT' && (
-                                <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2"
-                                      style={{
-                                          background: conversation.isOnline ? 'var(--green)' : '#3a3a4a',
-                                          borderColor: 'var(--bg-surface)',
-                                      }} />
-                            )}
-                        </div>
-                    ) : (
-                        <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
-                             style={{ background: isGroup ? 'rgba(124,77,255,0.12)' : 'rgba(59,130,246,0.12)' }}>
-                            {isGroup
-                                ? <Users size={15} style={{ color: 'var(--accent)' }} />
-                                : <Hash  size={15} className="text-blue-400" />
-                            }
-                        </div>
-                    )}
 
-                    <div className="min-w-0">
-                        <h2 className="text-[14px] font-semibold truncate leading-tight" style={{ color: 'var(--text-1)' }}>
-                            {isSelf ? 'Saved Messages' : (conversation.name ?? 'Chat')}
-                        </h2>
-                        <p className="text-[11px] leading-tight mt-0.5 truncate"
-                           style={{
-                               color: conversation.type === 'DIRECT' && conversation.isOnline
-                                   ? 'var(--green)'
-                                   : 'var(--text-3)',
-                           }}>
-                            {conversation.type === 'DIRECT'
-                                ? isSelf
-                                    ? 'Private vault'
-                                    : conversation.isOnline
-                                        ? 'Онлайн'
-                                        : formatLastSeen(otherMember?.user?.lastSeen)
-                                : memberCountLabel}
-                        </p>
-                    </div>
+                    {/* Avatar + name — click opens profile panel */}
+                    <button
+                        onClick={onOpenProfile}
+                        className="flex items-center gap-2.5 min-w-0 flex-1 text-left rounded-xl px-1.5 py-1 -ml-1.5 transition-all duration-150 cursor-pointer group"
+                        style={{ background: 'transparent' }}
+                        onMouseEnter={e => onOpenProfile && ((e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.04)')}
+                        onMouseLeave={e => ((e.currentTarget as HTMLElement).style.background = 'transparent')}
+                        aria-label="Відкрити профіль"
+                    >
+                        {/* Avatar */}
+                        {conversation.avatarUrl || conversation.type === 'DIRECT' ? (
+                            <div className="relative shrink-0">
+                                <Avatar
+                                    user={{ nickname: conversation.name ?? '?', avatarUrl: conversation.avatarUrl }}
+                                    size="md"
+                                    className="w-9 h-9"
+                                />
+                                {conversation.type === 'DIRECT' && (
+                                    <span
+                                        className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2"
+                                        style={{
+                                            background: conversation.isOnline ? 'var(--green)' : '#3a3a4a',
+                                            borderColor: 'var(--bg-surface)',
+                                        }}
+                                    />
+                                )}
+                            </div>
+                        ) : (
+                            <div
+                                className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
+                                style={{ background: isGroup ? 'rgba(124,77,255,0.12)' : 'rgba(59,130,246,0.12)' }}
+                            >
+                                {isGroup
+                                    ? <Users size={15} style={{ color: 'var(--accent)' }} />
+                                    : <Hash  size={15} className="text-blue-400" />}
+                            </div>
+                        )}
+
+                        {/* Name + status */}
+                        <div className="min-w-0">
+                            <h2
+                                className="text-[14px] font-semibold truncate leading-tight transition-colors duration-150"
+                                style={{ color: 'var(--text-1)' }}
+                            >
+                                {isSelf ? 'Збережені повідомлення' : (conversation.name ?? 'Chat')}
+                            </h2>
+                            <p
+                                className="text-[11px] leading-tight mt-0.5 truncate"
+                                style={{
+                                    color: conversation.type === 'DIRECT' && conversation.isOnline
+                                        ? 'var(--green)'
+                                        : 'var(--text-3)',
+                                }}
+                            >
+                                {conversation.type === 'DIRECT'
+                                    ? isSelf
+                                        ? 'Ваш особистий архів'
+                                        : conversation.isOnline
+                                            ? 'В мережі'
+                                            : formatLastSeen(otherMember?.user?.lastSeen)
+                                    : memberCountLabel}
+                            </p>
+                        </div>
+                    </button>
                 </div>
 
-                {/* Right: actions */}
-                <div className="flex items-center gap-1 shrink-0">
+                {/* Right: action buttons */}
+                <div className="flex items-center gap-0.5 shrink-0 ml-1">
+                    {/* Call buttons — DIRECT only */}
                     {conversation.type === 'DIRECT' && !isSelf && onStartCall && otherMember && (
                         <>
-                            <HeaderButton onClick={() => onStartCall(conversation.id, otherMember.userId, 'audio')} title="Audio call">
+                            <HeaderButton
+                                onClick={() => onStartCall(conversation.id, otherMember.userId, 'audio')}
+                                title="Аудіо дзвінок"
+                            >
                                 <Phone size={15} />
                             </HeaderButton>
-                            <HeaderButton onClick={() => onStartCall(conversation.id, otherMember.userId, 'video')} title="Video call">
+                            <HeaderButton
+                                onClick={() => onStartCall(conversation.id, otherMember.userId, 'video')}
+                                title="Відео дзвінок"
+                            >
                                 <Video size={15} />
                             </HeaderButton>
-                            <div className="w-px h-4 mx-1" style={{ background: 'var(--border)' }} />
+                            <div className="w-px h-4 mx-0.5" style={{ background: 'var(--border)' }} />
                         </>
                     )}
 
-                    <HeaderButton onClick={onToggleSearch} active={isSearchOpen} title="Search">
+                    <HeaderButton onClick={onToggleSearch} active={isSearchOpen} title="Пошук">
                         <Search size={15} />
                     </HeaderButton>
 
-                    <HeaderButton onClick={onToggleMedia} active={showMedia} title="Attachments">
+                    <HeaderButton onClick={onToggleMedia} active={showMedia} title="Медіафайли">
                         <LayoutGrid size={15} />
                     </HeaderButton>
 
+                    {onOpenProfile && (
+                        <HeaderButton onClick={onOpenProfile} title="Профіль">
+                            <Info size={15} />
+                        </HeaderButton>
+                    )}
+
+                    {/* E2E badge */}
                     {(conversation.type === 'DIRECT' || conversation.type === 'GROUP') && (
-                        <div className="flex items-center gap-1 ml-2 px-2 py-1 rounded-lg"
-                             style={{ background: 'rgba(124,77,255,0.08)', border: '1px solid rgba(124,77,255,0.14)' }}>
+                        <div
+                            className="flex items-center gap-1 ml-1.5 px-2 py-1 rounded-lg"
+                            style={{
+                                background: 'rgba(124,77,255,0.08)',
+                                border: '1px solid rgba(124,77,255,0.14)',
+                            }}
+                        >
                             <Lock size={9} style={{ color: 'var(--accent)' }} />
                             <span className="text-[9px] font-mono" style={{ color: 'var(--accent)' }}>E2E</span>
                         </div>
@@ -206,7 +250,7 @@ export function ChatHeader({
                         minHeight: '44px',
                     }}
                 >
-                    {/* Left: pin icon + count indicator bars (Telegram-style) */}
+                    {/* Pin icon + count indicator bars */}
                     <div className="flex flex-col items-center gap-0.5 shrink-0">
                         <Pin size={12} className="text-amber-400" />
                         {pinnedMessages.length > 1 && (
@@ -227,7 +271,7 @@ export function ChatHeader({
                         )}
                     </div>
 
-                    {/* Center: sender + content */}
+                    {/* Content */}
                     <button
                         onClick={jumpToCurrent}
                         className="flex-1 min-w-0 text-left"
@@ -235,14 +279,14 @@ export function ChatHeader({
                         <p className="text-[11px] font-semibold text-amber-400 leading-tight truncate">
                             {pinnedMessages.length > 1
                                 ? `Закріплено #${pinnedMessages.length - pinnedIndex} з ${pinnedMessages.length}`
-                                : `${currentPinned.message.sender.nickname}`}
+                                : currentPinned.message.sender.nickname}
                         </p>
                         <p className="text-[11px] truncate" style={{ color: 'var(--text-3)' }}>
                             {pinnedPreview}
                         </p>
                     </button>
 
-                    {/* Right: cycle button (only when multiple pinned) */}
+                    {/* Cycle button */}
                     {pinnedMessages.length > 1 && (
                         <button
                             onClick={cyclePinned}
@@ -268,7 +312,9 @@ export function ChatHeader({
 }
 
 // Icon button
-function HeaderButton({ children, onClick, active, title }: {
+function HeaderButton({
+                          children, onClick, active, title,
+                      }: {
     children: React.ReactNode;
     onClick:  () => void;
     active?:  boolean;
