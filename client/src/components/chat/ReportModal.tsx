@@ -178,7 +178,7 @@ function ReportModalContent({ onClose }: ReportModalProps) {
     );
 }
 
-export function ReportButton() {
+export function ReportButton({ inline = false }: { inline?: boolean }) {
     const [open, setOpen] = useState(false);
 
     // Close on Escape
@@ -189,36 +189,49 @@ export function ReportButton() {
         return () => document.removeEventListener('keydown', h);
     }, [open]);
 
+    const triggerButton = inline ? (
+        // Компактна кнопка для сайдбару
+        <button
+            onClick={() => setOpen(true)}
+            className="w-8 h-8 rounded-xl flex items-center justify-center cursor-pointer transition-all duration-150"
+            style={{ color: 'var(--text-3)' }}
+            title="Report an issue"
+            onMouseEnter={e => {
+                (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.05)';
+                (e.currentTarget as HTMLElement).style.color = 'var(--text-2)';
+            }}
+            onMouseLeave={e => {
+                (e.currentTarget as HTMLElement).style.background = 'transparent';
+                (e.currentTarget as HTMLElement).style.color = 'var(--text-3)';
+            }}
+        >
+            <Bug size={15} />
+        </button>
+    ) : (
+        // Оригінальний floating варіант ( не використовується)
+        <button
+            onClick={() => setOpen(true)}
+            className="fixed bottom-6 left-6 z-40 flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer transition-all duration-200 group"
+            style={{
+                background:  'rgba(14,14,22,0.9)',
+                border:      '1px solid var(--border-md)',
+                backdropFilter: 'blur(12px)',
+                boxShadow:   '0 4px 20px rgba(0,0,0,0.4)',
+                color:       'var(--text-3)',
+            }}
+            title="Report an issue"
+        >
+            <Bug size={13} />
+            <span className="text-[11px] font-medium hidden group-hover:inline transition-all">
+                Report
+            </span>
+        </button>
+    );
+
     return (
         <>
             {/* Floating trigger */}
-            <button
-                onClick={() => setOpen(true)}
-                className="fixed bottom-6 right-6 z-40 flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer transition-all duration-200 group"
-                style={{
-                    background:  'rgba(14,14,22,0.9)',
-                    border:      '1px solid var(--border-md)',
-                    backdropFilter: 'blur(12px)',
-                    boxShadow:   '0 4px 20px rgba(0,0,0,0.4)',
-                    color:       'var(--text-3)',
-                }}
-                onMouseEnter={e => {
-                    const el = e.currentTarget as HTMLElement;
-                    el.style.borderColor = 'var(--border-accent)';
-                    el.style.color = 'var(--accent-bright)';
-                }}
-                onMouseLeave={e => {
-                    const el = e.currentTarget as HTMLElement;
-                    el.style.borderColor = 'var(--border-md)';
-                    el.style.color = 'var(--text-3)';
-                }}
-                title="Report an issue"
-            >
-                <Bug size={13} />
-                <span className="text-[11px] font-medium hidden group-hover:inline transition-all">
-          Report
-        </span>
-            </button>
+            {triggerButton}
 
             {/* Modal */}
             {open && (

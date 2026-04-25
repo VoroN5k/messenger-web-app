@@ -18,6 +18,7 @@ import {
     Conversation, FriendItem, Friendship, UserSearchResult,
 } from '@/src/types/conversation.types';
 import { User } from '@/src/types/auth.types';
+import {ReportButton} from "@/src/components/chat/ReportModal";
 
 type SidebarTab = 'chats' | 'friends';
 
@@ -216,6 +217,9 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
                                     : <Bell size={15} />}
                         </SidebarIconBtn>
                     )}
+
+                    <ReportButton inline />
+
                     <SidebarIconBtn onClick={() => router.push('/settings')} title="Налаштування">
                         <Settings size={15} />
                     </SidebarIconBtn>
