@@ -1,5 +1,6 @@
 import {
-    Body, Controller, Delete, forwardRef, Get, Inject, Param,
+  BadRequestException,
+  Body, Controller, Delete, forwardRef, Get, Inject, Param,
     ParseIntPipe, Patch, Post, Put, Query, UseGuards,
 } from '@nestjs/common';
 import { Throttle, SkipThrottle } from '@nestjs/throttler';
@@ -111,6 +112,19 @@ export class ConversationsController {
         if (around) return this.conversationsService.getMessagesAround(userId, id, parseInt(around, 10));
         if (after)  return this.conversationsService.getMessagesAfter(userId,  id, parseInt(after,  10));
         return this.conversationsService.getMessages(userId, id, cursor ? parseInt(cursor, 10) : undefined);
+    }
+
+    @Throttle({ default: { ttl: 60_000, limit: 10 } })
+    @Delete(':id/messages')
+    clearMessages(
+        @CurrentUser('sub') userId: number,
+        @Param('id', ParseIntPipe) id: number,
+        @Query('scope') scope: 'self' | 'both' = 'self',
+    ) {
+      if (scope !== 'self' && scope !== 'both') {
+        throw new BadRequestException('Scope must be either "self" or "both"');
+      }
+      return this.conversationsService.clearMessages(userId, id, scope);
     }
 
     @Throttle({ default: { ttl: 60_000, limit: 30 } })
