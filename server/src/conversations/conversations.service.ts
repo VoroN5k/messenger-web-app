@@ -392,7 +392,66 @@ export class ConversationsService {
         return msgs.reverse().map(msg => this.mapMessageWithRead(msg, userId, otherMembersLastRead));
     }
 
-    async getMediaFiles(userId: number, conversationId: number) {
+  /**
+   * Clear all messages in a conversation.
+   *
+   * scope = 'self'  - hides messages for the requesting user by setting clearedAt
+   *                   on their ConversationMember record. No change visible to others.
+   *
+   * scope = 'both'  - soft-deletes all messages (sets deletedAt) so both sides
+   *                   see them as deleted. CleanupService hard-deletes after grace period.
+   *                   Only the conversation owner OR any member in a DIRECT chat can do this.
+   */
+
+  async clearMessages(
+    userId: number,
+    conversationId: number,
+    scope: 'self' | 'both',
+  ): Promise<{ scope: string; cleared: boolean}> {
+    const member = await this.assertMember(userId, conversationId);
+    const conv   = await this.prisma.conversation.findUniqueOrThrow({
+      where: { id: conversationId },
+      select: { type: true },
+    });
+
+    if (scope === 'both') {
+      // In DIRECT chats both members can clear for both.
+      // In GROUP/CHANNEL only OWNER or ADMIN can clear for everyone.
+      if (conv.type !== 'DIRECT' && member.role === 'MEMBER') {
+        throw new ForbiddenException('Only admins can clear chat for everyone');
+      }
+
+      // Soft-delete all non-deleted messages
+      await this.prisma.message.updateMany({
+        where: { conversationId, deletedAt: null },
+        data:  { deletedAt: new Date() },
+      });
+
+      // Clear pinned messages
+      await this.prisma.pinnedMessage.deleteMany({ where: { conversationId } });
+
+      // Reset clearedAt for all members (their slate is now clean)
+      await this.prisma.conversationMember.updateMany({
+        where: { conversationId },
+        data:  { clearedAt: new Date() },
+      });
+
+      await this.prisma.conversation.update({
+        where: { id: conversationId },
+        data:  { updatedAt: new Date() },
+      });
+    } else {
+      // scope === 'self': just move the member's clearedAt watermark forward
+      await this.prisma.conversationMember.update({
+        where: { conversationId_userId: { conversationId, userId } },
+        data:  { clearedAt: new Date() },
+      });
+    }
+
+    return { scope, cleared: true };
+  }
+
+  async getMediaFiles(userId: number, conversationId: number) {
         await this.assertMember(userId, conversationId);
         return this.prisma.message.findMany({
             where: { conversationId, deletedAt: null, fileUrl: { not: null }, ...this.scheduledFilter(userId) },
