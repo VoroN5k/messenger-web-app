@@ -116,6 +116,8 @@ model Conversation {
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
 
+  scheduledDeleteAt DateTime?
+
   members        ConversationMember[]
   messages       Message[]
   senderKeys     GroupSenderKey[]
@@ -131,8 +133,11 @@ model ConversationMember {
   role           MemberRole @default(MEMBER)
   joinedAt       DateTime   @default(now())
   lastReadAt     DateTime   @default(now())
-  isPinned       Boolean    @default(false)
-  isArchived     Boolean    @default(false)
+
+  clearedAt DateTime?
+
+  isPinned   Boolean @default(false)
+  isArchived Boolean @default(false)
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -142,6 +147,7 @@ model ConversationMember {
   @@index([conversationId])
   @@index([userId, isPinned])
   @@index([userId, isArchived])
+  @@index([conversationId, userId, clearedAt])
 }
 
 model PinnedMessage {
