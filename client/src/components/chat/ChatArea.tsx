@@ -38,13 +38,15 @@ interface ChatAreaProps {
     onSetPendingForward?:    (msg: Message | null) => void;
     onSelectConversation?:   (conv: Conversation) => void;
     onBack?:                 () => void;
+    onRemoveFriend?: (friendId: number) => void;
 }
 
 export default function ChatArea({
-                                     currentUser, conversation, conversations, socket,
-                                     onConversationUpdate, onMarkRead, onStartCall,
-                                     pendingForward, onSetPendingForward, onSelectConversation, onBack,
-                                 }: Readonly<ChatAreaProps>) {
+    currentUser, conversation, conversations, socket,
+    onConversationUpdate, onMarkRead, onStartCall,
+    pendingForward, onSetPendingForward, onSelectConversation, onBack,
+    onRemoveFriend,
+}: Readonly<ChatAreaProps>) {
     const currentUserId = currentUser?.id;
 
     const [inputValue,     setInputValue]     = useState('');
@@ -85,6 +87,9 @@ export default function ChatArea({
         : undefined;
 
     const myMember  = conversation?.members.find(m => m.userId === currentUserId);
+    const peer = conversation?.type === 'DIRECT'
+        ? (conversation.members.find(m => m.userId !== currentUserId)?.user ?? null)
+        : null;
     const canPost   = conversation?.type !== 'CHANNEL' || myMember?.role !== 'MEMBER';
     const isGroup   = conversation?.type === 'GROUP';
     const isChannel = conversation?.type === 'CHANNEL';
@@ -389,6 +394,18 @@ export default function ChatArea({
         onSetPendingForward?.(null);
     }, [conversation, conversations, currentUserId, socket, e2e, onSetPendingForward]);
 
+    const handleToggleSearch = useCallback(() => {
+        setSearchOpen(o => !o);
+    }, []);
+
+    const handleToggleMedia = useCallback(() => {
+        setShowMedia(o => !o);
+    }, []);
+
+    const handleChatCleared = useCallback(() => {
+        resetToLatest();
+    }, [resetToLatest]);
+
     // ── ForwardModal: instead of immediately forwarding, navigate to target conv ──
     const handleForwardModalSelect = useCallback(async (targetConvId: number) => {
         if (!forwardMsg) return;
@@ -685,20 +702,18 @@ export default function ChatArea({
             )}
 
             {showProfile && conversation && (
-                   <UserProfilePanel
-                     conversation={conversation}
-                     currentUser={currentUser}
-                     peer={peer}
-                     onClose={() => setShowProfile(false)}
-                     onStartCall={onStartCall}
-                     onToggleSearch={handleToggleSearch}
-                     onToggleMedia={handleToggleMedia}
-                     onChatCleared={handleChatCleared}
-                     onRemoveFriend={onRemoveFriend}
-                   />
-                 )}
-
-
+                <UserProfilePanel
+                    conversation={conversation}
+                    currentUser={currentUser}
+                    peer={peer}
+                    onClose={() => setShowProfile(false)}
+                    onStartCall={onStartCall}
+                    onToggleSearch={handleToggleSearch}
+                    onToggleMedia={handleToggleMedia}
+                    onChatCleared={handleChatCleared}
+                    onRemoveFriend={onRemoveFriend}
+                />
+            )}
         </main>
     );
 }
