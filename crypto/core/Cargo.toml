@@ -13,7 +13,7 @@ hmac         = { workspace = true }
 ml-kem       = { workspace = true }
 serde        = { workspace = true }
 zeroize      = { workspace = true }
-rand         = { workspace = true }
+rand_core    = { workspace = true }
 thiserror    = { workspace = true }
 
 [dev-dependencies]

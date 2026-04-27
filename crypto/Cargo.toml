@@ -4,13 +4,13 @@ resolver = "2"
 
 [workspace.dependencies]
 x25519-dalek  = { version = "2",    features = ["static_secrets", "serde"] }
-ed25519-dalek = { version = "2",    features = ["serde"] }
-aes-gcm       = "0.10"
-hkdf          = "0.13"
-sha2          = "0.11"
-hmac          = "0.13"
+ed25519-dalek = { version = "2",    features = ["serde", "rand_core"] }
+aes-gcm       = { version = "0.10", features = ["getrandom"] }
+hkdf          = "0.12"
+sha2          = "0.10"
+hmac          = "0.12"
 ml-kem        = "0.2"
 serde         = { version = "1",    features = ["derive"] }
 zeroize       = { version = "1",    features = ["derive"] }
-rand          = "0.9"
+rand_core     = { version = "0.6",  features = ["getrandom"] }
 thiserror     = "2"

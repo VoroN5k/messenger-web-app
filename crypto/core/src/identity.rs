@@ -1,14 +1,12 @@
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use rand::rngs::OsRng;
+use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
 use x25519_dalek::{PublicKey as X25519Public, SharedSecret, StaticSecret};
 use zeroize::ZeroizeOnDrop;
 
 use crate::error::CryptoError;
 
-// ---------------------------------------------------------------------------
 // Ed25519 identity — long-term signing key
-// ---------------------------------------------------------------------------
 
 /// Long-term identity key pair (Ed25519).
 /// The private key is zeroized from memory on drop.
@@ -64,9 +62,7 @@ impl IdentityPublicKey {
     }
 }
 
-// ---------------------------------------------------------------------------
-// X25519 key agreement — per-device / per-session DH key pair
-// ---------------------------------------------------------------------------
+// X25519 key agreement - per-device / per-session DH key pair
 
 /// Static X25519 key pair used for Diffie–Hellman key agreement.
 /// The private scalar is zeroized from memory on drop.
@@ -114,9 +110,7 @@ impl KeyAgreementKeyPair {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
