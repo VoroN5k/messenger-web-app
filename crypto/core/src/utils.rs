@@ -3,13 +3,52 @@ use aes_gcm::{
     Aes256Gcm, Key, Nonce,
 };
 use hkdf::Hkdf;
+use hmac::{Hmac, Mac};
 use rand_core::{OsRng, RngCore};
 use sha2::Sha256;
 
 use crate::error::CryptoError;
 
+type HmacSha256 = Hmac<Sha256>;
+
 pub const NONCE_LEN: usize = 12;
 pub const KEY_LEN: usize = 32;
+
+// HMAC-SHA-256
+
+// Shared by double_ratchet and group modules; both use the Signal HMAC-based
+// chain ratchet. Keeping it here avoids duplicating the Hmac import machinery.
+pub fn hmac_sha256(key: &[u8; 32], data: &[u8]) -> [u8; 32] {
+    // explicit trait qualification resolves new_from_slice ambiguity between
+    // aes_gcm::aead::KeyInit and hmac::Mac, both of which are in scope
+    let mut mac = <HmacSha256 as Mac>::new_from_slice(key).expect("HMAC accepts any key size");
+    mac.update(data);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&mac.finalize().into_bytes());
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Serde helper for [u8; 64]
+// ---------------------------------------------------------------------------
+
+// serde only auto-derives Serialize/Deserialize up to [T; 32].
+// Any type that holds a 64-byte array (e.g. an Ed25519 signature) must use
+// this module via `#[serde(with = "crate::utils::serde_bytes64")]`.
+pub mod serde_bytes64 {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(v: &[u8; 64], s: S) -> Result<S::Ok, S::Error> {
+        v.as_slice().serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 64], D::Error> {
+        let bytes = Vec::<u8>::deserialize(d)?;
+        bytes
+            .try_into()
+            .map_err(|_| serde::de::Error::custom("expected exactly 64 bytes"))
+    }
+}
 
 //
 // HKDF-SHA-256

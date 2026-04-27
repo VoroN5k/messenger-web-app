@@ -10,6 +10,7 @@ hkdf          = "0.12"
 sha2          = "0.10"
 hmac          = "0.12"
 ml-kem        = "0.2"
+argon2        = { version = "0.5", features = ["zeroize"] }
 serde         = { version = "1",    features = ["derive"] }
 zeroize       = { version = "1",    features = ["derive"] }
 rand_core     = { version = "0.6",  features = ["getrandom"] }

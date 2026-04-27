@@ -22,4 +22,7 @@ pub enum CryptoError {
 
     #[error("KEM decapsulation failed")]
     KemDecapsulation,
+
+    #[error("too many skipped messages: possible DoS")]
+    SkipLimitExceeded,
 }

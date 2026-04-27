@@ -3,22 +3,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     error::CryptoError,
     identity::{IdentityPublicKey, KeyAgreementKeyPair, KeyAgreementPublicKey},
-    utils::hkdf,
+    utils::{hkdf, serde_bytes64},
 };
-
-// serde helper for [u8; 64] since serde only auto-derives up to [T; 32]
-mod serde_sig64 {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S: Serializer>(v: &[u8; 64], s: S) -> Result<S::Ok, S::Error> {
-        v.as_slice().serialize(s)
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 64], D::Error> {
-        let bytes = Vec::<u8>::deserialize(d)?;
-        bytes.try_into().map_err(|_| serde::de::Error::custom("expected 64 bytes"))
-    }
-}
 
 // prepended to DH outputs before KDF, per Signal X3DH spec
 const F: [u8; 32] = [0xFF; 32];
@@ -32,7 +18,7 @@ pub struct X3dhBundle {
     pub ik_sign: IdentityPublicKey,
     pub ik_dh: KeyAgreementPublicKey,
     pub spk: KeyAgreementPublicKey,
-    #[serde(with = "serde_sig64")]
+    #[serde(with = "serde_bytes64")]
     pub spk_sig: [u8; 64],
     pub opk: Option<KeyAgreementPublicKey>,
 }
