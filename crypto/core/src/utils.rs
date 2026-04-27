@@ -11,9 +11,9 @@ use crate::error::CryptoError;
 pub const NONCE_LEN: usize = 12;
 pub const KEY_LEN: usize = 32;
 
-// ---------------------------------------------------------------------------
+//
 // HKDF-SHA-256
-// ---------------------------------------------------------------------------
+//
 
 /// HKDF-Extract: `ikm` + optional `salt` → 32-byte PRK.
 pub fn hkdf_extract(salt: Option<&[u8]>, ikm: &[u8]) -> [u8; KEY_LEN] {
@@ -41,9 +41,9 @@ pub fn hkdf<const N: usize>(
     Ok(out)
 }
 
-// ---------------------------------------------------------------------------
+//
 // AES-256-GCM
-// ---------------------------------------------------------------------------
+//
 
 /// Generate a random 12-byte nonce using the OS RNG.
 pub fn random_nonce() -> [u8; NONCE_LEN] {
@@ -87,9 +87,9 @@ pub fn aead_decrypt(
         .map_err(|_| CryptoError::DecryptionFailed)
 }
 
-// ---------------------------------------------------------------------------
+//
 // Tests
-// ---------------------------------------------------------------------------
+//
 
 #[cfg(test)]
 mod tests {
