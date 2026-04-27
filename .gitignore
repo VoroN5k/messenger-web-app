@@ -42,3 +42,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+crypto/target/
+crypto/wasm/pkg/
+crypto/napi/*.node
+crypto/mobile/target/
