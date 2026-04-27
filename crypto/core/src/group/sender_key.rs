@@ -89,6 +89,32 @@ impl SenderState {
     }
 }
 
+// wire: version(1) | key_id(4 BE) | iteration(4 BE) | chain_key(32) | signing_seed(32)
+impl SenderState {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(73);
+        buf.push(0x01);
+        buf.extend_from_slice(&self.key_id.to_be_bytes());
+        buf.extend_from_slice(&self.iteration.to_be_bytes());
+        buf.extend_from_slice(&self.chain_key);
+        buf.extend_from_slice(&self.signing_key.to_bytes());
+        buf
+    }
+
+    pub fn from_bytes(data: &[u8]) -> Result<Self, crate::error::CryptoError> {
+        use crate::utils::ByteParser;
+        let mut p = ByteParser::new(data);
+        if p.read_u8()? != 0x01 {
+            return Err(crate::error::CryptoError::InvalidCiphertext);
+        }
+        let key_id = p.read_u32()?;
+        let iteration = p.read_u32()?;
+        let chain_key: [u8; 32] = p.read_fixed()?;
+        let signing_seed: [u8; 32] = p.read_fixed()?;
+        Ok(Self { key_id, iteration, chain_key, signing_key: IdentityKeyPair::from_bytes(&signing_seed) })
+    }
+}
+
 impl Drop for SenderState {
     fn drop(&mut self) {
         self.chain_key.zeroize();
@@ -160,6 +186,45 @@ impl ReceiverState {
         self.chain_key = new_ck;
         self.iteration += 1;
         Ok(mk)
+    }
+}
+
+// wire: version(1) | key_id(4 BE) | iteration(4 BE) | chain_key(32) | signing_pub(32) |
+//       skipped_count(4 BE) | [iter(4 BE) + mk(32)]*
+impl ReceiverState {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(77 + self.skipped.len() * 36);
+        buf.push(0x01);
+        buf.extend_from_slice(&self.key_id.to_be_bytes());
+        buf.extend_from_slice(&self.iteration.to_be_bytes());
+        buf.extend_from_slice(&self.chain_key);
+        buf.extend_from_slice(&self.signing_pub.0);
+        buf.extend_from_slice(&(self.skipped.len() as u32).to_be_bytes());
+        for (iter, mk) in &self.skipped {
+            buf.extend_from_slice(&iter.to_be_bytes());
+            buf.extend_from_slice(mk);
+        }
+        buf
+    }
+
+    pub fn from_bytes(data: &[u8]) -> Result<Self, crate::error::CryptoError> {
+        use crate::{identity::IdentityPublicKey, utils::ByteParser};
+        let mut p = ByteParser::new(data);
+        if p.read_u8()? != 0x01 {
+            return Err(crate::error::CryptoError::InvalidCiphertext);
+        }
+        let key_id = p.read_u32()?;
+        let iteration = p.read_u32()?;
+        let chain_key: [u8; 32] = p.read_fixed()?;
+        let signing_pub = IdentityPublicKey(p.read_fixed()?);
+        let count = p.read_u32()? as usize;
+        let mut skipped = std::collections::BTreeMap::new();
+        for _ in 0..count {
+            let iter = p.read_u32()?;
+            let mk: [u8; 32] = p.read_fixed()?;
+            skipped.insert(iter, mk);
+        }
+        Ok(Self { key_id, iteration, chain_key, signing_pub, skipped })
     }
 }
 

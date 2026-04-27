@@ -298,6 +298,81 @@ fn decrypt_with_mk(
     aead_decrypt(mk, &nonce, ciphertext, &full_aad)
 }
 
+// Binary serialization
+
+// wire: version(1) | dhs_secret(32) | dhr_present(1) | [dhr(32)] | rk(32) |
+//       cks_present(1) | [cks(32)] | ckr_present(1) | [ckr(32)] |
+//       ns(4 BE) | nr(4 BE) | pn(4 BE) |
+//       skipped_count(4 BE) | [key_len(2 BE) + key_bytes + iter(4 BE) + mk(32)]*
+const SERIAL_VERSION: u8 = 0x01;
+
+impl RatchetState {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(256);
+        buf.push(SERIAL_VERSION);
+        buf.extend_from_slice(&self.dhs.to_bytes());
+        match &self.dhr {
+            Some(k) => { buf.push(1); buf.extend_from_slice(&k.0); }
+            None => buf.push(0),
+        }
+        buf.extend_from_slice(&self.rk);
+        match &self.cks {
+            Some(k) => { buf.push(1); buf.extend_from_slice(k); }
+            None => buf.push(0),
+        }
+        match &self.ckr {
+            Some(k) => { buf.push(1); buf.extend_from_slice(k); }
+            None => buf.push(0),
+        }
+        buf.extend_from_slice(&self.ns.to_be_bytes());
+        buf.extend_from_slice(&self.nr.to_be_bytes());
+        buf.extend_from_slice(&self.pn.to_be_bytes());
+        buf.extend_from_slice(&(self.mkskipped.len() as u32).to_be_bytes());
+        for ((dh_key, iter), mk) in &self.mkskipped {
+            buf.extend_from_slice(&(dh_key.len() as u16).to_be_bytes());
+            buf.extend_from_slice(dh_key);
+            buf.extend_from_slice(&iter.to_be_bytes());
+            buf.extend_from_slice(mk);
+        }
+        buf
+    }
+
+    pub fn from_bytes(data: &[u8]) -> Result<Self, CryptoError> {
+        use crate::utils::ByteParser;
+        let mut p = ByteParser::new(data);
+
+        if p.read_u8()? != SERIAL_VERSION {
+            return Err(CryptoError::InvalidCiphertext);
+        }
+
+        let dhs = KeyAgreementKeyPair::from_bytes(p.read_fixed()?);
+        let dhr = if p.read_u8()? == 1 {
+            Some(KeyAgreementPublicKey(p.read_fixed()?))
+        } else {
+            None
+        };
+        let rk: [u8; 32] = p.read_fixed()?;
+        let cks = if p.read_u8()? == 1 { Some(p.read_fixed::<32>()?) } else { None };
+        let ckr = if p.read_u8()? == 1 { Some(p.read_fixed::<32>()?) } else { None };
+
+        let ns = p.read_u32()?;
+        let nr = p.read_u32()?;
+        let pn = p.read_u32()?;
+
+        let count = p.read_u32()? as usize;
+        let mut mkskipped = BTreeMap::new();
+        for _ in 0..count {
+            let key_len = p.read_u16()? as usize;
+            let dh_key = p.read_bytes(key_len)?;
+            let iter = p.read_u32()?;
+            let mk: [u8; 32] = p.read_fixed()?;
+            mkskipped.insert((dh_key, iter), mk);
+        }
+
+        Ok(RatchetState { dhs, dhr, rk, cks, ckr, ns, nr, pn, mkskipped })
+    }
+}
+
 // Tests
 
 #[cfg(test)]
@@ -405,6 +480,39 @@ mod tests {
             decrypt(&mut bob, h_last, c_last, b""),
             Err(CryptoError::SkipLimitExceeded)
         ));
+    }
+
+    #[test]
+    fn serialization_roundtrip_sender() {
+        let (mut alice, mut bob) = make_pair([8u8; 32]);
+        let (h, c) = encrypt(&mut alice, b"first", b"").unwrap();
+        decrypt(&mut bob, &h, &c, b"").unwrap();
+
+        let bytes = alice.to_bytes();
+        let mut alice2 = RatchetState::from_bytes(&bytes).unwrap();
+
+        let (h2, c2) = encrypt(&mut alice2, b"second", b"").unwrap();
+        assert_eq!(decrypt(&mut bob, &h2, &c2, b"").unwrap(), b"second");
+    }
+
+    #[test]
+    fn serialization_roundtrip_with_skipped() {
+        let (mut alice, mut bob) = make_pair([9u8; 32]);
+        let (h0, c0) = encrypt(&mut alice, b"zero", b"").unwrap();
+        let (h1, c1) = encrypt(&mut alice, b"one", b"").unwrap();
+        decrypt(&mut bob, &h1, &c1, b"").unwrap(); // skip h0
+
+        let bytes = bob.to_bytes();
+        let mut bob2 = RatchetState::from_bytes(&bytes).unwrap();
+        assert_eq!(decrypt(&mut bob2, &h0, &c0, b"").unwrap(), b"zero");
+    }
+
+    #[test]
+    fn serialization_invalid_version_rejected() {
+        let (alice, _) = make_pair([10u8; 32]);
+        let mut bytes = alice.to_bytes();
+        bytes[0] = 0xFF;
+        assert!(RatchetState::from_bytes(&bytes).is_err());
     }
 
     #[test]

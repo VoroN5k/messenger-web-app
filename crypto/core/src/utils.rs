@@ -126,6 +126,58 @@ pub fn aead_decrypt(
         .map_err(|_| CryptoError::DecryptionFailed)
 }
 
+// ---------------------------------------------------------------------------
+// ByteParser
+// ---------------------------------------------------------------------------
+
+// cursor-based parser used by to_bytes/from_bytes implementations across modules
+pub(crate) struct ByteParser<'a> {
+    data: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> ByteParser<'a> {
+    pub(crate) fn new(data: &'a [u8]) -> Self {
+        Self { data, pos: 0 }
+    }
+
+    pub(crate) fn read_u8(&mut self) -> Result<u8, crate::error::CryptoError> {
+        if self.pos >= self.data.len() {
+            return Err(crate::error::CryptoError::InvalidCiphertext);
+        }
+        let v = self.data[self.pos];
+        self.pos += 1;
+        Ok(v)
+    }
+
+    pub(crate) fn read_u16(&mut self) -> Result<u16, crate::error::CryptoError> {
+        Ok(u16::from_be_bytes(self.read_fixed()?))
+    }
+
+    pub(crate) fn read_u32(&mut self) -> Result<u32, crate::error::CryptoError> {
+        Ok(u32::from_be_bytes(self.read_fixed()?))
+    }
+
+    pub(crate) fn read_fixed<const N: usize>(&mut self) -> Result<[u8; N], crate::error::CryptoError> {
+        if self.pos + N > self.data.len() {
+            return Err(crate::error::CryptoError::InvalidCiphertext);
+        }
+        let mut arr = [0u8; N];
+        arr.copy_from_slice(&self.data[self.pos..self.pos + N]);
+        self.pos += N;
+        Ok(arr)
+    }
+
+    pub(crate) fn read_bytes(&mut self, n: usize) -> Result<Vec<u8>, crate::error::CryptoError> {
+        if self.pos + n > self.data.len() {
+            return Err(crate::error::CryptoError::InvalidCiphertext);
+        }
+        let v = self.data[self.pos..self.pos + n].to_vec();
+        self.pos += n;
+        Ok(v)
+    }
+}
+
 //
 // Tests
 //
