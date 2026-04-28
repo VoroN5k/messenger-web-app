@@ -8,7 +8,7 @@ import { useFriends }             from '@/src/hooks/useFriends';
 import { usePushNotifications }   from '@/src/hooks/usePushNotifications';
 import api, { refreshAccessToken } from '@/src/lib/axios';
 import { jwtDecode }              from 'jwt-decode';
-import { Bell, X, ShieldAlert }   from 'lucide-react';
+import { Bell, X, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { useTranslations }         from 'next-intl';
 import Sidebar                    from '@/src/components/chat/SideBar';
 import ChatArea                   from '@/src/components/chat/ChatArea';
@@ -17,22 +17,24 @@ import { useWebRTC }              from '@/src/hooks/useWebRTC';
 import { IncomingCallModal }      from '@/src/components/call/IncomingCallModal';
 import { ActiveCallOverlay }      from '@/src/components/call/ActiveCallOverlay';
 import { useE2E }                 from '@/src/hooks/useE2E';
-import { RecoveryUnlockModal }    from "@/src/components/chat/RecoveryUnlockModal";
-import { useRouter }              from "next/navigation";
+import { RecoveryUnlockModal }   from "@/src/components/chat/RecoveryUnlockModal";
+import { SecuritySetupModal }    from "@/src/components/chat/SecuritySetupModal";
+import { useRouter }             from "next/navigation";
 import {ReportButton} from "@/src/components/chat/ReportModal";
 
 export default function ChatPage() {
     const t = useTranslations();
     const { user, logout, _hasHydrated } = useAuthStore();
     const socket = useSocket();
-    const { needsRecovery, needsRecoverySetup, keysDesynced, unlockWithPin, distributeMySenderKey, isReady: e2eReady, keysJustRotated, invalidatePeerKey } = useE2E();
+    const { needsRecovery, needsRecoverySetup, keysDesynced, unlockWithPin, setupRecovery, distributeMySenderKey, isReady: e2eReady, keysJustRotated, invalidatePeerKey } = useE2E();
     const router = useRouter();
 
-    const [selectedConv,   setSelectedConv]   = useState<Conversation | null>(null);
-    const [isLoaded,       setIsLoaded]       = useState(false);
-    const [showBanner,     setShowBanner]     = useState(false);
-    const [pendingForward, setPendingForward] = useState<Message | null>(null);
-    const [serverWaking, setServerWaking] = useState(false);
+    const [selectedConv,      setSelectedConv]      = useState<Conversation | null>(null);
+    const [isLoaded,          setIsLoaded]          = useState(false);
+    const [showBanner,        setShowBanner]        = useState(false);
+    const [pendingForward,    setPendingForward]    = useState<Message | null>(null);
+    const [serverWaking,      setServerWaking]      = useState(false);
+    const [securityModalOpen, setSecurityModalOpen] = useState(false);
 
     useEffect(() => {
         if (!_hasHydrated) return;
@@ -281,22 +283,31 @@ export default function ChatPage() {
 
             {needsRecovery && <RecoveryUnlockModal onUnlock={unlockWithPin} />}
 
-            {needsRecoverySetup && (
-                <div className="fixed bottom-6 right-6 z-50 max-w-sm w-full bg-[#111114] rounded-2xl shadow-2xl border border-amber-500/20 p-5 flex items-start gap-4 animate-in slide-in-from-bottom-8">
-                    <div className="w-10 h-10 rounded-full bg-amber-500/10 flex items-center justify-center shrink-0">
-                        <ShieldAlert size={20} className="text-amber-500" />
+            {needsRecoverySetup && !securityModalOpen && (
+                <div className="relative z-50 flex items-center justify-between gap-3 px-6 py-3 bg-amber-500/10 border-b border-amber-500/20">
+                    <div className="flex items-center gap-3">
+                        <div className="p-1.5 rounded-full bg-amber-500/20 text-amber-400">
+                            <ShieldAlert size={16} />
+                        </div>
+                        <span className="text-sm font-medium text-slate-200">
+                            We&apos;ve upgraded Vesper&apos;s security — set a Recovery PIN to protect your keys
+                        </span>
                     </div>
-                    <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-slate-100 mb-1">{t('settings.keys_not_protected')}</p>
-                        <p className="text-xs text-slate-400 leading-relaxed mb-3">
-                            {t('settings.keys_setup_warning')}
-                        </p>
-                        <button onClick={() => router.push('/auth/setup-recovery')}
-                                className="text-sm font-semibold text-violet-400 hover:text-violet-300 transition-colors cursor-pointer">
-                            {t('settings.recovery_setup')}
-                        </button>
-                    </div>
+                    <button
+                        onClick={() => setSecurityModalOpen(true)}
+                        className="shrink-0 flex items-center gap-1.5 text-sm font-semibold text-violet-400 hover:text-violet-300 transition-colors cursor-pointer"
+                    >
+                        <ShieldCheck size={14} />
+                        Update security
+                    </button>
                 </div>
+            )}
+
+            {needsRecoverySetup && securityModalOpen && (
+                <SecuritySetupModal
+                    onSetup={setupRecovery}
+                    onClose={() => setSecurityModalOpen(false)}
+                />
             )}
         </div>
     );

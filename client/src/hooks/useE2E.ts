@@ -10,12 +10,6 @@
 // Wire format - group:
 //   v2g:<base64url>  where decoded = key_id(4)|iteration(4)|sig(64)|ct
 //
-// Server additions needed:
-//   GET  /keys/v2/:userId -> { bundle: string }  (161-byte X3DH bundle, base64url)
-//   POST /keys/v2 -> { bundle: string }
-//   GET  /keys/v2/recovery -> { encryptedBlob: string }
-//   POST /keys/v2/recovery -> { encryptedBlob: string, isReset?, twoFactorCode? }
-//   POST /conversations/:id/sender-keys  accepts { keys: [{ recipientId, distributionEnvelope, version:2 }] }
 
 import { useAuthStore } from '@/src/store/useAuthStore';
 import { useCallback, useEffect, useState } from 'react';
@@ -283,13 +277,13 @@ async function doDistribute(
     const { senderBytes, distMsg } = await wasm.groupSenderGenerate();
     await saveGroupSender(conversationId, senderBytes);
 
-    const payloads: Array<{ recipientId: number; distributionEnvelope: string; version: number }> = [];
+    const payloads: Array<{ recipientId: number; encryptedKey: string }> = [];
     await Promise.allSettled(
         memberUserIds.map(async (memberId) => {
             try {
                 const bundle   = await fetchBundle(memberId);
                 const envelope = await sealDistMsg(distMsg, bundle);
-                payloads.push({ recipientId: memberId, distributionEnvelope: b64Enc(envelope), version: 2 });
+                payloads.push({ recipientId: memberId, encryptedKey: b64Enc(envelope) });
             } catch (e) {
                 console.warn(`[E2E] dist failed for ${memberId}:`, e);
             }
@@ -297,7 +291,7 @@ async function doDistribute(
     );
 
     if (payloads.length) {
-        await api.post(`/conversations/${conversationId}/sender-keys`, { keys: payloads });
+        await api.post(`/conversations/${conversationId}/sender-keys`, { version: 2, keys: payloads });
     }
 }
 
@@ -555,7 +549,7 @@ export function useE2E() {
     ): Promise<void> => {
         if (!identity || !initialized || !currentUserId) return;
 
-        type Entry = { senderId: number; version?: number; distributionEnvelope?: string };
+        type Entry = { senderId: number; version?: number; encryptedKey?: string };
         let entries: Entry[] = [];
         try {
             const { data } = await api.get<Entry[]>(`/conversations/${conversationId}/sender-keys/for-me`);
@@ -566,13 +560,14 @@ export function useE2E() {
         const failedSenders: number[] = [];
 
         await Promise.allSettled(
-            entries.map(async ({ senderId, version, distributionEnvelope }) => {
-                if (version !== 2 || !distributionEnvelope) return;
+            entries.map(async ({ senderId, version, encryptedKey }) => {
+                // encryptedKey stores the X3DH distribution envelope for v2 entries
+                if (version !== 2 || !encryptedKey) return;
                 if (await loadGroupReceiver(conversationId, senderId)) {
                     if (senderId === currentUserId) hasMySenderKey = true;
                     return;
                 }
-                const distMsg = await openDistMsg(b64Dec(distributionEnvelope));
+                const distMsg = await openDistMsg(b64Dec(encryptedKey));
                 if (!distMsg) { if (senderId !== currentUserId) failedSenders.push(senderId); return; }
                 const { receiverBytes } = await wasm.groupReceiverFromDist(distMsg);
                 await saveGroupReceiver(conversationId, senderId, receiverBytes);
