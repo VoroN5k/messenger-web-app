@@ -119,9 +119,27 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
     };
 
     // Open direct / saved
-    const openDirect = async (targetUserId: number) => {
+    const openDirect = async (
+        targetUserId: number,
+        targetUser?: { nickname: string; avatarUrl?: string | null; isOnline?: boolean },
+    ) => {
+        // Reuse existing conversation from the list — it already has name/avatarUrl populated
+        const existing = conversations.find(
+            c => c.type === 'DIRECT' &&
+                 c.members.some(m => m.userId === targetUserId) &&
+                 c.members.some(m => m.userId === currentUser?.id),
+        );
+        if (existing) {
+            onSelectConversation(existing);
+            setSearchQuery(''); setSearchResults([]); setTab('chats');
+            return;
+        }
         const res  = await api.post('/conversations/direct', { targetUserId });
-        const conv = res.data as Conversation;
+        let   conv = res.data as Conversation;
+        // Server returns raw conversation without computed name/avatarUrl for DIRECT — enrich from passed user
+        if (targetUser && !conv.name) {
+            conv = { ...conv, name: targetUser.nickname, avatarUrl: targetUser.avatarUrl ?? null, isOnline: targetUser.isOnline };
+        }
         onAddConversation(conv); onSelectConversation(conv);
         socket?.emit('joinConversation', { conversationId: conv.id });
         setSearchQuery(''); setSearchResults([]); setTab('chats');
@@ -443,8 +461,10 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
                                              onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
                                             <div className="relative shrink-0">
                                                 <Avatar user={u} size="md" />
-                                                <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2"
-                                                      style={{ background: u.isOnline ? 'var(--green)' : '#3a3a4a', borderColor: 'var(--bg-surface)' }} />
+                                                {!u.statusEmoji && (
+                                                    <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2"
+                                                          style={{ background: u.isOnline ? 'var(--green)' : '#3a3a4a', borderColor: 'var(--bg-surface)' }} />
+                                                )}
                                             </div>
                                             <div className="flex-1 min-w-0">
                                                 <p className="text-[13px] font-medium truncate" style={{ color: 'var(--text-1)' }}>{u.nickname}</p>
@@ -453,7 +473,7 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
                                                 </p>
                                             </div>
                                             {u.friendshipStatus === 'ACCEPTED' ? (
-                                                <button onClick={() => openDirect(u.id)}
+                                                <button onClick={() => openDirect(u.id, u)}
                                                         className="text-[11px] font-medium px-3 py-1.5 rounded-lg cursor-pointer"
                                                         style={{ background: 'var(--accent-dim)', color: 'var(--accent-bright)', border: '1px solid var(--border-accent)' }}>
                                                     Написати
@@ -490,8 +510,10 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
                                          onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
                                         <div className="relative shrink-0">
                                             <Avatar user={f.friend} size="md" />
-                                            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2"
-                                                  style={{ background: f.friend.isOnline ? 'var(--green)' : '#3a3a4a', borderColor: 'var(--bg-surface)' }} />
+                                            {!f.friend.statusEmoji && (
+                                                <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2"
+                                                      style={{ background: f.friend.isOnline ? 'var(--green)' : '#3a3a4a', borderColor: 'var(--bg-surface)' }} />
+                                            )}
                                         </div>
                                         <div className="flex-1 min-w-0">
                                             <p className="text-[13px] font-medium truncate" style={{ color: 'var(--text-1)' }}>{f.friend.nickname}</p>
@@ -500,7 +522,7 @@ export default function Sidebar(props: Readonly<SidebarProps>) {
                                             </p>
                                         </div>
                                         <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-                                            <button onClick={() => openDirect(f.friend.id)}
+                                            <button onClick={() => openDirect(f.friend.id, f.friend)}
                                                     className="w-7 h-7 rounded-lg flex items-center justify-center cursor-pointer transition-all"
                                                     style={{ color: 'var(--text-2)' }}
                                                     onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(124,77,255,0.1)'}

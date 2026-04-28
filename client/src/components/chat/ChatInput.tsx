@@ -1,6 +1,6 @@
 'use client';
 
-import { RefObject, useState, useRef } from 'react';
+import { RefObject, useState, useRef, useEffect } from 'react';
 import { useTranslations } from 'next-intl';
 import { Send, Paperclip, Mic, Loader2, X, WifiOff, Calendar, Timer, Forward, ChevronLeft } from 'lucide-react';
 import { VoiceRecorder }  from '@/src/components/chat/VoiceRecorder';
@@ -22,7 +22,7 @@ interface Props {
     socketConnected:   boolean;
     offlineQueueCount: number;
     fileInputRef:      RefObject<HTMLInputElement | null>;
-    inputRef?:         RefObject<HTMLInputElement | null>;
+    inputRef?:         RefObject<HTMLTextAreaElement | null>;
     onInputChange:     (v: string) => void;
     onSubmit:          (e: React.FormEvent, scheduledAt?: Date | null, destructAfterSeconds?: number | null) => void;
     onFileSelect:      (file: File) => void;
@@ -57,6 +57,14 @@ export function ChatInput({
     const fireSubmit = (scheduledAt?: Date | null) => {
         onSubmit({ preventDefault: () => {} } as React.FormEvent, scheduledAt ?? null, destructAfterSeconds);
     };
+
+    // Auto-resize textarea to fit content
+    useEffect(() => {
+        const el = inputRef?.current;
+        if (!el) return;
+        el.style.height = 'auto';
+        el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+    }, [inputValue, inputRef]);
 
     const handleSend = (e: React.FormEvent) => {
         e.preventDefault();
@@ -290,16 +298,17 @@ export function ChatInput({
 
                     {/* Text input + desktop-only inline tools */}
                     <div
-                        className="flex-1 flex items-center rounded-xl transition-all duration-200 px-3 gap-1"
+                        className="flex-1 flex items-end rounded-xl transition-all duration-200 px-3 gap-1"
                         style={{
                             background: focused ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.03)',
                             border: focused ? '1px solid var(--border-accent)' : '1px solid var(--border)',
                             minHeight: '40px',
                         }}
                     >
-                        <input
-                            ref={inputRef as any}
+                        <textarea
+                            ref={inputRef}
                             value={inputValue}
+                            rows={1}
                             onChange={e => { onInputChange(e.target.value); notifyTyping(); }}
                             onFocus={() => setFocused(true)}
                             onBlur={() => setFocused(false)}
@@ -310,8 +319,11 @@ export function ChatInput({
                                 }
                             }}
                             placeholder={pendingForward ? t('placeholder_forward') : t('placeholder')}
-                            className="flex-1 bg-transparent outline-none py-2.5 min-w-0"
-                            style={{ color: 'var(--text-1)', caretColor: 'var(--accent)', fontSize: '14px' }}
+                            className="flex-1 bg-transparent outline-none py-2.5 min-w-0 resize-none"
+                            style={{
+                                color: 'var(--text-1)', caretColor: 'var(--accent)', fontSize: '14px',
+                                maxHeight: '160px', overflowY: 'auto', lineHeight: '1.5',
+                            }}
                         />
 
                         {/* ── Desktop-only: Schedule + Self-destruct ── */}

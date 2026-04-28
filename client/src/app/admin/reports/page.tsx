@@ -21,7 +21,7 @@ interface Report {
     status:      ReportStatus;
     adminNote:   string | null;
     createdAt:   string;
-    metadata:    { page?: string; userAgent?: string } | null;
+    metadata:    { page?: string; userAgent?: string; imageUrl?: string } | null;
     user:        { id: number; nickname: string; email: string; avatarUrl: string | null };
 }
 
@@ -358,6 +358,21 @@ export default function AdminReportsPage() {
                                                     </div>
                                                 ))}
                                             </div>
+
+                                            {/* Screenshot */}
+                                            {report.metadata?.imageUrl && (
+                                                <div>
+                                                    <p className="text-[11px] font-semibold uppercase tracking-widest mb-2"
+                                                       style={{ color: 'var(--text-3)' }}>Screenshot</p>
+                                                    <img
+                                                        src={report.metadata.imageUrl}
+                                                        alt="Report screenshot"
+                                                        className="rounded-lg max-h-64 object-contain w-full cursor-zoom-in"
+                                                        style={{ border: '1px solid var(--border)', background: 'rgba(0,0,0,0.3)' }}
+                                                        onClick={() => window.open(report.metadata?.imageUrl, '_blank')}
+                                                    />
+                                                </div>
+                                            )}
 
                                             {/* Admin actions */}
                                             <div className="flex items-center justify-between gap-3 flex-wrap">

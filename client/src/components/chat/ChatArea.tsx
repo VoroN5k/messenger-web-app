@@ -70,7 +70,7 @@ export default function ChatArea({
 
     const abortRef       = useRef<AbortController | null>(null);
     const fileInputRef   = useRef<HTMLInputElement>(null);
-    const inputRef       = useRef<HTMLInputElement>(null);
+    const inputRef       = useRef<HTMLTextAreaElement>(null);
     const editInputRef   = useRef<HTMLInputElement>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -552,30 +552,7 @@ export default function ChatArea({
                 onOpenProfile={() => setShowProfile(true)}
             />
 
-            {/* ── Pinned message ── */}
-            {conversation.pinnedMessage && (
-                <div className="flex items-center gap-3 px-5 py-2.5 slide-up"
-                     style={{ background: 'rgba(251,191,36,0.05)', borderBottom: '1px solid rgba(251,191,36,0.1)' }}>
-                    <Pin size={11} className="text-amber-400 shrink-0" />
-                    <button onClick={() => conversation.pinnedMessage?.id && jumpToMessage(conversation.pinnedMessage.id)}
-                            className="flex-1 min-w-0 text-left">
-                        <p className="text-[11px] font-semibold text-amber-400 leading-tight">
-                            {conversation.pinnedMessage.sender.nickname}
-                        </p>
-                        <p className="text-[11px] truncate" style={{ color: 'var(--text-3)' }}>
-                            {conversation.pinnedMessage.content || '📎 File'}
-                        </p>
-                    </button>
-                    {canPin && (
-                        <button onClick={unpinMessage} className="p-1 cursor-pointer transition-colors duration-150"
-                                style={{ color: 'var(--text-3)' }}
-                                onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--red)'}
-                                onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-3)'}>
-                            <PinOff size={13} />
-                        </button>
-                    )}
-                </div>
-            )}
+            {/* Pinned messages are shown in ChatHeader (multi-pin banner) */}
 
             {/* ── Search panel ── */}
             {isSearchOpen && (
