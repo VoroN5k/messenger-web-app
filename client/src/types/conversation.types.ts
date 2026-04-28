@@ -122,6 +122,7 @@ export interface UserSearchResult {
     nickname:         string;
     avatarUrl:        string | null;
     isOnline:         boolean;
+    statusEmoji?:     string | null;
     friendshipId:     number | null;
     friendshipStatus: FriendshipStatus | null;
     isRequester:      boolean;

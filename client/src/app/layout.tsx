@@ -35,6 +35,8 @@ export default async function RootLayout({
             <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
             <meta name="theme-color" content="#7c4dff" />
             <meta name="mobile-web-app-capable" content="yes" />
+            <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+            <link rel="icon" href="/icons/icon-192.png" sizes="192x192" type="image/png" />
             <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
             <script
                 dangerouslySetInnerHTML={{

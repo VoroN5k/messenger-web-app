@@ -1,5 +1,13 @@
 // WASM crypto worker. All sensitive operations run here, never on the main thread.
 
+// webpack builds WASM fetch URLs as `__webpack_require__.p + "static/chunks/x.wasm"`.
+// In the main thread Next.js sets __webpack_require__.p = "/_next/", but in a Worker
+// the webpack runtime does NOT inherit that value — it stays undefined, producing
+// "undefinedstatic/chunks/x.wasm" which fails fetch(). Force it to an absolute URL
+// before any chunked import runs.
+// @ts-ignore — webpack 5 magic global; assignment must be synchronous before await
+__webpack_public_path__ = self.location.origin + '/_next/';
+
 type Payload = Record<string, unknown>;
 type Req = { id: string; type: string; payload: Payload };
 type Resp =

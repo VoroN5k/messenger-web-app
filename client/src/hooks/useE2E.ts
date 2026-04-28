@@ -419,7 +419,10 @@ export function useE2E() {
     }, []);
 
     const decrypt = useCallback(async (ciphertext: string, senderUserId: number): Promise<string> => {
-        if (!initialized || !currentUserId) return ciphertext;
+        if (!initialized || !currentUserId) {
+            if (ciphertext.startsWith(V2_DM) || ciphertext.startsWith(V2_GROUP)) return '[🔒 Не вдалося розшифрувати]';
+            return ciphertext;
+        }
         if (ciphertext.startsWith(V2_DM) && identity) {
             try {
                 const pt = await drDecrypt(currentUserId, senderUserId, ciphertext);
@@ -477,7 +480,10 @@ export function useE2E() {
         conversationId: number,
         senderId: number,
     ): Promise<string> => {
-        if (!initialized) return ciphertext;
+        if (!initialized) {
+            if (ciphertext.startsWith(V2_DM) || ciphertext.startsWith(V2_GROUP)) return '[🔒 Не вдалося розшифрувати]';
+            return ciphertext;
+        }
         if (ciphertext.startsWith(V2_GROUP) && identity) {
             try {
                 const data = b64Dec(ciphertext.slice(V2_GROUP.length));
