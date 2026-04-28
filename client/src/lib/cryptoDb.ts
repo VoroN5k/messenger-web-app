@@ -1,8 +1,5 @@
-// IndexedDB schema for v2 E2E crypto state.
-// Stores encrypted identity keys, DR session blobs, group session blobs.
-
 const DB_NAME = 'messenger-e2e-v2';
-const DB_VERSION = 2; // v2: added msg_plaintext store
+const DB_VERSION = 2;
 
 type StoreName = 'identity' | 'ratchet' | 'group_sender' | 'group_receiver' | 'msg_plaintext';
 
@@ -54,13 +51,11 @@ function idbClear(db: IDBDatabase, store: StoreName): Promise<void> {
     });
 }
 
-// ---------------------------------------------------------------------------
 // Vault encryption for private key bytes stored in IndexedDB.
 // A random secret is kept in localStorage; AES-256-GCM derived from it protects
 // the IndexedDB blobs. Both live in the same origin so the threat model is
 // identical to the browser's same-origin storage, not PIN protection
 // (PIN recovery is handled separately via Argon2id in the WASM worker).
-// ---------------------------------------------------------------------------
 
 const VAULT_LS_KEY = (userId: number) => `v2_vault_${userId}`;
 
@@ -104,9 +99,7 @@ async function vaultDecrypt(userId: number, data: ArrayBuffer): Promise<Uint8Arr
     return new Uint8Array(pt);
 }
 
-// ---------------------------------------------------------------------------
 // Identity key blob
-// ---------------------------------------------------------------------------
 
 // Private parts stored encrypted: ikDhSecret(32) || ikSignSeed(32) || spkSecret(32) = 96 bytes
 // Public parts stored in plaintext alongside: ikSignPub(32) || ikDhPub(32) || spkPub(32) || spkSig(64) = 160 bytes
@@ -168,9 +161,7 @@ export async function deleteIdentityKeys(userId: number): Promise<void> {
     await idbDelete(db, 'identity', String(userId));
 }
 
-// ---------------------------------------------------------------------------
 // DR session blobs — keyed by convKey = [myId, peerId].sort().join(':')
-// ---------------------------------------------------------------------------
 
 export async function saveRatchetSession(convKey: string, bytes: Uint8Array): Promise<void> {
     const db = await open();
@@ -183,14 +174,19 @@ export async function loadRatchetSession(convKey: string): Promise<Uint8Array | 
     return buf ? new Uint8Array(buf) : null;
 }
 
+// Methods to reset ratchet sessions
+
 export async function deleteRatchetSession(convKey: string): Promise<void> {
     const db = await open();
     await idbDelete(db, 'ratchet', convKey);
 }
 
-// ---------------------------------------------------------------------------
+export async function clearAllRatchetSessions(): Promise<void> {
+    const db = await open();
+    await idbClear(db, 'ratchet');
+}
+
 // Group sender session blobs — keyed by convId
-// ---------------------------------------------------------------------------
 
 export async function saveGroupSender(convId: number, bytes: Uint8Array): Promise<void> {
     const db = await open();
@@ -208,9 +204,7 @@ export async function deleteGroupSender(convId: number): Promise<void> {
     await idbDelete(db, 'group_sender', String(convId));
 }
 
-// ---------------------------------------------------------------------------
 // Group receiver session blobs — keyed by `${convId}:${senderId}`
-// ---------------------------------------------------------------------------
 
 export async function saveGroupReceiver(convId: number, senderId: number, bytes: Uint8Array): Promise<void> {
     const db = await open();
