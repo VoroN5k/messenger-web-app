@@ -14,12 +14,13 @@ self.onmessage = async (ev: MessageEvent) => {
     if (data.type === '__init__') {
         try {
             const wasmBindings = await import('../wasm/messenger_crypto_wasm');
-
-            // Передаємо абсолютний URL, отриманий з main thread
-            // wasm-bindgen генерує init(url?), де url — шлях до .wasm файлу
             const initFn = wasmBindings.default as unknown as (url?: string) => Promise<void>;
-            await initFn(data.wasmUrl);
 
+            // Використовуємо переданий URL або будуємо з origin воркера
+            const resolvedUrl = data.wasmUrl ||
+                new URL('/wasm/messenger_crypto_wasm_bg.wasm', self.location.origin).toString();
+
+            await initFn(resolvedUrl);
             mod = wasmBindings;
             self.postMessage({ type: '__ready__' });
         } catch (err) {

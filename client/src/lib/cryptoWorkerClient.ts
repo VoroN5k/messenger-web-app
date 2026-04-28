@@ -29,10 +29,7 @@ function ensureWorker(): Worker {
             { type: 'module' },
         );
 
-        const wasmUrl = new URL(
-            '../wasm/messenger_crypto_wasm_bg.wasm',
-            import.meta.url,
-        ).toString();
+        const wasmUrl = `${window.location.origin}/wasm/messenger_crypto_wasm_bg.wasm`;
 
         w.onmessage = (ev: MessageEvent) => {
             const d = ev.data as { type?: string; error?: string } & Resp;

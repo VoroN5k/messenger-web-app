@@ -11,14 +11,8 @@ const nextConfig: NextConfig = {
     experimental: {
         serverComponentsExternalPackages: []
     },
-    webpack(config, { isServer, dev }) {
+    webpack(config) {
         config.experiments = { ...config.experiments, asyncWebAssembly: true, layers: true };
-
-        if(!isServer) {
-            config.output.webassemblyModuleFilename = 'static/wasm/[modulehash].wasm';
-
-            config.output.publicPath = '/_next/';
-        }
 
         return config;
     },
