@@ -47,6 +47,42 @@ export class EmailService {
         });
     }
 
+  async sendSecurityUpgradeNotification(
+      toEmail: string,
+      toNickname: string,
+      fromNickname: string,
+  ) {
+      const clientUrl = process.env.CLIENT_URL ?? 'http://localhost:3000';
+      await this.mailer.sendMail({
+          to: toEmail,
+          subject: 'Vesper — оновіть безпеку для продовження листування',
+          html: `
+          <div style="font-family:sans-serif;max-width:520px;margin:0 auto;
+                      background:#09090f;color:#eeeef5;padding:32px;border-radius:12px">
+            <h2 style="color:#f59e0b;margin:0 0 16px">🔒 Оновлення безпеки Vesper</h2>
+            <p style="color:#cbd5e1;line-height:1.6">
+              Ваш контакт <strong style="color:#e2e8f0">${fromNickname}</strong> вже перейшов на
+              новий протокол шифрування Vesper v2 (Signal Double Ratchet + Argon2id).
+            </p>
+            <p style="color:#cbd5e1;line-height:1.6">
+              До оновлення вашого акаунту <strong>${toNickname}</strong> надсилання нових
+              повідомлень в цьому чаті заблоковане. Попередні повідомлення доступні лише
+              для читання.
+            </p>
+            <a href="${clientUrl}"
+               style="display:inline-block;margin:20px 0;padding:12px 28px;
+                      background:#7c3aed;color:#fff;border-radius:8px;
+                      text-decoration:none;font-weight:600;">
+              Відкрити Vesper та оновити безпеку →
+            </a>
+            <p style="color:#64748b;font-size:12px;margin-top:8px">
+              Після входу натисніть кнопку «Оновити безпеку» та встановіть PIN відновлення.
+            </p>
+          </div>
+        `,
+      });
+  }
+
   async sendAdminReportNotification(adminEmail: string, data: {
     id: number; type: string; title: string;
     nickname: string; email: string; page: string;

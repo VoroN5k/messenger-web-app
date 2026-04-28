@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-    Reply, Forward, Pin, SmilePlus, Pencil, Trash2, Check, X, Calendar, Flame,
+    Reply, Forward, Pin, SmilePlus, Pencil, Trash2, Check, X, Calendar, Flame, AlertTriangle,
 } from 'lucide-react';
 import { Avatar }              from '@/src/components/chat/Avatar';
 import { EmojiPicker }         from '@/src/components/chat/EmojiPicker';
@@ -421,6 +421,14 @@ export function MessageItem(props: Readonly<MessageItemProps>) {
                                     <span className="text-[10px]" style={{ color: isMe ? 'rgba(238,238,255,0.4)' : 'var(--text-3)' }}>
                     edited
                   </span>
+                                )}
+                                {msg._isLegacy && !isDeleted && (
+                                    <span
+                                        title="deprecated – read only (v1 encryption)"
+                                        className="flex items-center cursor-help"
+                                    >
+                                        <AlertTriangle size={9} className="text-amber-500" />
+                                    </span>
                                 )}
                                 <span
                                     className="text-[10px] font-mono"

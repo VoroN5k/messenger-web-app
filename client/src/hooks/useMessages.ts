@@ -89,13 +89,23 @@ export const useMessages = (
         return ciphertext;
     }, [isDirect, isGroup, otherUserId, conversationId, e2e]);
 
-    const looksEncrypted = (s?: string | null) => !!s && s.length > 20 && /^[A-Za-z0-9_\-]+$/.test(s);
+    const looksEncrypted = (s?: string | null) =>
+        !!s && s.length > 20 && (
+            s.startsWith('v2:') || s.startsWith('v2g:') ||
+            /^[A-Za-z0-9_\-]+$/.test(s)
+        );
+
+    // v1 ciphertext: encrypted but no v2 prefix
+    const isLegacyCipher = (s: string) =>
+        looksEncrypted(s) && !s.startsWith('v2:') && !s.startsWith('v2g:');
 
     const decryptMessages = useCallback(async (raw: Message[]): Promise<Message[]> => {
         return Promise.all(raw.map(async msg => {
             let result = msg;
             if (msg.content && looksEncrypted(msg.content)) {
+                const legacy = isLegacyCipher(msg.content);
                 result = { ...result, content: await decryptContent(msg.content, msg.senderId) };
+                if (legacy) result = { ...result, _isLegacy: true };
             }
             if (msg.replyTo?.content && looksEncrypted(msg.replyTo.content)) {
                 const plain = await decryptContent(msg.replyTo.content, msg.senderId);
@@ -212,7 +222,9 @@ export const useMessages = (
 
             let decryptedMsg = msg;
             if (msg.content && looksEncrypted(msg.content)) {
+                const legacy = isLegacyCipher(msg.content);
                 decryptedMsg = { ...decryptedMsg, content: await decryptContent(msg.content, msg.senderId) };
+                if (legacy) decryptedMsg = { ...decryptedMsg, _isLegacy: true };
             }
             if (msg.replyTo?.content && looksEncrypted(msg.replyTo.content)) {
                 const plain = await decryptContent(msg.replyTo.content, msg.senderId);

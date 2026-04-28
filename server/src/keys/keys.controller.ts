@@ -80,5 +80,13 @@ export class KeysController {
             dto.twoFactorCode,
         );
     }
+
+    @Post('v2/notify-upgrade/:userId')
+    notifyUpgrade(
+        @CurrentUser('sub') requesterId: number,
+        @Param('userId', ParseIntPipe) targetId: number,
+    ) {
+        return this.keysService.notifyUpgradeV2(requesterId, targetId);
+    }
 }
 

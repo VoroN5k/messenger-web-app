@@ -8,6 +8,7 @@ import { Paperclip, Loader2, Pin, PinOff, ArrowDown, Lock, Forward } from 'lucid
 import { useMessages }              from '@/src/hooks/useMessages';
 import { useSearch }                from '@/src/hooks/useSearch';
 import { useE2E }                   from '@/src/hooks/useE2E';
+import api                          from '@/src/lib/axios';
 import { uploadFile, mimeFromFileName, isImageType } from '@/src/lib/uploadFile';
 import { compressImage }            from '@/src/lib/compressImage';
 
@@ -96,6 +97,8 @@ export default function ChatArea({
     const canPin    = myMember?.role === 'OWNER' || myMember?.role === 'ADMIN';
 
     const [groupKeysReady, setGroupKeysReady] = useState(!isGroup);
+    const [peerV2Status,   setPeerV2Status]   = useState<'unknown' | 'loading' | 'ready' | 'no-v2'>('unknown');
+    const [notifyV2Sent,   setNotifyV2Sent]   = useState(false);
 
     const e2e = useE2E();
 
@@ -110,6 +113,30 @@ export default function ChatArea({
             .then(() => setGroupKeysReady(true))
             .catch(() => setGroupKeysReady(true));
     }, []);
+
+    // For DM conversations: check if the peer has published a v2 key bundle.
+    // If not, block sending — downgrade to v1 is a security regression.
+    useEffect(() => {
+        if (!otherUserId || !e2e.isReady) {
+            setPeerV2Status('unknown');
+            return;
+        }
+        setPeerV2Status('loading');
+        setNotifyV2Sent(false);
+        e2e.checkPeerHasV2(otherUserId).then(
+            (has) => setPeerV2Status(has ? 'ready' : 'no-v2'),
+            () => setPeerV2Status('ready'), // network error → optimistically allow
+        );
+    }, [otherUserId, e2e.isReady]);
+
+    const handleNotifyPeerV2 = useCallback(async () => {
+        if (!otherUserId) return;
+        try {
+            await api.post(`/keys/v2/notify-upgrade/${otherUserId}`);
+        } finally {
+            setNotifyV2Sent(true);
+        }
+    }, [otherUserId]);
 
     const decryptFn = otherUserId
         ? (data: ArrayBuffer, _: number) => e2e.decryptBinary(data, otherUserId)
@@ -648,6 +675,10 @@ export default function ChatArea({
                 onSetReplyTo={setReplyTo}
                 onSetShowVoice={setShowVoice}
                 notifyTyping={notifyTyping}
+                peerV2Blocked={peerV2Status === 'no-v2'}
+                peerV2Loading={peerV2Status === 'loading'}
+                onNotifyPeerV2={handleNotifyPeerV2}
+                notifyV2Sent={notifyV2Sent}
             />
 
             {/* ── ForwardModal — now navigates instead of immediately forwarding ── */}

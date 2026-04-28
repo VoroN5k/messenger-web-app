@@ -53,8 +53,28 @@ let pendingRecoveryBlob: string | null = null;
 let legacyPrivKey: CryptoKey | null = null;
 
 const legacyKeyCache = new Map<number, Promise<CryptoKey | null>>();
+const peerV2Cache    = new Map<number, Promise<boolean>>();
 const drLocks        = new Map<string, Promise<unknown>>();
 const groupLocks     = new Map<number, Promise<unknown>>();
+
+// Check whether a peer has published a v2 key bundle. Result is cached at module
+// level so multiple components don't race. Cache is invalidated on peer key rotation.
+function checkPeerHasV2(peerId: number): Promise<boolean> {
+    if (!peerV2Cache.has(peerId)) {
+        peerV2Cache.set(
+            peerId,
+            api.get(`/keys/v2/${peerId}`)
+                .then(() => true)
+                .catch((err: any) => {
+                    if (err?.response?.status === 404) return false;
+                    // transient network error — don't cache, optimistically allow
+                    peerV2Cache.delete(peerId);
+                    return true;
+                }),
+        );
+    }
+    return peerV2Cache.get(peerId)!;
+}
 
 let statusCallbacks: Array<(s: E2EStatus) => void> = [];
 let onReadyCallbacks: Array<() => void> = [];
@@ -316,6 +336,7 @@ export function useE2E() {
             prefetchGroupSenderKeys: async () => {},
             invalidateGroupKeys: () => {},
             invalidatePeerKey: () => {},
+            checkPeerHasV2: async (_: number) => true,
             keysJustRotated: false,
             unlockWithPin: async () => false,
             setupRecovery: async () => {},
@@ -402,7 +423,7 @@ export function useE2E() {
             identity = null; legacyPrivKey = null; initialized = false;
             initPromise = null; currentUserId = null; keysWereRotated = false;
             pendingRecoveryBlob = null;
-            legacyKeyCache.clear(); drLocks.clear(); groupLocks.clear();
+            legacyKeyCache.clear(); peerV2Cache.clear(); drLocks.clear(); groupLocks.clear();
             onReadyCallbacks = [];
             broadcastStatus('idle');
             setIsReady(false);
@@ -413,9 +434,8 @@ export function useE2E() {
 
     const encrypt = useCallback(async (content: string, targetUserId: number): Promise<string> => {
         if (!identity || !initialized || !currentUserId) return content;
-        try {
-            return await drEncrypt(currentUserId, targetUserId, new TextEncoder().encode(content));
-        } catch { return content; }
+        // No silent fallback: throw so callers never send plaintext when encryption fails
+        return drEncrypt(currentUserId, targetUserId, new TextEncoder().encode(content));
     }, []);
 
     const decrypt = useCallback(async (ciphertext: string, senderUserId: number): Promise<string> => {
@@ -438,10 +458,9 @@ export function useE2E() {
 
     const encryptBinary = useCallback(async (data: ArrayBuffer, targetUserId: number): Promise<ArrayBuffer> => {
         if (!identity || !initialized || !currentUserId) return data;
-        try {
-            const wire = await drEncrypt(currentUserId, targetUserId, new Uint8Array(data));
-            return new TextEncoder().encode(wire).buffer as ArrayBuffer;
-        } catch { return data; }
+        // No silent fallback: throw so callers never upload unencrypted data
+        const wire = await drEncrypt(currentUserId, targetUserId, new Uint8Array(data));
+        return new TextEncoder().encode(wire).buffer as ArrayBuffer;
     }, []);
 
     const decryptBinary = useCallback(async (data: ArrayBuffer, peerUserId: number): Promise<ArrayBuffer> => {
@@ -595,7 +614,7 @@ export function useE2E() {
 
     const invalidatePeerKey = useCallback((userId: number) => {
         legacyKeyCache.delete(userId);
-        // DR session survives — no action needed; the peer generates new keys server-side
+        peerV2Cache.delete(userId);
     }, []);
 
     const invalidateGroupKeys = useCallback((conversationId: number) => {
@@ -674,6 +693,7 @@ export function useE2E() {
         distributeMySenderKey, prefetchGroupSenderKeys, invalidateGroupKeys,
         unlockWithPin, setupRecovery, resetToNewKeys,
         invalidatePeerKey,
+        checkPeerHasV2,
         keysJustRotated: keysWereRotated,
         isReady, status,
         needsRecovery:      status === 'needs-recovery',

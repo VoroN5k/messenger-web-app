@@ -2,7 +2,7 @@
 
 import { RefObject, useState, useRef, useEffect } from 'react';
 import { useTranslations } from 'next-intl';
-import { Send, Paperclip, Mic, Loader2, X, WifiOff, Calendar, Timer, Forward, ChevronLeft } from 'lucide-react';
+import { Send, Paperclip, Mic, Loader2, X, WifiOff, Calendar, Timer, Forward, ChevronLeft, ShieldOff, Mail, CheckCircle2 } from 'lucide-react';
 import { VoiceRecorder }  from '@/src/components/chat/VoiceRecorder';
 import { ScheduleModal }  from '@/src/components/chat/ScheduleModal';
 import { Message }        from '@/src/types/conversation.types';
@@ -32,6 +32,10 @@ interface Props {
     onSetReplyTo:      (msg: Message | null) => void;
     onSetShowVoice:    (v: boolean) => void;
     notifyTyping:      () => void;
+    peerV2Blocked?:    boolean;
+    peerV2Loading?:    boolean;
+    onNotifyPeerV2?:   () => Promise<void>;
+    notifyV2Sent?:     boolean;
 }
 
 export function ChatInput({
@@ -40,6 +44,7 @@ export function ChatInput({
                               uploadProgress, uploadError, isOnline, socketConnected, offlineQueueCount,
                               fileInputRef, inputRef, onInputChange, onSubmit, onFileSelect, onSendVoice, onCancelUpload,
                               onClearError, onSetReplyTo, onSetShowVoice, notifyTyping,
+                              peerV2Blocked, peerV2Loading, onNotifyPeerV2, notifyV2Sent,
                           }: Readonly<Props>) {
     const t = useTranslations('input');
     const tMsg = useTranslations('message');
@@ -47,6 +52,7 @@ export function ChatInput({
     const [showDestructPicker,   setShowDestructPicker]   = useState(false);
     const [destructAfterSeconds, setDestructAfterSeconds] = useState<number | null>(null);
     const [focused,              setFocused]              = useState(false);
+    const [notifying,            setNotifying]            = useState(false);
     // Mobile long-press menu
     const [showMobileMenu, setShowMobileMenu] = useState(false);
     const [mobilePage,     setMobilePage]     = useState<'main' | 'destruct'>('main');
@@ -258,7 +264,49 @@ export function ChatInput({
             )}
 
             {/* ── Input row ── */}
-            {showVoice ? (
+            {peerV2Blocked ? (
+                /* Peer hasn't upgraded to v2 — sending is blocked to prevent downgrade */
+                <div className="px-5 py-4 flex flex-col items-center gap-3 text-center slide-up">
+                    <div className="flex items-center gap-2">
+                        <ShieldOff size={15} className="text-amber-400 shrink-0" />
+                        <span className="text-[13px] font-medium" style={{ color: 'var(--text-2)' }}>
+                            Peer hasn&apos;t upgraded to Vesper v2 security
+                        </span>
+                    </div>
+                    <p className="text-[11px] max-w-sm" style={{ color: 'var(--text-3)' }}>
+                        New messages are blocked to prevent downgrade to the old protocol.
+                        Previous messages are shown read-only.
+                    </p>
+                    <button
+                        onClick={async () => {
+                            if (!onNotifyPeerV2 || notifyV2Sent || notifying) return;
+                            setNotifying(true);
+                            await onNotifyPeerV2().catch(() => {});
+                            setNotifying(false);
+                        }}
+                        disabled={notifyV2Sent || notifying}
+                        className="flex items-center gap-2 px-4 py-2 rounded-xl text-[12px] font-semibold transition-all duration-150 cursor-pointer disabled:cursor-default"
+                        style={{
+                            background: notifyV2Sent ? 'rgba(255,255,255,0.04)' : 'rgba(251,191,36,0.12)',
+                            border: notifyV2Sent ? '1px solid var(--border)' : '1px solid rgba(251,191,36,0.25)',
+                            color: notifyV2Sent ? 'var(--text-3)' : 'rgb(251,191,36)',
+                        }}
+                    >
+                        {notifyV2Sent
+                            ? <><CheckCircle2 size={13} /> Notification sent</>
+                            : notifying
+                                ? <><Loader2 size={13} className="animate-spin" /> Sending…</>
+                                : <><Mail size={13} /> Notify via email</>
+                        }
+                    </button>
+                </div>
+            ) : peerV2Loading ? (
+                <div className="px-5 py-4 flex items-center justify-center gap-2"
+                     style={{ color: 'var(--text-3)' }}>
+                    <Loader2 size={13} className="animate-spin" />
+                    <span className="text-[12px]">Checking peer security…</span>
+                </div>
+            ) : showVoice ? (
                 <VoiceRecorder onSend={onSendVoice} onCancel={() => onSetShowVoice(false)} />
             ) : canPost ? (
                 <form onSubmit={handleSend} className="flex items-end gap-2 px-4 py-3">

@@ -1,9 +1,13 @@
 import {Injectable, NotFoundException, UnauthorizedException} from "@nestjs/common";
 import {PrismaService} from "../prisma/prisma.service.js";
+import {EmailService} from "../auth/email/email.service.js";
 
 @Injectable()
 export class KeysService {
-    constructor(private readonly prisma: PrismaService) {}
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly email: EmailService,
+    ) {}
 
     async publishKey(userId: number, publicKey: string) {
         return this.prisma.userPublicKey.upsert({
@@ -123,5 +127,18 @@ export class KeysService {
         });
         if (!user?.encryptedPrivateKeyV2) throw new NotFoundException('No v2 recovery key found');
         return { encryptedBlob: user.encryptedPrivateKeyV2 };
+    }
+
+    async notifyUpgradeV2(requesterId: number, targetUserId: number): Promise<void> {
+        const [requester, target] = await Promise.all([
+            this.prisma.user.findUnique({ where: { id: requesterId }, select: { nickname: true } }),
+            this.prisma.user.findUnique({ where: { id: targetUserId }, select: { email: true, nickname: true } }),
+        ]);
+        if (!target?.email) throw new NotFoundException('Target user not found');
+        await this.email.sendSecurityUpgradeNotification(
+            target.email,
+            target.nickname,
+            requester?.nickname ?? 'Ваш контакт',
+        );
     }
 }
