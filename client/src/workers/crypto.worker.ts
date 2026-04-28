@@ -1,56 +1,78 @@
+import init, * as wasmBindings from '../wasm/messenger_crypto_wasm';
+
 type Payload = Record<string, unknown>;
 type Req = { id: string; type: string; payload: Payload };
 type Resp =
     | { id: string; ok: true; result: Record<string, unknown> }
     | { id: string; ok: false; error: string };
 
-type WasmMod = typeof import('../wasm/messenger_crypto_wasm');
-let mod: WasmMod;
+// Використовуємо typeof для типізації, але mod ініціалізуємо через bindings
+let mod: typeof wasmBindings;
 
-// Ініціалізуємо тільки після отримання абсолютного URL від main thread
 self.onmessage = async (ev: MessageEvent) => {
-    const data = ev.data as { type: string; wasmUrl?: string } & Req;
+    const data = ev.data;
 
+    // 1. Обробка ініціалізації
     if (data.type === '__init__') {
         try {
-            const wasmBindings = await import('../wasm/messenger_crypto_wasm');
-            const initFn = wasmBindings.default as unknown as (url?: string) => Promise<void>;
+            // Визначаємо URL до бінарника в public папці.
+            // self.location.origin гарантує абсолютний шлях навіть у воркері.
+            const wasmUrl = new URL('/wasm/messenger_crypto_wasm_bg.wasm', self.location.origin).href;
 
-            // Використовуємо переданий URL або будуємо з origin воркера
-            const resolvedUrl = data.wasmUrl ||
-                new URL('/wasm/messenger_crypto_wasm_bg.wasm', self.location.origin).toString();
+            // Ініціалізуємо WASM. Оскільки ми зібрали з --target web,
+            // функція init (default export) приймає рядок-URL і сама робить fetch.
+            await init(wasmUrl);
 
-            await initFn(resolvedUrl);
+            // Після ініціалізації зберігаємо bindings для викликів у dispatch
             mod = wasmBindings;
+
             self.postMessage({ type: '__ready__' });
         } catch (err) {
+            console.error('WASM Worker Initialization Failed:', err);
             self.postMessage({ type: '__error__', error: String(err) });
         }
         return;
     }
 
-    // Обробка звичайних крипто-викликів
-    const { id, type, payload: p } = data;
-    let resp: Resp;
-    try {
-        resp = { id, ok: true, result: dispatch(type, p) };
-    } catch (e) {
-        resp = { id, ok: false, error: e instanceof Error ? e.message : String(e) };
+    // 2. Захист від викликів до ініціалізації
+    if (!mod) {
+        console.error('WASM worker called before __init__');
+        return;
     }
+
+    // 3. Обробка крипто-викликів
+    const { id, type, payload: p } = data as Req;
+    let resp: Resp;
+
+    try {
+        const result = dispatch(type, p);
+        resp = { id, ok: true, result };
+    } catch (e) {
+        resp = {
+            id,
+            ok: false,
+            error: e instanceof Error ? e.message : String(e)
+        };
+    }
+
     (self as unknown as Worker).postMessage(resp);
 };
 
+// Хелпер для перевірки Uint8Array
 function u8(v: unknown, name: string): Uint8Array {
     if (v instanceof Uint8Array) return v;
-    throw new Error(`${name}: expected Uint8Array`);
+    throw new Error(`${name}: expected Uint8Array, got ${typeof v}`);
 }
 
 function dispatch(type: string, p: Payload): Record<string, unknown> {
     switch (type) {
+        // --- Keys ---
         case 'generateKeyAgreementKeypair':
             return { keypair: mod.generateKeyAgreementKeypair() };
         case 'generateSigningKeypair':
             return { keypair: mod.generateSigningKeypair() };
+
+        // --- Auth & Security ---
         case 'sign':
             return { sig: mod.sign(u8(p.seed, 'seed'), u8(p.message, 'message')) };
         case 'verifySignature':
@@ -59,6 +81,8 @@ function dispatch(type: string, p: Payload): Record<string, unknown> {
             return { blob: mod.encryptKeyWithPin(u8(p.keyBytes, 'keyBytes'), u8(p.pin, 'pin')) };
         case 'decryptKeyWithPin':
             return { keyBytes: mod.decryptKeyWithPin(u8(p.blobBytes, 'blobBytes'), u8(p.pin, 'pin')) };
+
+        // --- X3DH ---
         case 'x3dhSend':
             return { result: mod.x3dhSend(u8(p.ourIkDhSecret, 'ourIkDhSecret'), u8(p.bundleBytes, 'bundleBytes')) };
         case 'x3dhReceive':
@@ -70,6 +94,8 @@ function dispatch(type: string, p: Payload): Record<string, unknown> {
                     u8(p.initMsgBytes, 'initMsgBytes'),
                 ),
             };
+
+        // --- Double Ratchet ---
         case 'ratchetInitSender': {
             const s = mod.RatchetSession.initSender(u8(p.sk, 'sk'), u8(p.bobDhPub, 'bobDhPub'));
             try { return { sessionBytes: s.toBytes() }; } finally { s.free(); }
@@ -92,6 +118,8 @@ function dispatch(type: string, p: Payload): Record<string, unknown> {
                 return { plaintext, newSessionBytes: s.toBytes() };
             } finally { s.free(); }
         }
+
+        // --- Groups ---
         case 'groupSenderGenerate': {
             const s = mod.GroupSenderSession.generate();
             try { return { senderBytes: s.toBytes(), distMsg: s.createDistributionMessage() }; } finally { s.free(); }
@@ -118,8 +146,9 @@ function dispatch(type: string, p: Payload): Record<string, unknown> {
                 return { plaintext, newReceiverBytes: s.toBytes() };
             } finally { s.free(); }
         }
+
         default:
-            throw new Error(`unknown op: ${type}`);
+            throw new Error(`Unknown crypto operation: ${type}`);
     }
 }
 

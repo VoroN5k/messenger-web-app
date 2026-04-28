@@ -7,23 +7,16 @@ const withNextIntl = createNextIntlPlugin(
 
 const nextConfig: NextConfig = {
 
-    // required for WASM modules (crypto worker)
     experimental: {
         serverComponentsExternalPackages: []
     },
-    webpack(config) {
-        config.experiments = { ...config.experiments, asyncWebAssembly: true, layers: true };
 
-        return config;
-    },
     // Required for Docker / fly.io — produces a self-contained server.js bundle.
-    // See: https://nextjs.org/docs/app/api-reference/config/next-config-js/output
     output: 'standalone',
 
     async rewrites() {
         const backendUrl = process.env.BACKEND_URL || 'http://localhost:4000';
         return [
-            // Proxy all API calls through Next.js so cookies are same-origin
             {
                 source: '/api/:path*',
                 destination: `${backendUrl}/api/:path*`,
