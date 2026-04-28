@@ -28,7 +28,7 @@ import {
     saveGroupReceiver,
     saveGroupSender,
     saveIdentityKeys,
-    saveRatchetSession,
+    saveRatchetSession, deleteRatchetSession,
 } from '@/src/lib/cryptoDb';
 import { legacyDecryptBinary, legacyDecryptText, legacyDeriveSharedKey } from '@/src/lib/cryptoLegacy';
 import { loadPrivateKey } from '@/src/lib/crypto';
@@ -211,6 +211,21 @@ async function drDecrypt(
         if (hasInit) {
             const initMsg = wire.slice(1, 66);
             const drWire  = wire.slice(66);
+
+            // Only reinitialize if we don't have an existing session.
+            // If we do have one, try decrypting with it first (handles
+            // the case where sender re-sent with INIT_FLAG after reconnect
+            // but we already had a valid session).
+            if (sessionBytes) {
+                try {
+                    const { plaintext, newSessionBytes } = await wasm.ratchetDecrypt(
+                        sessionBytes, drWire, new Uint8Array(0),
+                    );
+                    await saveRatchetSession(ck, newSessionBytes);
+                    return plaintext;
+                } catch {}
+            }
+
             const { sk } = await wasm.x3dhReceive(
                 identity!.ikDhSecret,
                 identity!.spkSecret,
@@ -314,6 +329,8 @@ async function doDistribute(
         await api.post(`/conversations/${conversationId}/sender-keys`, { version: 2, keys: payloads });
     }
 }
+
+export function clearDrLocks() { drLocks.clear(); }
 
 // Hook
 
@@ -477,6 +494,13 @@ export function useE2E() {
             if (!key) return data;
             return (await legacyDecryptBinary(key, data)) ?? data;
         } catch { return data; }
+    }, []);
+
+    const invalidatePeerSession = useCallback(async (peerId: number) => {
+        if (!currentUserId) return;
+        const ck = pairKey(currentUserId, peerId);
+        await deleteRatchetSession(ck).catch(() => {});
+        drLocks.delete(ck); // clear any pending lock
     }, []);
 
     // Group
@@ -700,6 +724,7 @@ export function useE2E() {
         needsRecoverySetup: status === 'needs-setup',
         keysDesynced:       status === 'keys-desynced',
         clearAllKeyMaterial,
+        invalidatePeerSession
     };
 }
 

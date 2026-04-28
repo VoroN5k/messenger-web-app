@@ -13,8 +13,9 @@ import { Conversation, ConvUser } from '@/src/types/conversation.types';
 import { User } from '@/src/types/auth.types';
 import api from '@/src/lib/axios';
 import { formatLastSeen } from '@/src/lib/chatFormatters';
+import {ResetPeerSessionButton} from "@/src/components/settings/ResetPeerSessionButton";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// Types
 interface MediaCount { photos: number; voice: number; files: number }
 type ClearScope = 'self' | 'both';
 
@@ -30,7 +31,7 @@ export interface UserProfilePanelProps {
     onRemoveFriend?: (friendId: number) => void;
 }
 
-// ── Large avatar (uses signed URL) ───────────────────────────────────────────
+// Large avatar (uses signed URL)
 function LargeAvatar({ user }: { user: { nickname: string; avatarUrl?: string | null } }) {
     const signed = useSignedUrl(user.avatarUrl);
     const [errored, setErrored] = useState(false);
@@ -59,7 +60,7 @@ function LargeAvatar({ user }: { user: { nickname: string; avatarUrl?: string | 
     );
 }
 
-// ── Clear chat confirmation modal ─────────────────────────────────────────────
+// Clear chat confirmation modal
 function ClearChatModal({
                             convName, isDirect, isAdmin, onConfirm, onClose,
                         }: {
@@ -226,7 +227,7 @@ function ScopeOption({
     );
 }
 
-// ── 5-second undo toast ───────────────────────────────────────────────────────
+// 5-second undo toast
 function UndoToast({
                        scope, onUndo, onExpired,
                    }: {
@@ -321,7 +322,7 @@ function UndoToast({
     );
 }
 
-// ── Stat pill ─────────────────────────────────────────────────────────────────
+// Stat pill
 function StatPill({ icon, count, label }: { icon: React.ReactNode; count: number; label: string }) {
     return (
         <div
@@ -335,7 +336,7 @@ function StatPill({ icon, count, label }: { icon: React.ReactNode; count: number
     );
 }
 
-// ── Action button ─────────────────────────────────────────────────────────────
+// Action button
 function ActionBtn({
                        icon, label, onClick, danger = false, disabled = false,
                    }: {
@@ -410,12 +411,12 @@ function InfoRow({
     );
 }
 
-// ── Section divider ───────────────────────────────────────────────────────────
+// Section divider
 function Divider() {
     return <div className="mx-4 my-1" style={{ borderTop: '1px solid var(--border)' }} />;
 }
 
-// ── Main panel ────────────────────────────────────────────────────────────────
+// Main panel
 export function UserProfilePanel({
                                      conversation, currentUser, peer, onClose,
                                      onStartCall, onToggleSearch, onToggleMedia,
@@ -448,7 +449,7 @@ export function UserProfilePanel({
             ? `${conversation.members.length} підписників`
             : null;
 
-    // ── Media counts ──────────────────────────────────────────────────────────
+    // Media counts
     const [mediaCount,   setMediaCount]   = useState<MediaCount>({ photos: 0, voice: 0, files: 0 });
     const [mediaLoading, setMediaLoading] = useState(true);
 
@@ -470,7 +471,7 @@ export function UserProfilePanel({
             .finally(() => setMediaLoading(false));
     }, [conversation.id]);
 
-    // ── Clear chat flow ───────────────────────────────────────────────────────
+    // Clear chat flow
     const [showClearModal, setShowClearModal] = useState(false);
     const [pendingScope,   setPendingScope]   = useState<ClearScope | null>(null);
     const [clearing,       setClearing]       = useState(false);
@@ -499,7 +500,7 @@ export function UserProfilePanel({
         setPendingScope(null);
     }, []);
 
-    // ── Close on Escape ───────────────────────────────────────────────────────
+    // Close on Escape
     useEffect(() => {
         const h = (e: KeyboardEvent) => { if (e.key === 'Escape' && !showClearModal) onClose(); };
         document.addEventListener('keydown', h);
@@ -681,6 +682,12 @@ export function UserProfilePanel({
 
                     {/* ── Info rows ── */}
                     <div className="py-1">
+                        {isDirect && peer && !isSelf && (
+                            <ResetPeerSessionButton
+                                peerId={peer.id}
+                                peerNickname={peer.nickname}
+                            />
+                        )}
                         {joinedAt && (
                             <InfoRow
                                 icon={<Calendar size={14} />}

@@ -19,10 +19,11 @@ import {
 } from 'lucide-react';
 import { TwoFactorSection } from "@/src/components/settings/TwoFactorSection";
 import { deletePrivateKey } from '@/src/lib/crypto';
+import {ResetDRSessionRow} from "@/src/components/settings/ResetDRSessionRow";
 
 type ThemeOption = 'light' | 'dark';
 
-// ── Session type ──────────────────────────────────────────────────────────────
+// Session type
 interface Session {
     id:         number;
     userAgent:  string | null;
@@ -33,7 +34,7 @@ interface Session {
     location?: string | null;
 }
 
-// ── Device icon helper ────────────────────────────────────────────────────────
+// Device icon helper
 function DeviceIcon({ ua, size = 16 }: { ua: string | null; size?: number }) {
     const s = (ua ?? '').toLowerCase();
     if (/iphone|android|mobile/i.test(s))  return <Smartphone size={size} />;
@@ -81,9 +82,7 @@ function formatSessionDate(dateStr: string): string {
     return d.toLocaleDateString('uk-UA', { day: 'numeric', month: 'long' });
 }
 
-// =============================================================================
 // MAIN PAGE
-// =============================================================================
 export default function SettingsPage() {
     const router   = useRouter();
     const { user } = useAuthStore();
@@ -161,6 +160,7 @@ export default function SettingsPage() {
                         <ChangePasswordForm />
                         <ResetRecoveryPinRow />
                         <ResetLocalKeyRow />
+                        <ResetDRSessionRow />
                     </Section>
 
                     {/* 2FA */}
@@ -195,14 +195,10 @@ export default function SettingsPage() {
     );
 }
 
-// =============================================================================
 // GEOLOCATION (client-side, cached per page load)
-// =============================================================================
 
 
-// =============================================================================
 // ACTIVE DEVICES SECTION
-// =============================================================================
 function ActiveDevicesSection() {
     const [sessions,      setSessions]      = useState<Session[]>([]);
     const [loading,       setLoading]       = useState(true);
@@ -349,9 +345,7 @@ function SessionRow({
     );
 }
 
-// =============================================================================
 // DELETE ACCOUNT & RECOVERY PIN
-// =============================================================================
 function DeleteAccountSection() {
     const [showModal, setShowModal] = useState(false);
 
@@ -564,9 +558,7 @@ function DeleteAccountModal({ onClose }: { onClose: () => void }) {
     );
 }
 
-// =============================================================================
 // CHANGE PASSWORD FORM
-// =============================================================================
 function ChangePasswordForm() {
     const [currentPassword, setCurrentPassword] = useState('');
     const [newPassword,     setNewPassword]     = useState('');
@@ -620,9 +612,7 @@ function ChangePasswordForm() {
     );
 }
 
-// =============================================================================
 // SHARED COMPONENTS
-// =============================================================================
 
 function PasswordInput({ label, value, onChange, show, onToggle, placeholder, isError }: any) {
     return (
