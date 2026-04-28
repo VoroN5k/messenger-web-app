@@ -1,5 +1,5 @@
 import {
-    IsArray, IsInt, IsOptional, IsPositive, IsString, MaxLength, MinLength,
+    IsArray, IsIn, IsInt, IsOptional, IsPositive, IsString, MaxLength, MinLength,
 } from 'class-validator';
 
 export class CreateDirectDto {
@@ -56,6 +56,10 @@ export class ForwardMessageDto {
 }
 
 export class SetSenderKeysDto {
+    // 1 = legacy AES-GCM blob, 2 = X3DH distribution envelope
+    @IsOptional() @IsIn([1, 2])
+    version?: 1 | 2;
+
     @IsArray()
     keys: Array<{ recipientId: number; encryptedKey: string }>;
 }

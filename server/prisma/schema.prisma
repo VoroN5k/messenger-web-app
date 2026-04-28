@@ -79,6 +79,10 @@ model User {
   twoFactorSecret  String?
   twoFactorEnabled Boolean @default(false)
 
+  // V2 key fields
+  encryptedPrivateKeyV2 String?         @db.Text
+  keyBundleV2           UserKeyBundleV2?
+
   // Sender Key relations
   ownedSenderKeys    GroupSenderKey[] @relation("SenderKeyOwner")
   receivedSenderKeys GroupSenderKey[] @relation("SenderKeyRecipient")
@@ -253,12 +257,23 @@ model UserPublicKey {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
+model UserKeyBundleV2 {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @unique
+  bundle    String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
 model GroupSenderKey {
   id             Int      @id @default(autoincrement())
   conversationId Int
   senderId       Int
   recipientId    Int
   encryptedKey   String   @db.Text
+  version        Int      @default(1)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

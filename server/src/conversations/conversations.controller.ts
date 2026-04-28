@@ -230,7 +230,7 @@ export class ConversationsController {
         @Param('id', ParseIntPipe) id: number,
         @Body() dto: SetSenderKeysDto,
     ) {
-        return this.conversationsService.setSenderKey(userId, id, dto.keys);
+        return this.conversationsService.setSenderKey(userId, id, dto.keys, dto.version ?? 1);
     }
 
     @Throttle({ default: { ttl: 60_000, limit: 60 } })

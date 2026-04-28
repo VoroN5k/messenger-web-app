@@ -698,7 +698,12 @@ export class ConversationsService {
 
     // Sender keys
 
-    async setSenderKey(requesterId: number, conversationId: number, keys: Array<{ recipientId: number; encryptedKey: string }>) {
+    async setSenderKey(
+        requesterId: number,
+        conversationId: number,
+        keys: Array<{ recipientId: number; encryptedKey: string }>,
+        version: 1 | 2 = 1,
+    ) {
         await this.assertMember(requesterId, conversationId);
         await Promise.all(
             keys.map(({ recipientId, encryptedKey }) =>
@@ -710,8 +715,8 @@ export class ConversationsService {
                             recipientId,
                         },
                     },
-                    create: { conversationId, senderId: requesterId, recipientId, encryptedKey },
-                    update: { encryptedKey },
+                    create: { conversationId, senderId: requesterId, recipientId, encryptedKey, version },
+                    update: { encryptedKey, version },
                 }),
             ),
         );
@@ -727,7 +732,7 @@ export class ConversationsService {
         await this.assertMember(userId, conversationId);
         return this.prisma.groupSenderKey.findMany({
             where:  { conversationId, recipientId: userId },
-            select: { senderId: true, encryptedKey: true },
+            select: { senderId: true, encryptedKey: true, version: true },
         });
     }
 
