@@ -6,10 +6,18 @@ const withNextIntl = createNextIntlPlugin(
 )
 
 const nextConfig: NextConfig = {
+
     // required for WASM modules (crypto worker)
-    experimental: { serverComponentsExternalPackages: [] },
-    webpack(config) {
+    experimental: {
+        serverComponentsExternalPackages: []
+    },
+    webpack(config, { isServer, dev }) {
         config.experiments = { ...config.experiments, asyncWebAssembly: true, layers: true };
+
+        if(!isServer) {
+            config.output.webassemblyModuleFilename = 'static/wasm/[modulehash].wasm';
+        }
+
         return config;
     },
     // Required for Docker / fly.io — produces a self-contained server.js bundle.
