@@ -16,6 +16,8 @@ const nextConfig: NextConfig = {
 
         if(!isServer) {
             config.output.webassemblyModuleFilename = 'static/wasm/[modulehash].wasm';
+
+            config.output.publicPath = '/_next/';
         }
 
         return config;

@@ -1,5 +1,3 @@
-// WASM crypto worker. All sensitive operations run here, never on the main thread.
-
 type Payload = Record<string, unknown>;
 type Req = { id: string; type: string; payload: Payload };
 type Resp =
@@ -9,25 +7,29 @@ type Resp =
 type WasmMod = typeof import('../wasm/messenger_crypto_wasm');
 let mod: WasmMod;
 
-try {
-    const wasmUrl = new URL(
-        '/_next/static/wasm/ваш_хеш_або_шлях.wasm', // шлях, де опиняється білд
-        self.location.origin
-    ).toString();
+// Ініціалізуємо тільки після отримання абсолютного URL від main thread
+self.onmessage = async (ev: MessageEvent) => {
+    const data = ev.data as { type: string; wasmUrl?: string } & Req;
 
-    const wasmBindings = await import('../wasm/messenger_crypto_wasm');
-    const init = wasmBindings.default as unknown as (url: string) => Promise<void>;
-    await init(wasmUrl);
+    if (data.type === '__init__') {
+        try {
+            const wasmBindings = await import('../wasm/messenger_crypto_wasm');
 
-    mod = wasmBindings;
-    self.postMessage({ type: '__ready__' });
-} catch (err) {
-    self.postMessage({ type: '__error__', error: String(err) });
-    throw err;
-}
+            // Передаємо абсолютний URL, отриманий з main thread
+            // wasm-bindgen генерує init(url?), де url — шлях до .wasm файлу
+            const initFn = wasmBindings.default as unknown as (url?: string) => Promise<void>;
+            await initFn(data.wasmUrl);
 
-self.onmessage = (ev: MessageEvent<Req>) => {
-    const { id, type, payload: p } = ev.data;
+            mod = wasmBindings;
+            self.postMessage({ type: '__ready__' });
+        } catch (err) {
+            self.postMessage({ type: '__error__', error: String(err) });
+        }
+        return;
+    }
+
+    // Обробка звичайних крипто-викликів
+    const { id, type, payload: p } = data;
     let resp: Resp;
     try {
         resp = { id, ok: true, result: dispatch(type, p) };

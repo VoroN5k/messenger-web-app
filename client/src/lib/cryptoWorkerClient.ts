@@ -29,6 +29,11 @@ function ensureWorker(): Worker {
             { type: 'module' },
         );
 
+        const wasmUrl = new URL(
+            '../wasm/messenger_crypto_wasm_bg.wasm',
+            import.meta.url,
+        ).toString();
+
         w.onmessage = (ev: MessageEvent) => {
             const d = ev.data as { type?: string; error?: string } & Resp;
             if (d.type === '__ready__') { readyResolve(); return; }
@@ -39,6 +44,8 @@ function ensureWorker(): Worker {
             d.ok ? p.resolve(d.result) : p.reject(new Error((d as { error: string }).error));
         };
         w.onerror = (ev) => readyReject(new Error(ev.message));
+
+        w.postMessage({ type: '__init__', wasmUrl });
 
         instance = w;
     }
