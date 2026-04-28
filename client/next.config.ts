@@ -6,6 +6,12 @@ const withNextIntl = createNextIntlPlugin(
 )
 
 const nextConfig: NextConfig = {
+    // required for WASM modules (crypto worker)
+    experimental: { serverComponentsExternalPackages: [] },
+    webpack(config) {
+        config.experiments = { ...config.experiments, asyncWebAssembly: true, layers: true };
+        return config;
+    },
     // Required for Docker / fly.io — produces a self-contained server.js bundle.
     // See: https://nextjs.org/docs/app/api-reference/config/next-config-js/output
     output: 'standalone',

@@ -80,7 +80,7 @@ export async function decryptMessage(aesKey: CryptoKey, ciphertext: string): Pro
     return new TextDecoder().decode(plaintext);
 }
 
-// ── Binary file encryption ────────────────────────────────────────────────────
+// Binary file encryption
 export async function encryptFile(aesKey: CryptoKey, data: ArrayBuffer): Promise<ArrayBuffer> {
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv}, aesKey, data);

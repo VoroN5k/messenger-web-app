@@ -1,116 +1,314 @@
 'use client';
 
-import { useAuthStore } from "@/src/store/useAuthStore";
-import { useCallback, useEffect, useState } from "react";
-import {
-    decryptFile,
-    decryptMessage,
-    deriveSharedKey,
-    encryptFile,
-    encryptMessage,
-    generateKeyPair,
-    loadPrivateKey,
-    loadPublicKey,
-    savePrivateKey,
-    savePublicKey,
-    deletePrivateKey, decryptPrivateKeyWithPin, encryptPrivateKeyWithPin,
-} from "@/src/lib/crypto";
-import api from "@/src/lib/axios";
+// Vesper v2.0 - Double Ratchet (DM) + Signal Sender Key (group).
+// All crypto runs in a WASM Web Worker. Session state persists to IndexedDB.
+//
+// Wire format - DM:
+//   v2:<base64url>  where decoded = flags(1) | [x3dh_init(65) if flags&1] | dr_wire(40+ct)
+//   flags=0x01 -> first message (X3DH init embedded)
+//
+// Wire format - group:
+//   v2g:<base64url>  where decoded = key_id(4)|iteration(4)|sig(64)|ct
+//
+// Server additions needed:
+//   GET  /keys/v2/:userId -> { bundle: string }  (161-byte X3DH bundle, base64url)
+//   POST /keys/v2 -> { bundle: string }
+//   GET  /keys/v2/recovery -> { encryptedBlob: string }
+//   POST /keys/v2/recovery -> { encryptedBlob: string, isReset?, twoFactorCode? }
+//   POST /conversations/:id/sender-keys  accepts { keys: [{ recipientId, distributionEnvelope, version:2 }] }
 
-const IS_BROWSER = typeof window !== 'undefined' &&
+import { useAuthStore } from '@/src/store/useAuthStore';
+import { useCallback, useEffect, useState } from 'react';
+import api from '@/src/lib/axios';
+import { wasm, zeroize } from '@/src/lib/cryptoWorkerClient';
+import {
+    IdentityKeys,
+    clearAllCryptoState,
+    deleteAllGroupReceivers,
+    deleteGroupSender,
+    deleteIdentityKeys,
+    loadGroupReceiver,
+    loadGroupSender,
+    loadIdentityKeys,
+    loadRatchetSession,
+    saveGroupReceiver,
+    saveGroupSender,
+    saveIdentityKeys,
+    saveRatchetSession,
+} from '@/src/lib/cryptoDb';
+import { legacyDecryptBinary, legacyDecryptText, legacyDeriveSharedKey } from '@/src/lib/cryptoLegacy';
+import { loadPrivateKey } from '@/src/lib/crypto';
+
+const IS_BROWSER =
+    typeof window !== 'undefined' &&
     typeof window.crypto !== 'undefined' &&
     typeof indexedDB !== 'undefined';
 
 // Module-level singletons
-const sessionKeys  = new Map<number, CryptoKey>();
-const pendingEcdh  = new Map<number, Promise<CryptoKey | null>>();
 
-const sessionKeyTimes = new Map<number, number>();
-const sessionKeyPubHash = new Map<number, string>();
-const SESSION_KEY_TTL_MS = 5 * 60 * 1000;
-
-let initGeneration = 0;
-
-// Sender Key (GROUP)
-// mySenderKeys:   convId → my own AES key for that group
-// peerSenderKeys: `${convId}:${senderId}` → peer's AES key (already decrypted for us)
-// pendingSender:  `${convId}:${senderId}` → in-flight fetch
-const mySenderKeys   = new Map<number, CryptoKey>();
-const peerSenderKeys = new Map<string, CryptoKey>();
-const pendingSender  = new Map<string, Promise<CryptoKey | null>>();
-
-// Bulk fetch state: set of convIds whose keys have been loaded for this session
-const prefetchedConvs = new Set<number>();
-
-let   privateKey:  CryptoKey | null = null;
-let   initialized  = false;
-let   initPromise: Promise<void> | null = null;
-
-// Recovery state
 type E2EStatus = 'idle' | 'ready' | 'needs-recovery' | 'needs-setup' | 'keys-desynced';
-let e2eStatus: E2EStatus = 'idle';
-let keysWereRotated = false; // true when keys were regenerated this session (not loaded from storage)
-let recoveryBlob: string | null = null;
-let recoverySalt:     string | null = null;
-let currentUserId:    number | null = null;
 
-let onReadyCallbacks: Array<() => void> = [];
+let identity: IdentityKeys | null = null;
+let currentUserId: number | null = null;
+let initialized = false;
+let initPromise: Promise<void> | null = null;
+let initGeneration = 0;
+let keysWereRotated = false;
+let e2eStatus: E2EStatus = 'idle';
+let pendingRecoveryBlob: string | null = null;
+let legacyPrivKey: CryptoKey | null = null;
+
+const legacyKeyCache = new Map<number, Promise<CryptoKey | null>>();
+const drLocks        = new Map<string, Promise<unknown>>();
+const groupLocks     = new Map<number, Promise<unknown>>();
+
 let statusCallbacks: Array<(s: E2EStatus) => void> = [];
+let onReadyCallbacks: Array<() => void> = [];
 
 function broadcastStatus(s: E2EStatus) {
     e2eStatus = s;
-    statusCallbacks.forEach(cb => cb(s));
+    statusCallbacks.forEach((cb) => cb(s));
 }
 
-// Helpers
-function bufToBase64url(buf: ArrayBuffer): string {
-    return btoa(String.fromCharCode(...new Uint8Array(buf)))
+// Encoding
+
+function b64Enc(buf: Uint8Array | ArrayBuffer): string {
+    const a = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+    return btoa(String.fromCharCode(...a))
         .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
-function base64urlToBuf(b64: string): ArrayBuffer {
-    const padded = b64.replace(/-/g, '+').replace(/_/g, '/');
-    const raw    = atob(padded.padEnd(padded.length + (4 - padded.length % 4) % 4, '='));
-    const buf    = new Uint8Array(raw.length);
-    for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
-    return buf.buffer as ArrayBuffer;
+
+function b64Dec(s: string): Uint8Array {
+    const p = s.replace(/-/g, '+').replace(/_/g, '/');
+    const r = atob(p.padEnd(p.length + (4 - p.length % 4) % 4, '='));
+    const b = new Uint8Array(r.length);
+    for (let i = 0; i < r.length; i++) b[i] = r.charCodeAt(i);
+    return b;
 }
 
-async function aesEncryptRaw(key: CryptoKey, data: Uint8Array): Promise<string> {
-    const iv        = crypto.getRandomValues(new Uint8Array(12));
-    const plainBuf  = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
-    const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plainBuf);
-    const combined  = new Uint8Array(12 + encrypted.byteLength);
-    combined.set(iv);
-    combined.set(new Uint8Array(encrypted), 12);
-    return bufToBase64url(combined.buffer as ArrayBuffer);
+function tryUtf8(buf: ArrayBuffer): string | null {
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+    catch { return null; }
 }
 
-async function aesDecryptRaw(key: CryptoKey, ciphertext: string): Promise<Uint8Array> {
-    const combined  = new Uint8Array(base64urlToBuf(ciphertext));
-    const iv        = new Uint8Array(combined.buffer.slice(0, 12));
-    const data      = new Uint8Array(combined.buffer.slice(12));
-    const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
-    return new Uint8Array(decrypted);
+const V2_DM    = 'v2:';
+const V2_GROUP = 'v2g:';
+const INIT_FLAG = 0x01;
+
+// Concurrency — serialise DR/group operations per session
+
+function withLock<T>(map: Map<string | number, Promise<unknown>>, key: string | number, fn: () => Promise<T>): Promise<T> {
+    const prev = (map.get(key) ?? Promise.resolve()) as Promise<unknown>;
+    const next = prev.then(fn, () => fn());
+    map.set(key, next.catch(() => {}));
+    return next;
 }
 
-async function generateAesKey(): Promise<{ key: CryptoKey; raw: Uint8Array }> {
-    const raw = crypto.getRandomValues(new Uint8Array(32));
-    const key = await crypto.subtle.importKey(
-        'raw', raw,
-        { name: 'AES-GCM' },
-        true,  // exportable — щоб зашифрувати для інших
-        ['encrypt', 'decrypt'],
+// X3DH bundle helpers
+
+// wire: ik_sign_pub(32)||ik_dh_pub(32)||spk_pub(32)||spk_sig(64)||opk_present(1) = 161 bytes
+function buildBundle(k: IdentityKeys): Uint8Array {
+    const b = new Uint8Array(161);
+    b.set(k.ikSignPub, 0);
+    b.set(k.ikDhPub,   32);
+    b.set(k.spkPub,    64);
+    b.set(k.spkSig,    96);
+    b[160] = 0; // no OPK in v2.0
+    return b;
+}
+
+async function fetchBundle(userId: number): Promise<Uint8Array> {
+    const { data } = await api.get<{ bundle: string }>(`/keys/v2/${userId}`);
+    return b64Dec(data.bundle);
+}
+
+// Identity key generation
+
+async function generateIdentityKeys(): Promise<IdentityKeys> {
+    const [dhKp, signKp, spkKp] = await Promise.all([
+        wasm.generateKeyAgreementKeypair(),
+        wasm.generateSigningKeypair(),
+        wasm.generateKeyAgreementKeypair(),
+    ]);
+
+    const ikDhSecret = dhKp.keypair.slice(0, 32);
+    const ikDhPub    = dhKp.keypair.slice(32, 64);
+    const ikSignSeed = signKp.keypair.slice(0, 32);
+    const ikSignPub  = signKp.keypair.slice(32, 64);
+    const spkSecret  = spkKp.keypair.slice(0, 32);
+    const spkPub     = spkKp.keypair.slice(32, 64);
+    zeroize(dhKp.keypair); zeroize(signKp.keypair); zeroize(spkKp.keypair);
+
+    const { sig: spkSig } = await wasm.sign(ikSignSeed, spkPub);
+    return { ikDhSecret, ikDhPub, ikSignSeed, ikSignPub, spkSecret, spkPub, spkSig };
+}
+
+// DR: one session per user-pair (sorted)
+
+function pairKey(a: number, b: number): string { return [a, b].sort().join(':'); }
+
+async function drEncrypt(
+    myId: number,
+    peerId: number,
+    plaintext: Uint8Array,
+): Promise<string> {
+    const ck = pairKey(myId, peerId);
+    return withLock(drLocks, ck, async () => {
+        let sessionBytes = await loadRatchetSession(ck);
+        let initMsg: Uint8Array | null = null;
+
+        if (!sessionBytes) {
+            const peerBundle = await fetchBundle(peerId);
+            const { result }  = await wasm.x3dhSend(identity!.ikDhSecret, peerBundle);
+            const sk          = result.slice(0, 32);
+            initMsg           = result.slice(32, 97); // ik_dh_pub||ek_pub||opk_used
+            const spkPub      = peerBundle.slice(64, 96);
+            const { sessionBytes: sb } = await wasm.ratchetInitSender(sk, spkPub);
+            zeroize(sk);
+            sessionBytes = sb;
+        }
+
+        const { ciphertext, newSessionBytes } = await wasm.ratchetEncrypt(
+            sessionBytes, plaintext, new Uint8Array(0),
+        );
+        await saveRatchetSession(ck, newSessionBytes);
+
+        const offset = initMsg ? 66 : 1;
+        const wire   = new Uint8Array(offset + ciphertext.length);
+        wire[0]      = initMsg ? INIT_FLAG : 0x00;
+        if (initMsg) wire.set(initMsg, 1);
+        wire.set(ciphertext, offset);
+        return V2_DM + b64Enc(wire);
+    });
+}
+
+async function drDecrypt(
+    myId: number,
+    senderId: number,
+    content: string,
+): Promise<Uint8Array | null> {
+    const ck   = pairKey(myId, senderId);
+    const wire = b64Dec(content.slice(V2_DM.length));
+    const hasInit = (wire[0] & INIT_FLAG) !== 0;
+
+    return withLock(drLocks, ck, async () => {
+        let sessionBytes = await loadRatchetSession(ck);
+
+        if (hasInit) {
+            const initMsg = wire.slice(1, 66);
+            const drWire  = wire.slice(66);
+            const { sk } = await wasm.x3dhReceive(
+                identity!.ikDhSecret,
+                identity!.spkSecret,
+                new Uint8Array(0),
+                initMsg,
+            );
+            const { sessionBytes: sb } = await wasm.ratchetInitReceiver(sk, identity!.spkSecret);
+            zeroize(sk);
+            sessionBytes = sb;
+            const { plaintext, newSessionBytes } = await wasm.ratchetDecrypt(
+                sessionBytes, drWire, new Uint8Array(0),
+            );
+            await saveRatchetSession(ck, newSessionBytes);
+            return plaintext;
+        }
+
+        if (!sessionBytes) return null;
+        const { plaintext, newSessionBytes } = await wasm.ratchetDecrypt(
+            sessionBytes, wire.slice(1), new Uint8Array(0),
+        );
+        await saveRatchetSession(ck, newSessionBytes);
+        return plaintext;
+    });
+}
+
+// Legacy v1 key cache
+
+async function legacyKey(peerId: number): Promise<CryptoKey | null> {
+    if (!legacyPrivKey) return null;
+    if (!legacyKeyCache.has(peerId)) {
+        legacyKeyCache.set(peerId, (async () => {
+            try {
+                const { data } = await api.get<{ publicKey: string }>(`/keys/${peerId}`);
+                return legacyDeriveSharedKey(legacyPrivKey!, data.publicKey);
+            } catch { return null; }
+        })());
+    }
+    return legacyKeyCache.get(peerId)!;
+}
+
+// Group distribution message encryption
+// envelope wire: x3dh_init(65) | nonce(12) | aes-gcm-ct(72+16=88) = 165 bytes
+
+async function sealDistMsg(distMsg: Uint8Array, recipientBundle: Uint8Array): Promise<Uint8Array> {
+    const { result } = await wasm.x3dhSend(identity!.ikDhSecret, recipientBundle);
+    const sk         = result.slice(0, 32);
+    const initMsg    = result.slice(32, 97);
+    const aesKey     = await crypto.subtle.importKey('raw', new Uint8Array(sk), 'AES-GCM', false, ['encrypt']);
+    sk.fill(0);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, aesKey, new Uint8Array(distMsg));
+    const env = new Uint8Array(65 + 12 + ct.byteLength);
+    env.set(initMsg, 0); env.set(iv, 65); env.set(new Uint8Array(ct), 77);
+    return env;
+}
+
+async function openDistMsg(envelope: Uint8Array): Promise<Uint8Array | null> {
+    try {
+        const { sk } = await wasm.x3dhReceive(
+            identity!.ikDhSecret,
+            identity!.spkSecret,
+            new Uint8Array(0),
+            envelope.slice(0, 65),
+        );
+        const aesKey = await crypto.subtle.importKey('raw', new Uint8Array(sk), 'AES-GCM', false, ['decrypt']);
+        sk.fill(0);
+        const pt = await crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv: envelope.slice(65, 77) },
+            aesKey,
+            envelope.slice(77),
+        );
+        return new Uint8Array(pt);
+    } catch { return null; }
+}
+
+// Module-level impl - called both from the distributeMySenderKey callback (with lock)
+// and from encryptBinaryForGroup (already holding the lock).
+async function doDistribute(
+    conversationId: number,
+    memberUserIds: number[],
+): Promise<void> {
+    if (!identity || !initialized) return;
+
+    const { senderBytes, distMsg } = await wasm.groupSenderGenerate();
+    await saveGroupSender(conversationId, senderBytes);
+
+    const payloads: Array<{ recipientId: number; distributionEnvelope: string; version: number }> = [];
+    await Promise.allSettled(
+        memberUserIds.map(async (memberId) => {
+            try {
+                const bundle   = await fetchBundle(memberId);
+                const envelope = await sealDistMsg(distMsg, bundle);
+                payloads.push({ recipientId: memberId, distributionEnvelope: b64Enc(envelope), version: 2 });
+            } catch (e) {
+                console.warn(`[E2E] dist failed for ${memberId}:`, e);
+            }
+        }),
     );
-    return { key, raw };
+
+    if (payloads.length) {
+        await api.post(`/conversations/${conversationId}/sender-keys`, { keys: payloads });
+    }
 }
 
 // Hook
+
 export function useE2E() {
     const { user, accessToken } = useAuthStore();
-    const [isReady, setIsReady] = useState(initialized && !!privateKey);
-    const [status, setStatus] = useState<E2EStatus>(e2eStatus)
+    const [isReady, setIsReady] = useState(initialized && !!identity);
+    const [status, setStatus]   = useState<E2EStatus>(e2eStatus);
 
-    if(!IS_BROWSER) {
+    if (!IS_BROWSER) {
         return {
             encrypt: async (c: string) => c,
             decrypt: async (c: string) => c,
@@ -134,114 +332,71 @@ export function useE2E() {
             needsRecoverySetup: false,
             keysDesynced: false,
             clearAllKeyMaterial: async () => {},
-        }
+        };
     }
 
     useEffect(() => {
-        if(e2eStatus !== 'idle') setStatus(e2eStatus);
-        if (initialized && privateKey) setIsReady(true);
-
+        if (e2eStatus !== 'idle') setStatus(e2eStatus);
+        if (initialized && identity) setIsReady(true);
         const cb = (s: E2EStatus) => {
             setStatus(s);
-            if (s === 'ready' || s === 'needs-setup' || s === 'keys-desynced') setIsReady(true);
+            if (s !== 'idle' && s !== 'needs-recovery') setIsReady(true);
         };
         statusCallbacks.push(cb);
-        return () => { statusCallbacks = statusCallbacks.filter(x => x !== cb); };
+        return () => { statusCallbacks = statusCallbacks.filter((x) => x !== cb); };
     }, []);
 
     useEffect(() => {
         if (!user?.id || !accessToken) return;
-        if (initialized && privateKey) return;
+        if (initialized && identity) return;
         if (initPromise) return;
 
         currentUserId = user.id;
         broadcastStatus('idle');
 
         initPromise = (async () => {
-            const myGen = ++initGeneration;
+            const gen = ++initGeneration;
             try {
-                let privKey = await loadPrivateKey(user.id);
+                let keys = await loadIdentityKeys(user.id);
+                if (gen !== initGeneration) return;
 
-                if (myGen !== initGeneration) { initPromise = null; return; }
-
-                if (!privKey) {
-                    // No local private key — check recovery first
+                if (!keys) {
                     try {
-                        const { data } = await api.get('/keys/recovery/me');
-                        recoveryBlob = data.encryptedBlob;
-                        recoverySalt = data.salt;
+                        const { data } = await api.get<{ encryptedBlob: string }>('/keys/v2/recovery');
+                        pendingRecoveryBlob = data.encryptedBlob;
                         broadcastStatus('needs-recovery');
                         return;
                     } catch (err: unknown) {
-                        const status = (err as { response?: { status?: number } })?.response?.status;
-                        if (status === 404) {
-                            // Truly first setup — generate and publish
-                            const { publicKey, privateKey: newPriv } = await generateKeyPair();
-                            await savePrivateKey(user.id, newPriv);
-                            await savePublicKey(user.id, publicKey);
-                            privKey = newPriv;
-                            await api.post('/keys', { publicKey });
+                        const code = (err as { response?: { status?: number } })?.response?.status;
+                        if (code === 404) {
+                            keys = await generateIdentityKeys();
+                            await saveIdentityKeys(user.id, keys);
+                            await api.post('/keys/v2', { bundle: b64Enc(buildBundle(keys)) });
                             keysWereRotated = true;
                             broadcastStatus('needs-setup');
                         } else {
-                            // Network error or other transient issue — never generate new keys
-                            console.error('[E2E] Cannot check recovery (network?). Will retry on next load.', err);
-                            initPromise = null;
+                            console.error('[E2E] Cannot check v2 recovery (network?). Will retry.', err);
                             return;
                         }
                     }
                 } else {
-                    // Have local private key — check recovery setup
-                    try {
-                        await api.get('/keys/recovery/me');
-                    } catch {
-                        broadcastStatus('needs-setup');
-                    }
-
-                    // Verify server has our public key and it matches local
-                    try {
-                        const { data: serverKey } = await api.get(`/keys/${user.id}`);
-                        const localPubKey = await loadPublicKey(user.id);
-                        if (localPubKey && serverKey.publicKey !== localPubKey) {
-                            // Keys desynced — never auto-regenerate, show warning
-                            console.warn('[E2E] Local public key differs from server. Keys desynced!');
-                            broadcastStatus('keys-desynced');
-                        }
-                    } catch (err: unknown) {
-                        const status = (err as { response?: { status?: number } })?.response?.status;
-                        if (status === 404) {
-                            // Server lost our public key — try to re-publish existing one
-                            const localPubKey = await loadPublicKey(user.id);
-                            if (localPubKey) {
-                                try {
-                                    await api.post('/keys', { publicKey: localPubKey });
-                                    console.info('[E2E] Re-published public key to server');
-                                } catch (pubErr) {
-                                    console.error('[E2E] Failed to re-publish public key:', pubErr);
-                                }
-                            } else {
-                                // Old device: private key exists but public key was never cached locally
-                                console.warn('[E2E] Server key missing and no local public key stored. Reset PIN to recover.');
-                                broadcastStatus('keys-desynced');
-                            }
-                        }
-                        // else: network error — continue with local key, don't block
-                    }
+                    try { await api.get('/keys/v2/recovery'); }
+                    catch { broadcastStatus('needs-setup'); }
                 }
 
-                if (myGen !== initGeneration) { initPromise = null; return; }
+                if (gen !== initGeneration) return;
 
-                privateKey  = privKey!;
-                initialized = true;
+                legacyPrivKey = await loadPrivateKey(user.id).catch(() => null);
+                identity      = keys!;
+                initialized   = true;
 
                 if (e2eStatus !== 'needs-setup' && e2eStatus !== 'keys-desynced') {
                     broadcastStatus('ready');
                 }
-
-                onReadyCallbacks.forEach(cb => cb());
+                onReadyCallbacks.forEach((cb) => cb());
                 onReadyCallbacks = [];
-            } catch (error) {
-                console.error('[E2E] Критична помилка ініціалізації:', error);
+            } catch (err) {
+                console.error('[E2E] Init failed:', err);
             } finally {
                 initPromise = null;
             }
@@ -250,610 +405,280 @@ export function useE2E() {
 
     useEffect(() => {
         if (!user?.id) {
-            privateKey       = null;
-            initialized      = false;
-            initPromise      = null;
-            recoveryBlob     = null;
-            recoverySalt     = null;
-            currentUserId    = null;
-            keysWereRotated  = false;
-            sessionKeys.clear();
-            pendingEcdh.clear();
-            sessionKeyTimes.clear();
-            sessionKeyPubHash.clear();
-            mySenderKeys.clear();
-            peerSenderKeys.clear();
-            pendingSender.clear();
-            prefetchedConvs.clear();
+            identity = null; legacyPrivKey = null; initialized = false;
+            initPromise = null; currentUserId = null; keysWereRotated = false;
+            pendingRecoveryBlob = null;
+            legacyKeyCache.clear(); drLocks.clear(); groupLocks.clear();
             onReadyCallbacks = [];
             broadcastStatus('idle');
             setIsReady(false);
         }
     }, [user?.id]);
 
-    const unlockWithPin = useCallback(async (pin: string): Promise<boolean> => {
-        if (!recoveryBlob || !recoverySalt || !currentUserId) return false;
-        try {
-            const privKey = await decryptPrivateKeyWithPin(recoveryBlob, recoverySalt, pin);
-            await savePrivateKey(currentUserId, privKey);
-            // Cache server's public key locally so we can re-publish if server loses it
-            try {
-                const { data } = await api.get(`/keys/${currentUserId}`);
-                await savePublicKey(currentUserId, data.publicKey);
-            } catch {
-                // Non-critical — will be resolved on next init check
-            }
-            privateKey  = privKey;
-            initialized = true;
-            recoveryBlob  = null;
-            recoverySalt  = null;
-            broadcastStatus('ready');
-            onReadyCallbacks.forEach(cb => cb());
-            onReadyCallbacks = [];
-            return true;
-        } catch {
-            return false; // Wrong PIN — AES-GCM auth tag mismatch
-        }
-    }, []);
+    // DM
 
-    const setupRecovery = useCallback(async (
-        pin: string,
-        options?: { isReset?: boolean; twoFactorCode?: string }
-    ): Promise<void> => {
-        if (!privateKey || !initialized) throw new Error('E2E not initialized');
-        const { encryptedBlob, salt } = await encryptPrivateKeyWithPin(privateKey, pin);
-        await api.post('/keys/recovery', {
-            encryptedBlob,
-            salt,
-            isReset:      options?.isReset      ?? false,
-            twoFactorCode: options?.twoFactorCode,
-        });
-        broadcastStatus('ready');
-    }, []);
-
-    const resetToNewKeys = useCallback(async (): Promise<void> => {
-        const myUserId = useAuthStore.getState().user?.id;
-        if (!myUserId) throw new Error('Not authenticated');
-
-        initGeneration++;
-        initPromise = null;
-
-        // Clear all existing key material (both in-memory and on-disk)
-        sessionKeys.clear();
-        pendingEcdh.clear();
-        sessionKeyTimes.clear();
-        sessionKeyPubHash.clear();
-        mySenderKeys.clear();
-        peerSenderKeys.clear();
-        pendingSender.clear();
-        prefetchedConvs.clear();
-
-        const { publicKey, privateKey: newPriv } = await generateKeyPair();
-
-        await savePrivateKey(myUserId, newPriv);
-        await savePublicKey(myUserId, publicKey);
-
-        try {
-            await api.post('/keys', { publicKey });
-        } catch (e) {
-            console.error('[E2E] resetToNewKeys: не вдалося опублікувати публічний ключ', e);
-            throw new Error('Не вдалося опублікувати новий публічний ключ');
-        }
-
-        // Видаляємо застарілі GroupSenderKey (зашифровані старим ECDH-ключем).
-        // Після цього peers отримають запит на перерозподіл при наступному відкритті групи.
-        try {
-            await api.delete('/conversations/sender-keys/mine-all');
-        } catch (e) {
-            console.warn('[E2E] resetToNewKeys: не вдалося видалити старі sender keys', e);
-        }
-
-        privateKey  = newPriv;
-        initialized = true;
-        keysWereRotated = true;
-
-        broadcastStatus('needs-setup');
-    }, [])
-
-    // ECDH session key (DIRECT)
-    const getSessionKey = useCallback(async (
-        targetUserId: number,
-        forceRefresh = false,   // ← NEW parameter
-    ): Promise<CryptoKey | null> => {
-        if (!privateKey || !initialized) return null;
-        if (!useAuthStore.getState().accessToken) return null;
-
-        if (!forceRefresh) {
-            const cached = sessionKeys.get(targetUserId);
-            const ts     = sessionKeyTimes.get(targetUserId) ?? 0;
-            // Повертаємо кеш тільки якщо він свіжий
-            if (cached && Date.now() - ts < SESSION_KEY_TTL_MS) return cached;
-        }
-
-        // Застарілий або примусовий рефреш — видаляємо
-        sessionKeys.delete(targetUserId);
-        sessionKeyTimes.delete(targetUserId);
-
-        const inflight = pendingEcdh.get(targetUserId);
-        if (inflight) return inflight;
-
-        const promise = (async () => {
-            try {
-                const { data } = await api.get(`/keys/${targetUserId}`, {
-                    headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' },
-                });
-
-                // Виявляємо ротацію ключа: якщо publicKey змінився — чистимо
-                // зашифровані sender-ключі груп (вони тепер нечитабельні)
-                const prevHash = sessionKeyPubHash.get(targetUserId);
-                const newHash  = data.publicKey as string;
-                if (prevHash && prevHash !== newHash) {
-                    for (const k of peerSenderKeys.keys()) {
-                        if (k.endsWith(`:${targetUserId}`)) peerSenderKeys.delete(k);
-                    }
-                    prefetchedConvs.clear(); // перечитати sender-ключі груп
-                }
-
-                const aesKey = await deriveSharedKey(privateKey!, newHash);
-                sessionKeys.set(targetUserId, aesKey);
-                sessionKeyTimes.set(targetUserId, Date.now());
-                sessionKeyPubHash.set(targetUserId, newHash);
-                return aesKey;
-            } catch {
-                return null;
-            } finally {
-                pendingEcdh.delete(targetUserId);
-            }
-        })();
-
-        pendingEcdh.set(targetUserId, promise);
-        return promise;
-    }, []);
-
-    // DIRECT encrypt / decrypt
     const encrypt = useCallback(async (content: string, targetUserId: number): Promise<string> => {
-        const key = await getSessionKey(targetUserId);
-        if (!key) return content;
-        return encryptMessage(key, content);
-    }, [getSessionKey]);
+        if (!identity || !initialized || !currentUserId) return content;
+        try {
+            return await drEncrypt(currentUserId, targetUserId, new TextEncoder().encode(content));
+        } catch { return content; }
+    }, []);
 
     const decrypt = useCallback(async (ciphertext: string, senderUserId: number): Promise<string> => {
-        const key = await getSessionKey(senderUserId);
-        if (!key) return ciphertext;
-        try {
-            return await decryptMessage(key, ciphertext);
-        } catch {
-
+        if (!initialized || !currentUserId) return ciphertext;
+        if (ciphertext.startsWith(V2_DM) && identity) {
             try {
-                const freshKey = await getSessionKey(senderUserId, true /* forceRefresh */);
-                if (!freshKey) return '[🔒 Не вдалося розшифрувати]';
-                return await decryptMessage(freshKey, ciphertext);
-            } catch {
-                return '[🔒 Не вдалося розшифрувати]';
-            }
+                const pt = await drDecrypt(currentUserId, senderUserId, ciphertext);
+                return pt ? new TextDecoder().decode(pt) : '[🔒 Не вдалося розшифрувати]';
+            } catch { return '[🔒 Не вдалося розшифрувати]'; }
         }
-    }, [getSessionKey]);
+        try {
+            const key = await legacyKey(senderUserId);
+            if (!key) return ciphertext;
+            return (await legacyDecryptText(key, ciphertext)) ?? '[🔒 Не вдалося розшифрувати]';
+        } catch { return '[🔒 Не вдалося розшифрувати]'; }
+    }, []);
 
     const encryptBinary = useCallback(async (data: ArrayBuffer, targetUserId: number): Promise<ArrayBuffer> => {
-        const key = await getSessionKey(targetUserId);
-        if (!key) return data;
-        return encryptFile(key, data);
-    }, [getSessionKey]);
+        if (!identity || !initialized || !currentUserId) return data;
+        try {
+            const wire = await drEncrypt(currentUserId, targetUserId, new Uint8Array(data));
+            return new TextEncoder().encode(wire).buffer as ArrayBuffer;
+        } catch { return data; }
+    }, []);
 
     const decryptBinary = useCallback(async (data: ArrayBuffer, peerUserId: number): Promise<ArrayBuffer> => {
-        const key = await getSessionKey(peerUserId);
-        if (!key) return data;
-        try {
-            return await decryptFile(key, data);
-        } catch {
+        if (!initialized || !currentUserId) return data;
+        const text = tryUtf8(data);
+        if (text?.startsWith(V2_DM) && identity) {
             try {
-                const freshKey = await getSessionKey(peerUserId, true);
-                if (!freshKey) return data;
-                return await decryptFile(freshKey, data);
-            } catch {
-                return data;
-            }
+                const pt = await drDecrypt(currentUserId, peerUserId, text);
+                return pt ? (pt.buffer as ArrayBuffer) : data;
+            } catch { return data; }
         }
-    }, [getSessionKey]);
-
-    // GROUP: отримати/закешувати peer sender key
-    // Ключ senderId-а, зашифрований для нас. Потрібно розшифрувати через ECDH з senderId.
-    const getPeerSenderKey = useCallback(async (
-        conversationId: number,
-        senderId: number,
-        forceRefresh = false,
-    ): Promise<CryptoKey | null> => {
-        const cacheKey = `${conversationId}:${senderId}`;
-
-        if(!forceRefresh) {
-            const cached = peerSenderKeys.get(cacheKey);
-            if (cached) return cached;
-        } else {
-            peerSenderKeys.delete(cacheKey);
-            pendingSender.delete(cacheKey);
-            prefetchedConvs.delete(conversationId);
-        }
-
-        const inflight = pendingSender.get(cacheKey);
-        if (inflight) return inflight;
-
-        const promise = (async () => {
-            try {
-                // Завантажуємо всі sender keys для нас в цій групі (один запит = всі учасники)
-                const { data } = await api.get<{ senderId: number; encryptedKey: string }[]>(
-                    `/conversations/${conversationId}/sender-keys/for-me`,
-                );
-
-                // Декриптуємо і кешуємо всі одночасно
-                await Promise.all(
-                    data.map(async ({ senderId: sid, encryptedKey }) => {
-                        const k = `${conversationId}:${sid}`;
-                        if (peerSenderKeys.has(k)) return;
-                        try {
-                            const sessionKey = await getSessionKey(sid);
-                            if (!sessionKey) return;
-                            const rawKey = await aesDecryptRaw(sessionKey, encryptedKey);
-                            const aesKey = await crypto.subtle.importKey(
-                                'raw',
-                                rawKey.buffer.slice(rawKey.byteOffset, rawKey.byteOffset + rawKey.byteLength) as ArrayBuffer,
-                                { name: 'AES-GCM' },
-                                false,
-                                ['encrypt', 'decrypt'],
-                            );
-                            peerSenderKeys.set(k, aesKey);
-                        } catch {}
-                    }),
-                );
-
-                return peerSenderKeys.get(cacheKey) ?? null;
-            } catch {
-                return null;
-            } finally {
-                pendingSender.delete(cacheKey);
-            }
-        })();
-
-        pendingSender.set(cacheKey, promise);
-        return promise;
-    }, [getSessionKey]);
-
-    // GROUP: отримати мій власний sender key
-    // Якщо ще не існує — генеруємо і розповсюджуємо по всіх учасниках групи.
-    const getOrCreateMySenderKey = useCallback(async (
-        conversationId: number,
-    ): Promise<CryptoKey | null> => {
-        const cached = mySenderKeys.get(conversationId);
-        if (cached) return cached;
-
-        const myUserId = useAuthStore.getState().user?.id;
-        if (!myUserId) return null;
-
-        // Спочатку пробуємо завантажити з сервера (ключ може вже існувати на іншому пристрої)
         try {
-            const { data } = await api.get<{ senderId: number; encryptedKey: string }[]>(
-                `/conversations/${conversationId}/sender-keys/for-me`,
+            const key = await legacyKey(peerUserId);
+            if (!key) return data;
+            return (await legacyDecryptBinary(key, data)) ?? data;
+        } catch { return data; }
+    }, []);
+
+    // Group
+
+    const encryptForGroup = useCallback(async (content: string, conversationId: number): Promise<string> => {
+        if (!identity || !initialized) return content;
+        return withLock(groupLocks, conversationId, async () => {
+            const senderBytes = await loadGroupSender(conversationId);
+            if (!senderBytes) return content;
+            const { ciphertext, newSenderBytes } = await wasm.groupSenderEncrypt(
+                senderBytes, new TextEncoder().encode(content),
             );
-            const myEntry = data.find(k => k.senderId === myUserId);
+            await saveGroupSender(conversationId, newSenderBytes);
+            return V2_GROUP + b64Enc(ciphertext);
+        });
+    }, []);
 
-            if (myEntry) {
-                // Мій ключ вже є на сервері — розшифровуємо його (зашифрований для нас нами ж)
-                const selfSessionKey = await getSessionKey(myUserId);
-                if (!selfSessionKey) return null;
-                const rawKey = await aesDecryptRaw(selfSessionKey, myEntry.encryptedKey);
-                const aesKey = await crypto.subtle.importKey(
-                    'raw',
-                    rawKey.buffer.slice(rawKey.byteOffset, rawKey.byteOffset + rawKey.byteLength) as ArrayBuffer,
-                    { name: 'AES-GCM' },
-                    false,
-                    ['encrypt', 'decrypt'],
-                );
-                mySenderKeys.set(conversationId, aesKey);
-                return aesKey;
-            }
-        } catch {}
-
-
-        return null;
-    }, [getSessionKey]);
-
-    // GROUP: згенерувати і розповсюдити мій sender key
-    // Викликається: при вході в групу вперше, або при ротації (після зміни учасників).
-    const distributeMySenderKey = useCallback(async (
-        conversationId: number,
-        memberUserIds: number[], // всі учасники включаючи мене
-    ): Promise<void> => {
-        if (!privateKey || !initialized) return;
-
-        const myUserId = useAuthStore.getState().user?.id;
-        if (!myUserId) return;
-
-        const { key, raw } = await generateAesKey();
-        mySenderKeys.set(conversationId, key);
-
-        // Шифруємо мій AES ключ для кожного учасника через ECDH
-        const encryptedKeys: Array<{ recipientId: number; encryptedKey: string }> = [];
-
-        await Promise.all(
-            memberUserIds.map(async (memberId) => {
-                try {
-                    const sessionKey = await getSessionKey(memberId);
-                    if (!sessionKey) {
-                        console.warn(`[E2E] No ECDH key for member ${memberId}, skipping`);
-                        return;
-                    }
-                    const encryptedKey = await aesEncryptRaw(sessionKey, raw);
-                    encryptedKeys.push({ recipientId: memberId, encryptedKey });
-                } catch (err) {
-                    console.warn(`[E2E] Failed to encrypt sender key for user ${memberId}:`, err);
-                }
-            }),
-        );
-
-        if (!encryptedKeys.length) return;
-
-        await api.post(`/conversations/${conversationId}/sender-keys`, { keys: encryptedKeys });
-        console.log(`[E2E] Sender key distributed to ${encryptedKeys.length} members in conv ${conversationId}`);
-    }, [getSessionKey]);
-
-    // GROUP: prefetch всіх ключів при відкритті групи
-    // Завантажує всі sender keys учасників одним запитом і кешує.
-    const prefetchGroupSenderKeys = useCallback(async (
-        conversationId: number,
-        memberUserIds: number[],
-        socket?: { emit: (event: string, data: unknown) => void } | null,
-    ): Promise<void> => {
-        if (prefetchedConvs.has(conversationId)) return;
-        prefetchedConvs.add(conversationId);
-
-        const myUserId = useAuthStore.getState().user?.id;
-        if (!myUserId) return;
-
-        try {
-            const {data} = await api.get<{ senderId: number; encryptedKey: string }[]>(
-                `/conversations/${conversationId}/sender-keys/for-me`,
-            );
-
-            let hasMySenderKey = false;
-            let decryptFailCount = 0;
-            // Tracks whether own key failed because AES-GCM tag mismatched (genuine wrong key)
-            // vs getSessionKey returned null (transient network error).
-            // Only redistribute when genuinely wrong — a transient error must never generate a new key
-            // because that permanently breaks old message history.
-            let myKeyGenuinelyBroken = false;
-
-            const tryDecrypt = async (senderId: number, encryptedKey: string, forceRefresh = false) => {
-                const cacheKey = `${conversationId}:${senderId}`;
-                if (peerSenderKeys.has(cacheKey)) return true;
-                const sessionKey = await getSessionKey(senderId, forceRefresh);
-                if (!sessionKey) return false; // transient — no session key available
-                const rawKey = await aesDecryptRaw(sessionKey, encryptedKey); // throws on wrong key
-                const aesKey = await crypto.subtle.importKey(
-                    'raw',
-                    rawKey.buffer.slice(rawKey.byteOffset, rawKey.byteOffset + rawKey.byteLength) as ArrayBuffer,
-                    { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'],
-                );
-                peerSenderKeys.set(cacheKey, aesKey);
-                if (senderId === myUserId) {
-                    mySenderKeys.set(conversationId, aesKey);
-                    hasMySenderKey = true;
-                }
-                return true;
-            };
-
-            await Promise.all(
-                data.map(async ({ senderId, encryptedKey }) => {
-                    try {
-                        const ok = await tryDecrypt(senderId, encryptedKey);
-                        if (!ok) decryptFailCount++;
-                    } catch {
-                        // AES-GCM auth tag mismatch — session key was valid but key is wrong
-                        decryptFailCount++;
-                        if (senderId === myUserId) myKeyGenuinelyBroken = true;
-                    }
-                }),
-            );
-
-            // Retry with force-refresh for keys that failed
-            if (decryptFailCount > 0) {
-                await Promise.all(
-                    data.map(async ({ senderId, encryptedKey }) => {
-                        if (peerSenderKeys.has(`${conversationId}:${senderId}`)) return;
-                        try {
-                            const ok = await tryDecrypt(senderId, encryptedKey, true);
-                            if (!ok) return;
-                            if (senderId === myUserId) myKeyGenuinelyBroken = false;
-                        } catch {
-                            // Still failing with a fresh session key → key is genuinely wrong
-                            if (senderId === myUserId) myKeyGenuinelyBroken = true;
-                        }
-                    }),
-                );
-
-                // Request redistribution for peers whose keys are still undecryptable.
-                // Remove from prefetchedConvs so we re-fetch after they respond.
-                if (socket) {
-                    let requestedRedistribution = false;
-                    for (const { senderId } of data) {
-                        if (senderId === myUserId) continue;
-                        if (!peerSenderKeys.has(`${conversationId}:${senderId}`)) {
-                            socket.emit('requestSenderKeyRedistribution', { conversationId, targetUserId: senderId });
-                            requestedRedistribution = true;
-                        }
-                    }
-                    if (requestedRedistribution) {
-                        // Allow re-prefetch after the peer has had time to redistribute
-                        prefetchedConvs.delete(conversationId);
-                    }
-                }
-            }
-
-            const mySenderKeyExistsOnServer = data.some(({ senderId }) => senderId === myUserId);
-
-            if (!hasMySenderKey && !mySenderKeyExistsOnServer) {
-                // No key at all — first entry into group or new member
-                await distributeMySenderKey(conversationId, memberUserIds);
-            } else if (!hasMySenderKey && mySenderKeyExistsOnServer) {
-                if (myKeyGenuinelyBroken) {
-                    // Have a session key but AES-GCM still fails → key on server is wrong → redistribute
-                    console.warn(`[E2E] Own sender key genuinely broken for conv ${conversationId}, redistributing`);
-                    await distributeMySenderKey(conversationId, memberUserIds);
-                } else {
-                    // Session key was unavailable (transient network error) → do NOT redistribute
-                    // Allow retry on next open
-                    console.warn(`[E2E] Own sender key: session key unavailable (transient), will retry next open`);
-                    prefetchedConvs.delete(conversationId);
-                }
-            }
-        } catch (err) {
-            console.warn(`[E2E] prefetchGroupSenderKeys failed for conv ${conversationId}:`, err);
-            prefetchedConvs.delete(conversationId); // retry on next open
-        }
-    }, [getSessionKey, distributeMySenderKey]);
-
-    // GROUP encrypt / decrypt (text)
-    const encryptForGroup = useCallback(async (
-        content: string,
-        conversationId: number,
-    ): Promise<string> => {
-        let key = mySenderKeys.get(conversationId);
-        if (!key) {
-            key = await getOrCreateMySenderKey(conversationId) ?? undefined;
-        }
-        if (!key) return content;
-        return encryptMessage(key, content);
-    }, [getOrCreateMySenderKey]);
-
-    // senderId тепер обов'язковий — кожен учасник шифрує своїм ключем
     const decryptFromGroup = useCallback(async (
         ciphertext: string,
         conversationId: number,
         senderId: number,
     ): Promise<string> => {
-        const myUserId = useAuthStore.getState().user?.id;
-
-        // Якщо це моє повідомлення — беремо мій sender key
-        if (senderId === myUserId) {
-            let key = mySenderKeys.get(conversationId);
-            if (!key) {
-                // Cache miss — try to load from server (e.g. after page reload before prefetch)
-                key = await getOrCreateMySenderKey(conversationId) ?? undefined;
-            }
-            if (!key) return ciphertext;
-            try { return await decryptMessage(key, ciphertext); }
-            catch { return '[🔒 Не вдалося розшифрувати]'; }
-        }
-
-        // Чуже повідомлення — беремо ключ відправника
-        const key = await getPeerSenderKey(conversationId, senderId);
-        if (!key) {
-            // Sender key не знайдено — спробуємо force-refresh
-            const freshKey = await getPeerSenderKey(conversationId, senderId, true);
-            if (!freshKey) return ciphertext; // тримаємо ciphertext (не вічне повідомлення про помилку)
-            try { return await decryptMessage(freshKey, ciphertext); }
-            catch { return '[🔒 Не вдалося розшифрувати]'; }
-        }
-
-        try { return await decryptMessage(key, ciphertext); }
-        catch {
+        if (!initialized) return ciphertext;
+        if (ciphertext.startsWith(V2_GROUP) && identity) {
             try {
-                const freshKey = await getPeerSenderKey(conversationId, senderId, true);
-                if (!freshKey) return '[🔒 Не вдалося розшифрувати]';
-                return await decryptMessage(freshKey, ciphertext);
-            } catch {
-                return '[🔒 Не вдалося розшифрувати]';
-            }
+                const data = b64Dec(ciphertext.slice(V2_GROUP.length));
+                const receiverBytes = await loadGroupReceiver(conversationId, senderId);
+                if (!receiverBytes) return '[🔒 Немає ключа відправника]';
+                const { plaintext, newReceiverBytes } = await wasm.groupReceiverDecrypt(receiverBytes, data);
+                await saveGroupReceiver(conversationId, senderId, newReceiverBytes);
+                return new TextDecoder().decode(plaintext);
+            } catch { return '[🔒 Не вдалося розшифрувати]'; }
         }
-    }, [getPeerSenderKey]);
+        // v1 group
+        try {
+            const key = await legacyKey(senderId);
+            if (!key) return ciphertext;
+            return (await legacyDecryptText(key, ciphertext)) ?? '[🔒 Не вдалося розшифрувати]';
+        } catch { return '[🔒 Не вдалося розшифрувати]'; }
+    }, []);
 
-    // GROUP encrypt / decrypt (binary files / voice)
     const encryptBinaryForGroup = useCallback(async (
         data: ArrayBuffer,
         conversationId: number,
         memberIds?: number[],
     ): Promise<ArrayBuffer> => {
-        let key = mySenderKeys.get(conversationId);
-        if (!key) {
-            key = await getOrCreateMySenderKey(conversationId) ?? undefined;
-        }
-
-        if (!key && memberIds?.length) {
-            await distributeMySenderKey(conversationId, memberIds);
-            key = mySenderKeys.get(conversationId);
-        }
-
-        if (!key) {
-            console.error('[E2E] No sender key for group', conversationId);
-            return data;
-        }
-
-        return encryptFile(key, data);
-    }, [getOrCreateMySenderKey, distributeMySenderKey]);
+        if (!identity || !initialized) return data;
+        return withLock(groupLocks, conversationId, async () => {
+            let senderBytes = await loadGroupSender(conversationId);
+            if (!senderBytes) {
+                if (!memberIds?.length) return data;
+                await doDistribute(conversationId, memberIds); // already inside lock
+                senderBytes = await loadGroupSender(conversationId);
+                if (!senderBytes) return data;
+            }
+            const { ciphertext, newSenderBytes } = await wasm.groupSenderEncrypt(senderBytes, new Uint8Array(data));
+            await saveGroupSender(conversationId, newSenderBytes);
+            return new TextEncoder().encode(V2_GROUP + b64Enc(ciphertext)).buffer as ArrayBuffer;
+        });
+    }, []);
 
     const decryptBinaryFromGroup = useCallback(async (
         data: ArrayBuffer,
         conversationId: number,
         senderId: number,
     ): Promise<ArrayBuffer> => {
-        const myUserId = useAuthStore.getState().user?.id;
+        const text = tryUtf8(data);
+        if (text?.startsWith(V2_GROUP)) {
+            try {
+                const s = await decryptFromGroup(text, conversationId, senderId);
+                return new TextEncoder().encode(s).buffer as ArrayBuffer;
+            } catch { return data; }
+        }
+        try {
+            const key = await legacyKey(senderId);
+            if (!key) return data;
+            return (await legacyDecryptBinary(key, data)) ?? data;
+        } catch { return data; }
+    }, [decryptFromGroup]);
 
-        let key = senderId === myUserId
-            ? mySenderKeys.get(conversationId)
-            : await getPeerSenderKey(conversationId, senderId);
+    const distributeMySenderKey = useCallback(async (
+        conversationId: number,
+        memberUserIds: number[],
+    ): Promise<void> => {
+        return withLock(groupLocks, conversationId, () => doDistribute(conversationId, memberUserIds));
+    }, []);
 
-        if (!key && senderId === myUserId) {
-            key = await getOrCreateMySenderKey(conversationId) ?? undefined;
+    const prefetchGroupSenderKeys = useCallback(async (
+        conversationId: number,
+        memberUserIds: number[],
+        socket?: { emit: (event: string, data: unknown) => void } | null,
+    ): Promise<void> => {
+        if (!identity || !initialized || !currentUserId) return;
+
+        type Entry = { senderId: number; version?: number; distributionEnvelope?: string };
+        let entries: Entry[] = [];
+        try {
+            const { data } = await api.get<Entry[]>(`/conversations/${conversationId}/sender-keys/for-me`);
+            entries = data;
+        } catch { return; }
+
+        let hasMySenderKey = false;
+        const failedSenders: number[] = [];
+
+        await Promise.allSettled(
+            entries.map(async ({ senderId, version, distributionEnvelope }) => {
+                if (version !== 2 || !distributionEnvelope) return;
+                if (await loadGroupReceiver(conversationId, senderId)) {
+                    if (senderId === currentUserId) hasMySenderKey = true;
+                    return;
+                }
+                const distMsg = await openDistMsg(b64Dec(distributionEnvelope));
+                if (!distMsg) { if (senderId !== currentUserId) failedSenders.push(senderId); return; }
+                const { receiverBytes } = await wasm.groupReceiverFromDist(distMsg);
+                await saveGroupReceiver(conversationId, senderId, receiverBytes);
+                if (senderId === currentUserId) hasMySenderKey = true;
+            }),
+        );
+
+        if (socket) {
+            for (const sid of failedSenders) {
+                socket.emit('requestSenderKeyRedistribution', { conversationId, targetUserId: sid });
+            }
         }
 
-        if (!key) return data;
-        try { return await decryptFile(key, data); }
-        catch { return data; }
-    }, [getPeerSenderKey, getOrCreateMySenderKey]);
+        const myEntryExists = entries.some((e) => e.senderId === currentUserId && e.version === 2);
+        if (!hasMySenderKey && !myEntryExists) {
+            await distributeMySenderKey(conversationId, memberUserIds);
+        }
+    }, [distributeMySenderKey]);
 
-    // Invalidate session key for a specific peer (call on peerKeyRotated socket event)
     const invalidatePeerKey = useCallback((userId: number) => {
-        sessionKeys.delete(userId);
-        sessionKeyTimes.delete(userId);
-        sessionKeyPubHash.delete(userId);
-        // Also clear any sender keys encrypted by this peer
-        for (const k of peerSenderKeys.keys()) {
-            if (k.endsWith(`:${userId}`)) peerSenderKeys.delete(k);
-        }
-        prefetchedConvs.clear();
+        legacyKeyCache.delete(userId);
+        // DR session survives — no action needed; the peer generates new keys server-side
     }, []);
 
-    // Invalidate sender key cache (після зміни учасників)
     const invalidateGroupKeys = useCallback((conversationId: number) => {
-        mySenderKeys.delete(conversationId);
-        prefetchedConvs.delete(conversationId);
-        // Чистимо peer keys для цієї групи
-        for (const k of peerSenderKeys.keys()) {
-            if (k.startsWith(`${conversationId}:`)) peerSenderKeys.delete(k);
-        }
-        for (const k of pendingSender.keys()) {
-            if (k.startsWith(`${conversationId}:`)) pendingSender.delete(k);
-        }
+        deleteGroupSender(conversationId).catch(() => {});
+        deleteAllGroupReceivers(conversationId).catch(() => {});
     }, []);
+
+    const unlockWithPin = useCallback(async (pin: string): Promise<boolean> => {
+        if (!pendingRecoveryBlob || !currentUserId) return false;
+        try {
+            const pinBytes  = new TextEncoder().encode(pin);
+            const { keyBytes } = await wasm.decryptKeyWithPin(b64Dec(pendingRecoveryBlob), pinBytes);
+            zeroize(pinBytes);
+            // layout: ikDhSecret(32)||ikSignSeed(32)||spkSecret(32)||ikDhPub(32)||ikSignPub(32)||spkPub(32)||spkSig(64) = 256
+            const keys: IdentityKeys = {
+                ikDhSecret: keyBytes.slice(0, 32),   ikSignSeed: keyBytes.slice(32, 64),
+                spkSecret:  keyBytes.slice(64, 96),  ikDhPub:    keyBytes.slice(96, 128),
+                ikSignPub:  keyBytes.slice(128, 160), spkPub:    keyBytes.slice(160, 192),
+                spkSig:     keyBytes.slice(192, 256),
+            };
+            zeroize(keyBytes);
+            await saveIdentityKeys(currentUserId, keys);
+            legacyPrivKey = await loadPrivateKey(currentUserId).catch(() => null);
+            identity = keys; initialized = true; pendingRecoveryBlob = null;
+            broadcastStatus('ready');
+            onReadyCallbacks.forEach((cb) => cb());
+            onReadyCallbacks = [];
+            return true;
+        } catch { return false; }
+    }, []);
+
+    const setupRecovery = useCallback(async (
+        pin: string,
+        options?: { isReset?: boolean; twoFactorCode?: string },
+    ): Promise<void> => {
+        if (!identity || !initialized || !currentUserId) throw new Error('E2E not initialized');
+        // Pack: ikDhSecret(32)||ikSignSeed(32)||spkSecret(32)||ikDhPub(32)||ikSignPub(32)||spkPub(32)||spkSig(64)
+        const blob = new Uint8Array(256);
+        blob.set(identity.ikDhSecret, 0);   blob.set(identity.ikSignSeed, 32);
+        blob.set(identity.spkSecret,  64);  blob.set(identity.ikDhPub,    96);
+        blob.set(identity.ikSignPub,  128); blob.set(identity.spkPub,     160);
+        blob.set(identity.spkSig,     192);
+        const pinBytes = new TextEncoder().encode(pin);
+        const { blob: encBlob } = await wasm.encryptKeyWithPin(blob, pinBytes);
+        blob.fill(0); zeroize(pinBytes);
+        await api.post('/keys/v2/recovery', {
+            encryptedBlob: b64Enc(encBlob),
+            isReset:       options?.isReset ?? false,
+            twoFactorCode: options?.twoFactorCode,
+        });
+        if (e2eStatus === 'needs-setup') broadcastStatus('ready');
+    }, []);
+
+    const resetToNewKeys = useCallback(async (): Promise<void> => {
+        const myUserId = useAuthStore.getState().user?.id;
+        if (!myUserId) throw new Error('Not authenticated');
+        initGeneration++; initPromise = null;
+        drLocks.clear(); groupLocks.clear(); legacyKeyCache.clear();
+        const keys = await generateIdentityKeys();
+        await saveIdentityKeys(myUserId, keys);
+        await api.post('/keys/v2', { bundle: b64Enc(buildBundle(keys)) });
+        try { await api.delete('/conversations/sender-keys/mine-all'); } catch {}
+        identity = keys; initialized = true; keysWereRotated = true;
+        broadcastStatus('needs-setup');
+    }, []);
+
+    const clearAllKeyMaterial = useCallback(async () => {
+        if (!user?.id) return;
+        await clearAllCryptoState(user.id);
+        await deleteIdentityKeys(user.id);
+    }, [user?.id]);
 
     return {
-        // DIRECT
         encrypt, decrypt, encryptBinary, decryptBinary,
-        // GROUP
-        encryptForGroup, decryptFromGroup,
-        encryptBinaryForGroup, decryptBinaryFromGroup,
+        encryptForGroup, decryptFromGroup, encryptBinaryForGroup, decryptBinaryFromGroup,
         distributeMySenderKey, prefetchGroupSenderKeys, invalidateGroupKeys,
-        // Recovery
-        unlockWithPin,
-        setupRecovery,
-        resetToNewKeys,
-        // Peer key rotation
+        unlockWithPin, setupRecovery, resetToNewKeys,
         invalidatePeerKey,
         keysJustRotated: keysWereRotated,
-        // Meta
-        isReady,
-        status,
+        isReady, status,
         needsRecovery:      status === 'needs-recovery',
         needsRecoverySetup: status === 'needs-setup',
         keysDesynced:       status === 'keys-desynced',
-        clearAllKeyMaterial: () => user?.id ? deletePrivateKey(user.id) : Promise.resolve(),
+        clearAllKeyMaterial,
     };
 }
+
