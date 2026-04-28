@@ -100,7 +100,8 @@ export interface Message {
     isPending?: boolean;
     _queueId?: string; // for client-side tracking of unsent messages
     _localBlobUrl?: string;
-    _isLegacy?: boolean; // true when decrypted from v1 ciphertext (visual deprecation marker)
+    _isLegacy?: boolean;    // true when decrypted from v1 ciphertext (visual deprecation marker)
+    _pendingCipher?: string; // ciphertext stored on optimistic msg for echo matching
 }
 
 export interface Friendship {

@@ -2,19 +2,20 @@
 // Stores encrypted identity keys, DR session blobs, group session blobs.
 
 const DB_NAME = 'messenger-e2e-v2';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // v2: added msg_plaintext store
 
-type StoreName = 'identity' | 'ratchet' | 'group_sender' | 'group_receiver';
+type StoreName = 'identity' | 'ratchet' | 'group_sender' | 'group_receiver' | 'msg_plaintext';
 
 function open(): Promise<IDBDatabase> {
     return new Promise((res, rej) => {
         const req = indexedDB.open(DB_NAME, DB_VERSION);
         req.onupgradeneeded = () => {
             const db = req.result;
-            if (!db.objectStoreNames.contains('identity'))      db.createObjectStore('identity');
-            if (!db.objectStoreNames.contains('ratchet'))       db.createObjectStore('ratchet');
-            if (!db.objectStoreNames.contains('group_sender'))  db.createObjectStore('group_sender');
+            if (!db.objectStoreNames.contains('identity'))       db.createObjectStore('identity');
+            if (!db.objectStoreNames.contains('ratchet'))        db.createObjectStore('ratchet');
+            if (!db.objectStoreNames.contains('group_sender'))   db.createObjectStore('group_sender');
             if (!db.objectStoreNames.contains('group_receiver')) db.createObjectStore('group_receiver');
+            if (!db.objectStoreNames.contains('msg_plaintext'))  db.createObjectStore('msg_plaintext');
         };
         req.onsuccess = () => res(req.result);
         req.onerror   = () => rej(req.error);
@@ -246,6 +247,29 @@ export async function deleteAllGroupReceivers(convId: number): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Plaintext cache — maps messageId → decrypted content.
+// Signal DR is one-way: once a message is decrypted the session moves forward
+// and that ciphertext can never be decrypted again. This cache lets us survive
+// page reloads without losing message history.
+// ---------------------------------------------------------------------------
+
+export async function savePlaintext(
+    msgId: number,
+    content: string,
+    isLegacy = false,
+): Promise<void> {
+    const db = await open();
+    await idbPut(db, 'msg_plaintext', String(msgId), { content, isLegacy });
+}
+
+export async function loadPlaintext(
+    msgId: number,
+): Promise<{ content: string; isLegacy: boolean } | null> {
+    const db = await open();
+    return idbGet<{ content: string; isLegacy: boolean }>(db, 'msg_plaintext', String(msgId));
+}
+
+// ---------------------------------------------------------------------------
 // Full wipe
 // ---------------------------------------------------------------------------
 
@@ -257,6 +281,7 @@ export async function clearAllCryptoState(userId: number): Promise<void> {
         idbClear(db, 'ratchet'),
         idbClear(db, 'group_sender'),
         idbClear(db, 'group_receiver'),
+        idbClear(db, 'msg_plaintext'),
     ]);
 }
 

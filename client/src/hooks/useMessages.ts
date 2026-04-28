@@ -4,6 +4,7 @@ import { Message, Reaction, ConversationType, QueuedMessage } from '@/src/types/
 import { useE2E }          from './useE2E';
 import { useOfflineQueue } from './useOfflineQueue';
 import { parseMetadata }   from '@/src/lib/parseMetadata';
+import { savePlaintext, loadPlaintext } from '@/src/lib/cryptoDb';
 
 export const useMessages = (
     conversationId:      number | undefined,
@@ -103,12 +104,34 @@ export const useMessages = (
         return Promise.all(raw.map(async msg => {
             let result = msg;
             if (msg.content && looksEncrypted(msg.content)) {
+                // Signal DR is one-way: check local cache before touching the session
+                if (msg.id) {
+                    const cached = await loadPlaintext(msg.id).catch(() => null);
+                    if (cached) {
+                        result = { ...result, content: cached.content };
+                        if (cached.isLegacy) result = { ...result, _isLegacy: true };
+                        // Still decrypt replyTo if needed, then return
+                        if (msg.replyTo?.content && looksEncrypted(msg.replyTo.content)) {
+                            const plain = await decryptContent(msg.replyTo.content, msg.senderId).catch(() => msg.replyTo!.content);
+                            result = { ...result, replyTo: { ...result.replyTo!, content: plain } };
+                        }
+                        return result;
+                    }
+                }
                 const legacy = isLegacyCipher(msg.content);
-                result = { ...result, content: await decryptContent(msg.content, msg.senderId) };
-                if (legacy) result = { ...result, _isLegacy: true };
+                try {
+                    const decrypted = await decryptContent(msg.content, msg.senderId);
+                    if (msg.id && !decrypted.startsWith('[🔒')) {
+                        savePlaintext(msg.id, decrypted, legacy).catch(() => {});
+                    }
+                    result = { ...result, content: decrypted };
+                    if (legacy) result = { ...result, _isLegacy: true };
+                } catch {
+                    result = { ...result, content: '[🔒 Не вдалося розшифрувати]' };
+                }
             }
             if (msg.replyTo?.content && looksEncrypted(msg.replyTo.content)) {
-                const plain = await decryptContent(msg.replyTo.content, msg.senderId);
+                const plain = await decryptContent(msg.replyTo.content, msg.senderId).catch(() => msg.replyTo!.content);
                 result = { ...result, replyTo: { ...result.replyTo!, content: plain } };
             }
             return result;
@@ -220,15 +243,43 @@ export const useMessages = (
         const onMessage = async (msg: Message) => {
             if (msg.conversationId !== conversationId) return;
 
+            const isOwnEcho = String(msg.senderId) === String(currentUserId);
             let decryptedMsg = msg;
-            if (msg.content && looksEncrypted(msg.content)) {
-                const legacy = isLegacyCipher(msg.content);
-                decryptedMsg = { ...decryptedMsg, content: await decryptContent(msg.content, msg.senderId) };
-                if (legacy) decryptedMsg = { ...decryptedMsg, _isLegacy: true };
-            }
-            if (msg.replyTo?.content && looksEncrypted(msg.replyTo.content)) {
-                const plain = await decryptContent(msg.replyTo.content, msg.senderId);
-                decryptedMsg = { ...decryptedMsg, replyTo: { ...decryptedMsg.replyTo!, content: plain } };
+
+            if (isOwnEcho) {
+                // Own echo: we already have the plaintext in the optimistic message.
+                // Match by _pendingCipher (set when we encrypted the text).
+                const rawCipher = msg.content;
+                const optMsg = messagesRef.current.find(
+                    m => !m.id && String(m.senderId) === String(currentUserId) && m._pendingCipher === rawCipher,
+                ) ?? messagesRef.current.slice().reverse().find(
+                    // Fallback for offline-queue messages that lack _pendingCipher
+                    m => !m.id && String(m.senderId) === String(currentUserId),
+                );
+                const plaintext = optMsg?.content ?? rawCipher;
+                decryptedMsg = { ...msg, content: plaintext };
+                // Cache so page reload survives
+                if (msg.id && plaintext !== rawCipher) {
+                    savePlaintext(msg.id, plaintext).catch(() => {});
+                }
+            } else {
+                if (msg.content && looksEncrypted(msg.content)) {
+                    const legacy = isLegacyCipher(msg.content);
+                    try {
+                        const decrypted = await decryptContent(msg.content, msg.senderId);
+                        decryptedMsg = { ...decryptedMsg, content: decrypted };
+                        if (legacy) decryptedMsg = { ...decryptedMsg, _isLegacy: true };
+                        if (msg.id && !decrypted.startsWith('[🔒')) {
+                            savePlaintext(msg.id, decrypted, legacy).catch(() => {});
+                        }
+                    } catch {
+                        decryptedMsg = { ...decryptedMsg, content: '[🔒 Не вдалося розшифрувати]' };
+                    }
+                }
+                if (msg.replyTo?.content && looksEncrypted(msg.replyTo.content)) {
+                    const plain = await decryptContent(msg.replyTo.content, msg.senderId).catch(() => msg.replyTo!.content);
+                    decryptedMsg = { ...decryptedMsg, replyTo: { ...decryptedMsg.replyTo!, content: plain } };
+                }
             }
 
             onDecryptedMessage?.(decryptedMsg);
@@ -236,6 +287,34 @@ export const useMessages = (
 
             setMessages(prev => {
                 if (decryptedMsg.id && prev.some(m => m.id === decryptedMsg.id)) return prev;
+
+                if (isOwnEcho) {
+                    // Match by ciphertext first, then fall back to last pending from me
+                    const rawCipher = msg.content;
+                    let idx = prev.findIndex(
+                        m => !m.id && String(m.senderId) === String(currentUserId) && m._pendingCipher === rawCipher,
+                    );
+                    if (idx === -1) {
+                        // Fallback: last unconfirmed optimistic from me (offline queue case)
+                        for (let i = prev.length - 1; i >= 0; i--) {
+                            if (!prev[i].id && String(prev[i].senderId) === String(currentUserId)) {
+                                idx = i; break;
+                            }
+                        }
+                    }
+                    if (idx !== -1) {
+                        const next = [...prev];
+                        const opt  = next[idx];
+                        if (opt._localBlobUrl) URL.revokeObjectURL(opt._localBlobUrl);
+                        // Keep plaintext from optimistic, attach the confirmed id
+                        next[idx] = { ...decryptedMsg, content: opt.content, isPending: false, _queueId: undefined, _pendingCipher: undefined };
+                        return next;
+                    }
+                    setHasMoreNewer(false);
+                    return [...prev, decryptedMsg];
+                }
+
+                // Incoming message from peer — original matching logic
                 const idx = prev.findIndex(m =>
                     !m.id &&
                     String(m.senderId) === String(decryptedMsg.senderId) &&
@@ -254,7 +333,7 @@ export const useMessages = (
             });
 
             setTypingUsers(prev => prev.filter(t => t.userId !== Number(msg.senderId)));
-            if (String(msg.senderId) !== String(currentUserId)) {
+            if (!isOwnEcho) {
                 socket.emit('markAsRead', { conversationId });
             }
         };
@@ -406,27 +485,32 @@ export const useMessages = (
 
         const tmpId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
+        // Encrypt first — if it fails we never show an optimistic message
+        let payload: string;
+        try {
+            payload = await encryptContent(content);
+        } catch (err) {
+            console.error('[sendMessage] encrypt failed:', err);
+            return;
+        }
+
+        // Add optimistic message with the ciphertext stored for echo matching
         setMessages(prev => [...prev, {
             content, senderId: currentUserId, conversationId,
             createdAt: new Date().toISOString(), deletedAt: null, editedAt: null,
             reactions: [], replyToId: replyToId ?? null, isRead: false,
             scheduledAt: scheduledAt ? scheduledAt.toISOString() : null,
             _queueId: tmpId, metadata: metadata ?? null,
+            _pendingCipher: payload,
         }]);
 
-        try {
-            const payload = await encryptContent(content);
-            socket.emit('sendMessage', {
-                conversationId,
-                content: payload,
-                replyToId,
-                metadata,
-                scheduledAt: scheduledAt ? scheduledAt.toISOString() : undefined,
-            });
-        } catch (err) {
-            console.error('[sendMessage] encrypt failed:', err);
-            setMessages(prev => prev.filter(m => m._queueId !== tmpId));
-        }
+        socket.emit('sendMessage', {
+            conversationId,
+            content: payload,
+            replyToId,
+            metadata,
+            scheduledAt: scheduledAt ? scheduledAt.toISOString() : undefined,
+        });
 
         socket.emit('typing', { conversationId, isTyping: false });
     }, [conversationId, currentUserId, socket, isOnline, enqueue, encryptContent, otherUserId]);
