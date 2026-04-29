@@ -102,6 +102,8 @@ export interface Message {
     _localBlobUrl?: string;
     _isLegacy?: boolean;    // true when decrypted from v1 ciphertext (visual deprecation marker)
     _pendingCipher?: string; // ciphertext stored on optimistic msg for echo matching
+    senderDeviceId?: number | null;
+    envelopes?: Array<{ deviceId: number; ciphertext: string }>;
 }
 
 export interface Friendship {

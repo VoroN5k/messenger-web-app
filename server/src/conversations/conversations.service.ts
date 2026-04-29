@@ -15,7 +15,7 @@ const MSG_SELECT = {
     id: true, content: true, createdAt: true, editedAt: true, deletedAt: true,
     fileUrl: true, fileName: true, fileType: true, fileSize: true,
     metadata: true, scheduledAt: true,
-    senderId: true, conversationId: true, replyToId: true,
+    senderId: true, senderDeviceId: true, conversationId: true, replyToId: true,
     forwardedFromId: true, forwardedFromUser: true,
     sender: { select: { id: true, nickname: true, avatarUrl: true } },
     replyTo: {
@@ -36,6 +36,9 @@ const MSG_SELECT = {
             user: { select: { id: true, nickname: true, avatarUrl: true } },
         },
         orderBy: { createdAt: 'asc' as const },
+    },
+    envelopes: {
+        select: { deviceId: true, ciphertext: true },
     },
 };
 
@@ -476,6 +479,8 @@ export class ConversationsService {
         content?: string; fileUrl?: string; fileName?: string;
         fileType?: string; fileSize?: number; replyToId?: number;
         metadata?: string; scheduledAt?: Date | null;
+        senderDeviceId?: number;
+        envelopes?: Array<{ deviceId: number; ciphertext: string }>;
     }) {
         const MAX_CONTENT = 4096;
 
@@ -491,21 +496,42 @@ export class ConversationsService {
 
         const msg = await this.prisma.message.create({
             data: {
-                content:       dto.content?.trim() ?? '',
-                senderId:      userId,
+                content:        dto.content?.trim() ?? '',
+                senderId:       userId,
                 conversationId,
-                fileUrl:       dto.fileUrl,
-                fileName:      dto.fileName,
-                fileType:      dto.fileType,
-                fileSize:      dto.fileSize,
-                replyToId:     dto.replyToId,
-                metadata:      validateAndNormalizeMetadata(dto.metadata),
-                scheduledAt:   dto.scheduledAt ?? null,
+                fileUrl:        dto.fileUrl,
+                fileName:       dto.fileName,
+                fileType:       dto.fileType,
+                fileSize:       dto.fileSize,
+                replyToId:      dto.replyToId,
+                metadata:       validateAndNormalizeMetadata(dto.metadata),
+                scheduledAt:    dto.scheduledAt ?? null,
+                senderDeviceId: dto.senderDeviceId ?? null,
             },
             select: MSG_SELECT,
         });
 
+        if (dto.envelopes?.length) {
+            await this.prisma.messageKeyEnvelope.createMany({
+                data: dto.envelopes.map(e => ({
+                    messageId:  msg.id,
+                    deviceId:   e.deviceId,
+                    ciphertext: e.ciphertext,
+                })),
+                skipDuplicates: true,
+            });
+        }
+
         await this.prisma.conversation.update({ where: { id: conversationId }, data: { updatedAt: new Date() } });
+
+        // Re-fetch with envelopes included if we just created some
+        if (dto.envelopes?.length) {
+            const withEnvelopes = await this.prisma.message.findUnique({
+                where: { id: msg.id },
+                select: MSG_SELECT,
+            });
+            return { ...this.mapMessage(withEnvelopes!), isRead: false };
+        }
         return { ...this.mapMessage(msg), isRead: false };
     }
 

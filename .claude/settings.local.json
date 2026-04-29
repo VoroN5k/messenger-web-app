@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir \"F:\\\\\\\\Projects\\\\\\\\messenger-web-app\\\\\\\\client\\\\\\\\src\\\\\\\\app\\\\\\\\\")",
+      "Bash(xargs grep *)",
+      "Bash(grep -E \"\\\\.\\(ts|js\\)$\")",
+      "Bash(node -e \"const p = JSON.parse\\(require\\('fs'\\).readFileSync\\('package.json','utf8'\\)\\); console.log\\('dep:', p.dependencies.dotenv ?? 'MISSING'\\); console.log\\('dev:', p.devDependencies?.dotenv ?? 'MISSING'\\)\")",
+      "Bash(node -e ' *)",
+      "Bash(npx tsc *)",
+      "Bash(cargo test *)",
+      "Bash(rustup show *)",
+      "Bash(rustup target *)",
+      "Bash(where link.exe)",
+      "Bash(npx prisma *)"
+    ]
+  }
+}

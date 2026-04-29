@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//mnt/f/Projects/messenger-web-app/**)",
+      "Bash(cargo test *)",
+      "PowerShell(rustup *)",
+      "Bash(xargs grep *)",
+      "Bash(cargo build *)"
+    ]
+  }
+}

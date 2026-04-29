@@ -295,10 +295,19 @@ export default function ChatArea({
             let keyEnvelope: string | undefined;
 
             if (otherUserId) {
-                // AES-256-GCM for the file body; DR wraps only the 44-byte key+iv
+                // AES-256-GCM for the file body; key envelope sent via v3 or v2 DR
                 const { encryptedBlob, key, iv } = await encryptMedia(fileToProcess);
-                const packed = packMediaKey(key, iv);
-                keyEnvelope = await e2e.encrypt(MEDIA_KEY_PREFIX + b64Enc(packed), otherUserId);
+                const packed    = packMediaKey(key, iv);
+                const mkPayload = MEDIA_KEY_PREFIX + b64Enc(packed);
+                if (e2e.myDeviceId) {
+                    const v3 = await e2e.encryptV3(mkPayload, otherUserId).catch(() => null);
+                    if (v3 && v3.envelopes.length > 0) {
+                        keyEnvelope = v3.content;
+                        (fileToProcess as any)._v3envelopes   = v3.envelopes;
+                        (fileToProcess as any)._v3senderDevice = e2e.myDeviceId;
+                    }
+                }
+                if (!keyEnvelope) keyEnvelope = await e2e.encrypt(mkPayload, otherUserId);
                 fileToUpload = new File([encryptedBlob], fileToProcess.name, { type: fileToProcess.type });
                 encMeta = JSON.stringify({ encrypted: true });
                 pendingKey = { key, iv };
@@ -317,8 +326,10 @@ export default function ChatArea({
             sendFileMessage({
                 fileUrl: r.url, fileName: file.name, fileType: displayMime,
                 fileSize: file.size,
-                content: keyEnvelope ?? caption?.trim() ?? undefined,
-                replyToId: replyTo?.id, metadata: encMeta, _localBlobUrl: localBlobUrl,
+                content:        keyEnvelope ?? caption?.trim() ?? undefined,
+                replyToId:      replyTo?.id, metadata: encMeta, _localBlobUrl: localBlobUrl,
+                senderDeviceId: (fileToProcess as any)._v3senderDevice,
+                envelopes:      (fileToProcess as any)._v3envelopes,
             });
             setReplyTo(null);
         } catch (err: any) {
@@ -370,12 +381,23 @@ export default function ChatArea({
             let fileToUpload: File, metaObj: object;
             let pendingKey: { key: Uint8Array; iv: Uint8Array } | null = null;
             let keyEnvelope: string | undefined;
+            let v3envelopes: Array<{ deviceId: number; ciphertext: string }> | undefined;
+            let v3senderDevice: number | undefined;
 
             if (otherUserId) {
-                // AES-256-GCM for audio body; DR wraps only the 44-byte key+iv
+                // AES-256-GCM for audio body; key envelope via v3 or v2 DR
                 const { encryptedBlob, key, iv } = await encryptMedia(blob);
-                const packed = packMediaKey(key, iv);
-                keyEnvelope = await e2e.encrypt(MEDIA_KEY_PREFIX + b64Enc(packed), otherUserId);
+                const packed    = packMediaKey(key, iv);
+                const mkPayload = MEDIA_KEY_PREFIX + b64Enc(packed);
+                if (e2e.myDeviceId) {
+                    const v3 = await e2e.encryptV3(mkPayload, otherUserId).catch(() => null);
+                    if (v3 && v3.envelopes.length > 0) {
+                        keyEnvelope    = v3.content;
+                        v3envelopes    = v3.envelopes;
+                        v3senderDevice = e2e.myDeviceId;
+                    }
+                }
+                if (!keyEnvelope) keyEnvelope = await e2e.encrypt(mkPayload, otherUserId);
                 fileToUpload = new File([encryptedBlob], `voice.${mimeToExtension(mimeType)}`, { type: mimeType });
                 metaObj = { ...baseMeta, encrypted: true };
                 pendingKey = { key, iv };
@@ -390,7 +412,12 @@ export default function ChatArea({
 
             const r = await uploadFile(fileToUpload, setUploadProgress, ctrl.signal);
             if (pendingKey) setPendingMediaKey(r.url, pendingKey.key, pendingKey.iv);
-            sendFileMessage({ fileUrl: r.url, fileName: 'Voice message', fileType: mimeType, fileSize: blob.size, content: keyEnvelope, metadata: JSON.stringify(metaObj) });
+            sendFileMessage({
+                fileUrl: r.url, fileName: 'Voice message', fileType: mimeType, fileSize: blob.size,
+                content: keyEnvelope, metadata: JSON.stringify(metaObj),
+                senderDeviceId: v3senderDevice,
+                envelopes:      v3envelopes,
+            });
         } catch (err: any) {
             if (err.message !== 'Upload cancelled') setUploadError(err.message ?? 'Error');
         } finally { setUploadProgress(null); abortRef.current = null; }

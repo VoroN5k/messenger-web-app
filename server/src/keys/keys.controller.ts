@@ -1,4 +1,4 @@
-import {Body, Controller, Get, Header, Param, ParseIntPipe, Post, UseGuards} from "@nestjs/common";
+import {Body, Controller, Get, Header, NotFoundException, Param, ParseIntPipe, Post, UseGuards} from "@nestjs/common";
 import {JwtAuthGuard} from "../auth/guards/jwt-auth.guard.js";
 import {KeysService} from "./keys.service.js";
 import {CurrentUser} from "../auth/decorators/current-user.decorator.js";
@@ -6,11 +6,15 @@ import {PublishKeyDto} from "./dto/PublishKey.dto.js";
 import {SaveRecoveryKeyDto} from "./dto/SaveRecoveryKey.dto.js";
 import {PublishBundleV2Dto} from "./dto/PublishBundleV2.dto.js";
 import {SaveRecoveryV2Dto} from "./dto/SaveRecoveryV2.dto.js";
+import {DevicesService} from "../devices/devices.service.js";
 
 @Controller('keys')
 @UseGuards(JwtAuthGuard)
 export class KeysController {
-    constructor(private readonly keysService: KeysService) {}
+    constructor(
+        private readonly keysService: KeysService,
+        private readonly devicesService: DevicesService,
+    ) {}
 
     @Post()
     publish(@CurrentUser('sub') userId: number, @Body() dto: PublishKeyDto) {
@@ -87,6 +91,23 @@ export class KeysController {
         @Param('userId', ParseIntPipe) targetId: number,
     ) {
         return this.keysService.notifyUpgradeV2(requesterId, targetId);
+    }
+
+    // ── V3 device bundles ────────────────────────────────────────────────────
+
+    // Static route must precede the parameterised one
+    @Get('v3/device/:deviceId')
+    @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
+    async getDeviceBundle(@Param('deviceId', ParseIntPipe) deviceId: number) {
+        const row = await this.devicesService.getBundle(deviceId);
+        if (!row) throw new NotFoundException('Device bundle not found');
+        return { deviceId: row.id, bundle: row.bundle };
+    }
+
+    @Get('v3/devices/:userId')
+    @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
+    getUserDeviceBundles(@Param('userId', ParseIntPipe) userId: number) {
+        return this.devicesService.getUserBundles(userId);
     }
 }
 

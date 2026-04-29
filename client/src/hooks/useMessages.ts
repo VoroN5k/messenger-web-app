@@ -79,6 +79,23 @@ export const useMessages = (
         };
     }, [conversationId]);
 
+    // Returns { payload, envelopes, senderDeviceId } for socket.emit
+    const encryptDirect = useCallback(async (content: string): Promise<{
+        payload: string;
+        envelopes?: Array<{ deviceId: number; ciphertext: string }>;
+        senderDeviceId?: number;
+    }> => {
+        if (e2e.myDeviceId && otherUserId) {
+            const v3 = await e2e.encryptV3(content, otherUserId).catch(() => null);
+            if (v3 && v3.envelopes.length > 0) {
+                return { payload: v3.content, envelopes: v3.envelopes, senderDeviceId: e2e.myDeviceId };
+            }
+        }
+        // Fall back to v2 DR
+        const payload = await e2e.encrypt(content, otherUserId!);
+        return { payload };
+    }, [isDirect, otherUserId, e2e]);
+
     const encryptContent = useCallback(async (content: string): Promise<string> => {
         if (isDirect && otherUserId)    return e2e.encrypt(content, otherUserId);
         if (isGroup  && conversationId) return e2e.encryptForGroup(content, conversationId);
@@ -93,19 +110,50 @@ export const useMessages = (
 
     const looksEncrypted = (s?: string | null) =>
         !!s && s.length > 20 && (
-            s.startsWith('v2:') || s.startsWith('v2g:') ||
+            s.startsWith('v2:') || s.startsWith('v2g:') || s.startsWith('v3:') ||
             /^[A-Za-z0-9_\-]+$/.test(s)
         );
 
-    // v1 ciphertext: encrypted but no v2 prefix
+    // v1 ciphertext: encrypted but no versioned prefix
     const isLegacyCipher = (s: string) =>
-        looksEncrypted(s) && !s.startsWith('v2:') && !s.startsWith('v2g:');
+        looksEncrypted(s) && !s.startsWith('v2:') && !s.startsWith('v2g:') && !s.startsWith('v3:');
 
     const decryptMessages = useCallback(async (raw: Message[]): Promise<Message[]> => {
         return Promise.all(raw.map(async msg => {
             let result = msg;
 
-            // ── File message: content holds DR-wrapped AES media key ──────────
+            // ── v3 multi-device: content is AES-GCM encrypted with a per-device DR key ──
+            if (msg.content?.startsWith('v3:') && msg.senderDeviceId && msg.envelopes?.length) {
+                if (msg.id) {
+                    const cached = await loadPlaintext(msg.id).catch(() => null);
+                    if (cached) {
+                        result = { ...result, content: cached.content };
+                        if (msg.fileUrl && cached.content.startsWith(MEDIA_KEY_PREFIX)) {
+                            const packed = b64Dec(cached.content.slice(MEDIA_KEY_PREFIX.length));
+                            const { key, iv } = unpackMediaKey(packed);
+                            await saveMediaKey(msg.id, key, iv).catch(() => {});
+                            return { ...result, content: '' };
+                        }
+                        return result;
+                    }
+                }
+                try {
+                    const plain = await e2e.decryptV3(msg.content, msg.senderDeviceId, msg.envelopes);
+                    if (plain !== null) {
+                        if (msg.id) savePlaintext(msg.id, plain).catch(() => {});
+                        if (msg.fileUrl && plain.startsWith(MEDIA_KEY_PREFIX)) {
+                            const packed = b64Dec(plain.slice(MEDIA_KEY_PREFIX.length));
+                            const { key, iv } = unpackMediaKey(packed);
+                            if (msg.id) await saveMediaKey(msg.id, key, iv).catch(() => {});
+                            return { ...result, content: '' };
+                        }
+                        return { ...result, content: plain };
+                    }
+                } catch {}
+                return { ...result, content: msg.fileUrl ? '' : '[🔒 Не вдалося розшифрувати]' };
+            }
+
+            // ── File message: content holds DR-wrapped AES media key (v2) ────
             if (msg.fileUrl && msg.content && looksEncrypted(msg.content)) {
                 if (msg.id) {
                     const alreadyCached = await loadMediaKey(msg.id).catch(() => null);
@@ -120,7 +168,6 @@ export const useMessages = (
                         } catch {}
                     }
                 }
-                // Clear key envelope so the UI shows the file, not raw ciphertext
                 return { ...result, content: '' };
             }
 
@@ -131,7 +178,6 @@ export const useMessages = (
                     if (cached) {
                         result = { ...result, content: cached.content };
                         if (cached.isLegacy) result = { ...result, _isLegacy: true };
-                        // Still decrypt replyTo if needed, then return
                         if (msg.replyTo?.content && looksEncrypted(msg.replyTo.content)) {
                             const plain = await decryptContent(msg.replyTo.content, msg.senderId).catch(() => msg.replyTo!.content);
                             result = { ...result, replyTo: { ...result.replyTo!, content: plain } };
@@ -157,7 +203,7 @@ export const useMessages = (
             }
             return result;
         }));
-    }, [decryptContent]);
+    }, [decryptContent, e2e]);
 
     // Initial load
     useEffect(() => {
@@ -292,8 +338,28 @@ export const useMessages = (
                     decryptedMsg = { ...decryptedMsg, content: '' };
                 }
             } else {
-                // ── Incoming file with encrypted media key in content ─────────
-                if (msg.fileUrl && msg.content && looksEncrypted(msg.content)) {
+                // ── v3 multi-device ───────────────────────────────────────────
+                if (msg.content?.startsWith('v3:') && msg.senderDeviceId && msg.envelopes?.length) {
+                    try {
+                        const plain = await e2e.decryptV3(msg.content, msg.senderDeviceId, msg.envelopes);
+                        if (plain !== null) {
+                            if (msg.id) savePlaintext(msg.id, plain).catch(() => {});
+                            if (msg.fileUrl && plain.startsWith(MEDIA_KEY_PREFIX)) {
+                                const packed = b64Dec(plain.slice(MEDIA_KEY_PREFIX.length));
+                                const { key, iv } = unpackMediaKey(packed);
+                                if (msg.id) await saveMediaKey(msg.id, key, iv).catch(() => {});
+                                decryptedMsg = { ...decryptedMsg, content: '' };
+                            } else {
+                                decryptedMsg = { ...decryptedMsg, content: plain };
+                            }
+                        } else {
+                            decryptedMsg = { ...decryptedMsg, content: msg.fileUrl ? '' : '[🔒 Не вдалося розшифрувати]' };
+                        }
+                    } catch {
+                        decryptedMsg = { ...decryptedMsg, content: msg.fileUrl ? '' : '[🔒 Не вдалося розшифрувати]' };
+                    }
+                // ── v2: file with encrypted media key in content ──────────────
+                } else if (msg.fileUrl && msg.content && looksEncrypted(msg.content)) {
                     if (msg.id) {
                         const alreadyCached = await loadMediaKey(msg.id).catch(() => null);
                         if (!alreadyCached) {
@@ -472,7 +538,7 @@ export const useMessages = (
             socket.off('onTyping',          onTyping);
             socket.off('conversationRead',  onRead);
         };
-    }, [socket, conversationId, currentUserId, decryptContent, applyDestructTimers]);
+    }, [socket, conversationId, currentUserId, decryptContent, applyDestructTimers, e2e]);
 
     // Offline queue
     const flushMessage = useCallback(async (msg: QueuedMessage): Promise<boolean> => {
@@ -532,10 +598,19 @@ export const useMessages = (
 
         const tmpId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-        // Encrypt first — if it fails we never show an optimistic message
+        // Encrypt — if it fails we never show an optimistic message
         let payload: string;
+        let envelopes: Array<{ deviceId: number; ciphertext: string }> | undefined;
+        let senderDeviceId: number | undefined;
         try {
-            payload = await encryptContent(content);
+            if (isDirect && otherUserId) {
+                const r = await encryptDirect(content);
+                payload = r.payload;
+                envelopes = r.envelopes;
+                senderDeviceId = r.senderDeviceId;
+            } else {
+                payload = await encryptContent(content);
+            }
         } catch (err) {
             console.error('[sendMessage] encrypt failed:', err);
             return;
@@ -556,15 +631,19 @@ export const useMessages = (
             content: payload,
             replyToId,
             metadata,
-            scheduledAt: scheduledAt ? scheduledAt.toISOString() : undefined,
+            scheduledAt:    scheduledAt ? scheduledAt.toISOString() : undefined,
+            senderDeviceId,
+            envelopes,
         });
 
         socket.emit('typing', { conversationId, isTyping: false });
-    }, [conversationId, currentUserId, socket, isOnline, enqueue, encryptContent, otherUserId]);
+    }, [conversationId, currentUserId, socket, isOnline, enqueue, encryptContent, encryptDirect, isDirect, otherUserId]);
 
     const sendFileMessage = useCallback((payload: {
         fileUrl: string; fileName: string; fileType: string; fileSize: number;
         content?: string; metadata?: string; replyToId?: number; _localBlobUrl?: string;
+        senderDeviceId?: number;
+        envelopes?: Array<{ deviceId: number; ciphertext: string }>;
     }) => {
         if (!conversationId || !socket || !currentUserId) return;
         const { _localBlobUrl, ...serverPayload } = payload;

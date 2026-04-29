@@ -32,6 +32,7 @@ import {
 } from '@/src/lib/cryptoDb';
 import { legacyDecryptBinary, legacyDecryptText, legacyDeriveSharedKey } from '@/src/lib/cryptoLegacy';
 import { loadPrivateKey } from '@/src/lib/crypto';
+import { getStoredDeviceId, storeDeviceId, clearDeviceId } from '@/src/lib/deviceId';
 
 const IS_BROWSER =
     typeof window !== 'undefined' &&
@@ -52,10 +53,17 @@ let e2eStatus: E2EStatus = 'idle';
 let pendingRecoveryBlob: string | null = null;
 let legacyPrivKey: CryptoKey | null = null;
 
-const legacyKeyCache = new Map<number, Promise<CryptoKey | null>>();
-const peerV2Cache    = new Map<number, Promise<boolean>>();
-const drLocks        = new Map<string, Promise<unknown>>();
-const groupLocks     = new Map<number, Promise<unknown>>();
+const legacyKeyCache      = new Map<number, Promise<CryptoKey | null>>();
+const peerV2Cache         = new Map<number, Promise<boolean>>();
+const drLocks             = new Map<string, Promise<unknown>>();
+const groupLocks          = new Map<number, Promise<unknown>>();
+const v3DrLocks           = new Map<string, Promise<unknown>>();
+const deviceBundleCache   = new Map<number, Promise<Uint8Array | null>>();
+
+// v3 multi-device state
+let myDeviceId: number | null = null;
+
+const V3_DM = 'v3:';
 
 // Check whether a peer has published a v2 key bundle. Result is cached at module
 // level so multiple components don't race. Cache is invalidated on peer key rotation.
@@ -251,6 +259,200 @@ async function drDecrypt(
     });
 }
 
+// v3: per-device DR sessions keyed as d{min}:d{max}
+
+function devicePairKey(a: number, b: number): string {
+    return `d${[a, b].sort((x, y) => x - y).join(':d')}`;
+}
+
+async function fetchDeviceBundle(deviceId: number): Promise<Uint8Array | null> {
+    if (!deviceBundleCache.has(deviceId)) {
+        deviceBundleCache.set(
+            deviceId,
+            api.get<{ bundle: string }>(`/keys/v3/device/${deviceId}`)
+                .then(r => b64Dec(r.data.bundle))
+                .catch(() => null),
+        );
+    }
+    return deviceBundleCache.get(deviceId)!;
+}
+
+async function drDeviceEncrypt(
+    senderDeviceId: number,
+    recipientDeviceId: number,
+    plaintext: Uint8Array,
+): Promise<string> {
+    const ck = devicePairKey(senderDeviceId, recipientDeviceId);
+    return withLock(v3DrLocks, ck, async () => {
+        let sessionBytes = await loadRatchetSession(ck);
+        let initMsg: Uint8Array | null = null;
+
+        if (!sessionBytes) {
+            const peerBundle = await fetchDeviceBundle(recipientDeviceId);
+            if (!peerBundle) throw new Error(`No bundle for device ${recipientDeviceId}`);
+            const { result } = await wasm.x3dhSend(identity!.ikDhSecret, peerBundle);
+            const sk         = result.slice(0, 32);
+            initMsg          = result.slice(32, 97);
+            const spkPub     = peerBundle.slice(64, 96);
+            const { sessionBytes: sb } = await wasm.ratchetInitSender(sk, spkPub);
+            zeroize(sk);
+            sessionBytes = sb;
+        }
+
+        const { ciphertext, newSessionBytes } = await wasm.ratchetEncrypt(
+            sessionBytes, plaintext, new Uint8Array(0),
+        );
+        await saveRatchetSession(ck, newSessionBytes);
+
+        const offset = initMsg ? 66 : 1;
+        const wire   = new Uint8Array(offset + ciphertext.length);
+        wire[0]      = initMsg ? INIT_FLAG : 0x00;
+        if (initMsg) wire.set(initMsg, 1);
+        wire.set(ciphertext, offset);
+        return V3_DM + b64Enc(wire);
+    });
+}
+
+async function drDeviceDecrypt(
+    senderDeviceId: number,
+    recipientDeviceId: number,
+    wireStr: string,
+): Promise<Uint8Array | null> {
+    const ck      = devicePairKey(senderDeviceId, recipientDeviceId);
+    const wire    = b64Dec(wireStr.slice(V3_DM.length));
+    const hasInit = (wire[0] & INIT_FLAG) !== 0;
+
+    return withLock(v3DrLocks, ck, async () => {
+        let sessionBytes = await loadRatchetSession(ck);
+
+        if (hasInit) {
+            const initMsg = wire.slice(1, 66);
+            const drWire  = wire.slice(66);
+
+            if (sessionBytes) {
+                try {
+                    const { plaintext, newSessionBytes } = await wasm.ratchetDecrypt(
+                        sessionBytes, drWire, new Uint8Array(0),
+                    );
+                    await saveRatchetSession(ck, newSessionBytes);
+                    return plaintext;
+                } catch {}
+            }
+
+            const { sk } = await wasm.x3dhReceive(
+                identity!.ikDhSecret,
+                identity!.spkSecret,
+                new Uint8Array(0),
+                initMsg,
+            );
+            const { sessionBytes: sb } = await wasm.ratchetInitReceiver(sk, identity!.spkSecret);
+            zeroize(sk);
+            sessionBytes = sb;
+            const { plaintext, newSessionBytes } = await wasm.ratchetDecrypt(
+                sessionBytes, drWire, new Uint8Array(0),
+            );
+            await saveRatchetSession(ck, newSessionBytes);
+            return plaintext;
+        }
+
+        if (!sessionBytes) return null;
+        const { plaintext, newSessionBytes } = await wasm.ratchetDecrypt(
+            sessionBytes, wire.slice(1), new Uint8Array(0),
+        );
+        await saveRatchetSession(ck, newSessionBytes);
+        return plaintext;
+    });
+}
+
+// v3 public encrypt: returns content + per-device envelopes.
+// recipientUserId — the DM peer; also encrypts for sender's own other devices.
+async function encryptV3Internal(
+    plaintext: string,
+    recipientUserId: number,
+): Promise<{ content: string; envelopes: Array<{ deviceId: number; ciphertext: string }> } | null> {
+    if (!identity || !myDeviceId || !currentUserId) return null;
+
+    const messageKey = crypto.getRandomValues(new Uint8Array(32));
+    const msgIv      = crypto.getRandomValues(new Uint8Array(12));
+    const aesKey     = await crypto.subtle.importKey(
+        'raw', messageKey as Uint8Array<ArrayBuffer>, 'AES-GCM', false, ['encrypt'],
+    );
+    const ct = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: msgIv as Uint8Array<ArrayBuffer> },
+        aesKey,
+        new TextEncoder().encode(plaintext),
+    );
+
+    const ctBuf = new Uint8Array(12 + ct.byteLength);
+    ctBuf.set(msgIv, 0);
+    ctBuf.set(new Uint8Array(ct), 12);
+    const content = V3_DM + b64Enc(ctBuf);
+
+    // Gather all target devices (recipient + own other devices)
+    const [recipientDevices, ownDevices] = await Promise.all([
+        api.get<Array<{ id: number; bundle: string }>>(`/keys/v3/devices/${recipientUserId}`)
+            .then(r => r.data).catch(() => [] as Array<{ id: number; bundle: string }>),
+        recipientUserId !== currentUserId
+            ? api.get<Array<{ id: number; bundle: string }>>(`/keys/v3/devices/${currentUserId}`)
+                .then(r => r.data).catch(() => [] as Array<{ id: number; bundle: string }>)
+            : Promise.resolve([] as Array<{ id: number; bundle: string }>),
+    ]);
+
+    const targetDeviceIds = [
+        ...recipientDevices.map(d => d.id),
+        ...ownDevices.map(d => d.id).filter(id => id !== myDeviceId),
+    ];
+
+    const envelopes: Array<{ deviceId: number; ciphertext: string }> = [];
+    await Promise.allSettled(
+        targetDeviceIds.map(async (deviceId) => {
+            try {
+                const ciphertext = await drDeviceEncrypt(myDeviceId!, deviceId, messageKey);
+                envelopes.push({ deviceId, ciphertext });
+            } catch (e) {
+                console.warn(`[E2E v3] envelope failed for device ${deviceId}:`, e);
+            }
+        }),
+    );
+
+    messageKey.fill(0);
+    return { content, envelopes };
+}
+
+async function decryptV3Internal(
+    content: string,
+    senderDeviceId: number,
+    envelopes: Array<{ deviceId: number; ciphertext: string }>,
+): Promise<string | null> {
+    if (!identity || !myDeviceId) return null;
+
+    const myEnvelope = envelopes.find(e => e.deviceId === myDeviceId);
+    if (!myEnvelope) return null;
+
+    let messageKey: Uint8Array | null = null;
+    try {
+        messageKey = await drDeviceDecrypt(senderDeviceId, myDeviceId, myEnvelope.ciphertext);
+        if (!messageKey) return null;
+
+        const ctBuf  = b64Dec(content.slice(V3_DM.length));
+        const iv     = ctBuf.slice(0, 12);
+        const ctData = ctBuf.slice(12);
+        const aesKey = await crypto.subtle.importKey(
+            'raw', messageKey as Uint8Array<ArrayBuffer>, 'AES-GCM', false, ['decrypt'],
+        );
+        const pt = await crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv: iv as Uint8Array<ArrayBuffer> },
+            aesKey,
+            ctData,
+        );
+        return new TextDecoder().decode(pt);
+    } catch {
+        return null;
+    } finally {
+        messageKey?.fill(0);
+    }
+}
+
 // Legacy v1 key cache
 
 async function legacyKey(peerId: number): Promise<CryptoKey | null> {
@@ -364,6 +566,9 @@ export function useE2E() {
             needsRecoverySetup: false,
             keysDesynced: false,
             clearAllKeyMaterial: async () => {},
+            encryptV3: async () => null,
+            decryptV3: async () => null,
+            myDeviceId: null,
         };
     }
 
@@ -422,6 +627,23 @@ export function useE2E() {
                 identity      = keys!;
                 initialized   = true;
 
+                // Register this browser as a v3 device (idempotent — same bundle → same id)
+                try {
+                    const storedDeviceId = getStoredDeviceId(user.id);
+                    const bundle = b64Enc(buildBundle(keys!));
+                    const { data } = await api.post<{ deviceId: number }>('/devices', {
+                        bundle,
+                        deviceName: navigator.userAgent.slice(0, 200),
+                    });
+                    if (!storedDeviceId || storedDeviceId !== data.deviceId) {
+                        storeDeviceId(user.id, data.deviceId);
+                    }
+                    myDeviceId = data.deviceId;
+                } catch (e) {
+                    console.warn('[E2E] Device registration failed:', e);
+                    myDeviceId = getStoredDeviceId(user.id);
+                }
+
                 if (e2eStatus !== 'needs-setup' && e2eStatus !== 'keys-desynced') {
                     broadcastStatus('ready');
                 }
@@ -439,8 +661,9 @@ export function useE2E() {
         if (!user?.id) {
             identity = null; legacyPrivKey = null; initialized = false;
             initPromise = null; currentUserId = null; keysWereRotated = false;
-            pendingRecoveryBlob = null;
-            legacyKeyCache.clear(); peerV2Cache.clear(); drLocks.clear(); groupLocks.clear();
+            pendingRecoveryBlob = null; myDeviceId = null;
+            legacyKeyCache.clear(); peerV2Cache.clear();
+            drLocks.clear(); groupLocks.clear(); v3DrLocks.clear(); deviceBundleCache.clear();
             onReadyCallbacks = [];
             broadcastStatus('idle');
             setIsReady(false);
@@ -500,7 +723,22 @@ export function useE2E() {
         if (!currentUserId) return;
         const ck = pairKey(currentUserId, peerId);
         await deleteRatchetSession(ck).catch(() => {});
-        drLocks.delete(ck); // clear any pending lock
+        drLocks.delete(ck);
+    }, []);
+
+    const encryptV3 = useCallback(async (
+        plaintext: string,
+        recipientUserId: number,
+    ): Promise<{ content: string; envelopes: Array<{ deviceId: number; ciphertext: string }> } | null> => {
+        return encryptV3Internal(plaintext, recipientUserId);
+    }, []);
+
+    const decryptV3 = useCallback(async (
+        content: string,
+        senderDeviceId: number,
+        envelopes: Array<{ deviceId: number; ciphertext: string }>,
+    ): Promise<string | null> => {
+        return decryptV3Internal(content, senderDeviceId, envelopes);
     }, []);
 
     // Group
@@ -663,6 +901,15 @@ export function useE2E() {
             await saveIdentityKeys(currentUserId, keys);
             legacyPrivKey = await loadPrivateKey(currentUserId).catch(() => null);
             identity = keys; initialized = true; pendingRecoveryBlob = null;
+            // Register device after PIN unlock
+            try {
+                const bundle = b64Enc(buildBundle(keys));
+                const { data } = await api.post<{ deviceId: number }>('/devices', {
+                    bundle, deviceName: navigator.userAgent.slice(0, 200),
+                });
+                storeDeviceId(currentUserId, data.deviceId);
+                myDeviceId = data.deviceId;
+            } catch { myDeviceId = getStoredDeviceId(currentUserId); }
             broadcastStatus('ready');
             onReadyCallbacks.forEach((cb) => cb());
             onReadyCallbacks = [];
@@ -697,10 +944,20 @@ export function useE2E() {
         if (!myUserId) throw new Error('Not authenticated');
         initGeneration++; initPromise = null;
         drLocks.clear(); groupLocks.clear(); legacyKeyCache.clear();
+        v3DrLocks.clear(); deviceBundleCache.clear();
         const keys = await generateIdentityKeys();
         await saveIdentityKeys(myUserId, keys);
         await api.post('/keys/v2', { bundle: b64Enc(buildBundle(keys)) });
         try { await api.delete('/conversations/sender-keys/mine-all'); } catch {}
+        // Register fresh device for the new keys
+        try {
+            const bundle = b64Enc(buildBundle(keys));
+            const { data } = await api.post<{ deviceId: number }>('/devices', {
+                bundle, deviceName: navigator.userAgent.slice(0, 200),
+            });
+            storeDeviceId(myUserId, data.deviceId);
+            myDeviceId = data.deviceId;
+        } catch { clearDeviceId(myUserId); myDeviceId = null; }
         identity = keys; initialized = true; keysWereRotated = true;
         broadcastStatus('needs-setup');
     }, []);
@@ -709,6 +966,9 @@ export function useE2E() {
         if (!user?.id) return;
         await clearAllCryptoState(user.id);
         await deleteIdentityKeys(user.id);
+        clearDeviceId(user.id);
+        myDeviceId = null;
+        v3DrLocks.clear(); deviceBundleCache.clear();
     }, [user?.id]);
 
     return {
@@ -724,7 +984,10 @@ export function useE2E() {
         needsRecoverySetup: status === 'needs-setup',
         keysDesynced:       status === 'keys-desynced',
         clearAllKeyMaterial,
-        invalidatePeerSession
+        invalidatePeerSession,
+        encryptV3,
+        decryptV3,
+        myDeviceId,
     };
 }
 

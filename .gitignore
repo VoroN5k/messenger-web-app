@@ -47,3 +47,9 @@ crypto/target/
 crypto/wasm/pkg/
 crypto/napi/*.node
 crypto/mobile/target/
+
+# WASM build artifacts
+pkg/
+wasm-bindgen/
+target/
+*.wasm

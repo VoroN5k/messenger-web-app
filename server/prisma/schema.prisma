@@ -65,6 +65,7 @@ model User {
   tosAcceptedAt DateTime?
 
   sessions               Session[]
+  devices                Device[]
   pushSubscriptions      PushSubscription[]
   conversationMembers    ConversationMember[]
   sentMessages           Message[]            @relation("MessageSender")
@@ -102,8 +103,10 @@ model Session {
   expiresAt        DateTime
   createdAt        DateTime @default(now())
   prevRefreshToken String?
+  deviceId         Int?
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device Device? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
 
   @@index([userId])
 }
@@ -187,15 +190,19 @@ model Message {
   conversationId      Int
   replyToId           Int?
 
-  sender            User            @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
-  conversation      Conversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  replyTo           Message?        @relation("MessageReplies", fields: [replyToId], references: [id])
-  replies           Message[]       @relation("MessageReplies")
-  forwardedFrom     Message?        @relation("MessageForwards", fields: [forwardedFromId], references: [id])
-  forwards          Message[]       @relation("MessageForwards")
-  forwardedFromUser User?           @relation("MessageForwardUser", fields: [forwardedFromUserId], references: [id])
+  senderDeviceId    Int?
+
+  sender            User                 @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  conversation      Conversation         @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  replyTo           Message?             @relation("MessageReplies", fields: [replyToId], references: [id])
+  replies           Message[]            @relation("MessageReplies")
+  forwardedFrom     Message?             @relation("MessageForwards", fields: [forwardedFromId], references: [id])
+  forwards          Message[]            @relation("MessageForwards")
+  forwardedFromUser User?                @relation("MessageForwardUser", fields: [forwardedFromUserId], references: [id])
+  senderDevice      Device?              @relation("MessageSenderDevice", fields: [senderDeviceId], references: [id], onDelete: SetNull)
   reactions         Reaction[]
   pinnedIn          PinnedMessage[]
+  envelopes         MessageKeyEnvelope[]
 
   @@index([conversationId])
   @@index([senderId])
@@ -284,6 +291,38 @@ model GroupSenderKey {
   @@unique([conversationId, senderId, recipientId])
   @@index([conversationId, recipientId])
   @@index([conversationId, senderId])
+}
+
+// ── v3 multi-device ─────────────────────────────────────────────────────────
+
+model Device {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  bundle     String   @db.Text
+  deviceName String?
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+
+  user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions     Session[]
+  sentMessages Message[]            @relation("MessageSenderDevice")
+  envelopes    MessageKeyEnvelope[]
+
+  @@index([userId])
+}
+
+model MessageKeyEnvelope {
+  id         Int    @id @default(autoincrement())
+  messageId  Int
+  deviceId   Int
+  ciphertext String @db.Text
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  device  Device  @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, deviceId])
+  @@index([messageId])
+  @@index([deviceId])
 }
 
 model Report {

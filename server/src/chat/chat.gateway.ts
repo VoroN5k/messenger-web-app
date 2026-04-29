@@ -240,6 +240,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
             conversationId: number; content?: string;
             fileUrl?: string; fileName?: string; fileType?: string; fileSize?: number;
             replyToId?: number; metadata?: string; scheduledAt?: string | null;
+            senderDeviceId?: number;
+            envelopes?: Array<{ deviceId: number; ciphertext: string }>;
         },
     ) {
         const MAX_SCHEDULE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -289,7 +291,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
 
             const message = await this.convService.saveMessage(userId, data.conversationId, {
                 ...data,
-                scheduledAt: scheduledAt ?? null,
+                scheduledAt:    scheduledAt ?? null,
+                senderDeviceId: data.senderDeviceId,
+                envelopes:      data.envelopes,
             });
 
             if (isScheduled) {
