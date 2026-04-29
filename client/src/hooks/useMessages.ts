@@ -4,7 +4,8 @@ import { Message, Reaction, ConversationType, QueuedMessage } from '@/src/types/
 import { useE2E }          from './useE2E';
 import { useOfflineQueue } from './useOfflineQueue';
 import { parseMetadata }   from '@/src/lib/parseMetadata';
-import { savePlaintext, loadPlaintext } from '@/src/lib/cryptoDb';
+import { savePlaintext, loadPlaintext, saveMediaKey, loadMediaKey, consumePendingMediaKey } from '@/src/lib/cryptoDb';
+import { b64Dec, unpackMediaKey, MEDIA_KEY_PREFIX } from '@/src/lib/mediaEncryption';
 
 export const useMessages = (
     conversationId:      number | undefined,
@@ -103,6 +104,26 @@ export const useMessages = (
     const decryptMessages = useCallback(async (raw: Message[]): Promise<Message[]> => {
         return Promise.all(raw.map(async msg => {
             let result = msg;
+
+            // ── File message: content holds DR-wrapped AES media key ──────────
+            if (msg.fileUrl && msg.content && looksEncrypted(msg.content)) {
+                if (msg.id) {
+                    const alreadyCached = await loadMediaKey(msg.id).catch(() => null);
+                    if (!alreadyCached) {
+                        try {
+                            const decoded = await decryptContent(msg.content, msg.senderId);
+                            if (decoded.startsWith(MEDIA_KEY_PREFIX)) {
+                                const packed = b64Dec(decoded.slice(MEDIA_KEY_PREFIX.length));
+                                const { key, iv } = unpackMediaKey(packed);
+                                await saveMediaKey(msg.id, key, iv).catch(() => {});
+                            }
+                        } catch {}
+                    }
+                }
+                // Clear key envelope so the UI shows the file, not raw ciphertext
+                return { ...result, content: '' };
+            }
+
             if (msg.content && looksEncrypted(msg.content)) {
                 // Signal DR is one-way: check local cache before touching the session
                 if (msg.id) {
@@ -262,8 +283,32 @@ export const useMessages = (
                 if (msg.id && plaintext !== rawCipher) {
                     savePlaintext(msg.id, plaintext).catch(() => {});
                 }
+                // Persist media key from send-time for file messages
+                if (msg.fileUrl && msg.id) {
+                    const pending = consumePendingMediaKey(msg.fileUrl);
+                    if (pending) {
+                        await saveMediaKey(msg.id, pending.key, pending.iv).catch(() => {});
+                    }
+                    decryptedMsg = { ...decryptedMsg, content: '' };
+                }
             } else {
-                if (msg.content && looksEncrypted(msg.content)) {
+                // ── Incoming file with encrypted media key in content ─────────
+                if (msg.fileUrl && msg.content && looksEncrypted(msg.content)) {
+                    if (msg.id) {
+                        const alreadyCached = await loadMediaKey(msg.id).catch(() => null);
+                        if (!alreadyCached) {
+                            try {
+                                const decoded = await decryptContent(msg.content, msg.senderId);
+                                if (decoded.startsWith(MEDIA_KEY_PREFIX)) {
+                                    const packed = b64Dec(decoded.slice(MEDIA_KEY_PREFIX.length));
+                                    const { key, iv } = unpackMediaKey(packed);
+                                    await saveMediaKey(msg.id, key, iv).catch(() => {});
+                                }
+                            } catch {}
+                        }
+                    }
+                    decryptedMsg = { ...decryptedMsg, content: '' };
+                } else if (msg.content && looksEncrypted(msg.content)) {
                     const legacy = isLegacyCipher(msg.content);
                     try {
                         const decrypted = await decryptContent(msg.content, msg.senderId);
@@ -306,8 +351,10 @@ export const useMessages = (
                         const next = [...prev];
                         const opt  = next[idx];
                         if (opt._localBlobUrl) URL.revokeObjectURL(opt._localBlobUrl);
-                        // Keep plaintext from optimistic, attach the confirmed id
-                        next[idx] = { ...decryptedMsg, content: opt.content, isPending: false, _queueId: undefined, _pendingCipher: undefined };
+                        // For text messages: keep plaintext from optimistic (not the ciphertext).
+                        // For file messages: content holds the media key envelope — clear it after echo.
+                        const mergedContent = opt.fileUrl ? '' : opt.content;
+                        next[idx] = { ...decryptedMsg, content: mergedContent, isPending: false, _queueId: undefined, _pendingCipher: undefined };
                         return next;
                     }
                     setHasMoreNewer(false);

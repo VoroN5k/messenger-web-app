@@ -1,7 +1,7 @@
 const DB_NAME = 'messenger-e2e-v2';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
-type StoreName = 'identity' | 'ratchet' | 'group_sender' | 'group_receiver' | 'msg_plaintext';
+type StoreName = 'identity' | 'ratchet' | 'group_sender' | 'group_receiver' | 'msg_plaintext' | 'media_keys';
 
 function open(): Promise<IDBDatabase> {
     return new Promise((res, rej) => {
@@ -13,6 +13,7 @@ function open(): Promise<IDBDatabase> {
             if (!db.objectStoreNames.contains('group_sender'))   db.createObjectStore('group_sender');
             if (!db.objectStoreNames.contains('group_receiver')) db.createObjectStore('group_receiver');
             if (!db.objectStoreNames.contains('msg_plaintext'))  db.createObjectStore('msg_plaintext');
+            if (!db.objectStoreNames.contains('media_keys'))     db.createObjectStore('media_keys');
         };
         req.onsuccess = () => res(req.result);
         req.onerror   = () => rej(req.error);
@@ -264,18 +265,65 @@ export async function loadPlaintext(
 }
 
 // ---------------------------------------------------------------------------
+// Media keys — AES-256-GCM key+iv for file/audio messages.
+// Stored as packed ArrayBuffer: key(32) || iv(12) = 44 bytes.
+// Keyed by messageId so FileBubble/VoiceBubble can decrypt without DR.
+// ---------------------------------------------------------------------------
+
+export async function saveMediaKey(
+    messageId: number,
+    key: Uint8Array,
+    iv: Uint8Array,
+): Promise<void> {
+    const db = await open();
+    const buf = new Uint8Array(44);
+    buf.set(key, 0);
+    buf.set(iv, 32);
+    await idbPut(db, 'media_keys', String(messageId), buf.buffer as ArrayBuffer);
+}
+
+export async function loadMediaKey(
+    messageId: number,
+): Promise<{ key: Uint8Array; iv: Uint8Array } | null> {
+    const db = await open();
+    const buf = await idbGet<ArrayBuffer>(db, 'media_keys', String(messageId));
+    if (!buf) return null;
+    const arr = new Uint8Array(buf);
+    return { key: arr.slice(0, 32), iv: arr.slice(32, 44) };
+}
+
+// In-memory map for the send→echo round-trip.
+// When a file is sent, we store key+iv by fileUrl.
+// When the server echo arrives (with the assigned messageId), we move the entry to IndexedDB.
+const pendingMediaKeys = new Map<string, { key: Uint8Array; iv: Uint8Array }>();
+
+export function setPendingMediaKey(fileUrl: string, key: Uint8Array, iv: Uint8Array): void {
+    pendingMediaKeys.set(fileUrl, { key: new Uint8Array(key), iv: new Uint8Array(iv) });
+}
+
+export function consumePendingMediaKey(
+    fileUrl: string,
+): { key: Uint8Array; iv: Uint8Array } | null {
+    const val = pendingMediaKeys.get(fileUrl) ?? null;
+    if (val) pendingMediaKeys.delete(fileUrl);
+    return val;
+}
+
+// ---------------------------------------------------------------------------
 // Full wipe
 // ---------------------------------------------------------------------------
 
 export async function clearAllCryptoState(userId: number): Promise<void> {
     const db = await open();
     localStorage.removeItem(VAULT_LS_KEY(userId));
+    pendingMediaKeys.clear();
     await Promise.all([
         idbClear(db, 'identity'),
         idbClear(db, 'ratchet'),
         idbClear(db, 'group_sender'),
         idbClear(db, 'group_receiver'),
         idbClear(db, 'msg_plaintext'),
+        idbClear(db, 'media_keys'),
     ]);
 }
 

@@ -34,7 +34,7 @@ export interface MessageItemProps {
     editingContent:   string;
     confirmDelId:     number | null;
     pickerKey:        string | null;
-    decryptFn?:       (data: ArrayBuffer, senderId: number) => Promise<ArrayBuffer>;
+    decryptFn?:       (data: ArrayBuffer, senderId: number, messageId?: number | null) => Promise<ArrayBuffer>;
     msgRefsMap:       React.MutableRefObject<Record<number, HTMLDivElement | null>>;
     editInputRef:     React.RefObject<HTMLInputElement | null>;
     onHover:          (key: string | null) => void;
@@ -374,14 +374,14 @@ export function MessageItem(props: Readonly<MessageItemProps>) {
                                         fileUrl={msg.fileUrl!}
                                         metadata={msg.metadata}
                                         isMe={isMe}
-                                        onDecrypt={decryptFn ? d => decryptFn(d, Number(msg.senderId)) : undefined}
+                                        onDecrypt={decryptFn ? d => decryptFn(d, Number(msg.senderId), msg.id ?? null) : undefined}
                                     />
                                 )}
                                 {hasFile && (
                                     <FileBubble
                                         msg={msg}
                                         isMe={isMe}
-                                        onDecrypt={decryptFn ? d => decryptFn(d, Number(msg.senderId)) : undefined}
+                                        onDecrypt={decryptFn ? d => decryptFn(d, Number(msg.senderId), msg.id ?? null) : undefined}
                                     />
                                 )}
                                 {msg.content && !isVoice && (

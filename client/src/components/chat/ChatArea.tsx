@@ -11,6 +11,8 @@ import { useE2E }                   from '@/src/hooks/useE2E';
 import api                          from '@/src/lib/axios';
 import { uploadFile, mimeFromFileName, isImageType } from '@/src/lib/uploadFile';
 import { compressImage }            from '@/src/lib/compressImage';
+import { encryptMedia, decryptMedia, packMediaKey, b64Enc, MEDIA_KEY_PREFIX } from '@/src/lib/mediaEncryption';
+import { setPendingMediaKey, loadMediaKey } from '@/src/lib/cryptoDb';
 
 import { ChatHeader }        from './ChatHeader';
 import { SearchPanel }       from './SearchPanel';
@@ -138,11 +140,23 @@ export default function ChatArea({
         }
     }, [otherUserId]);
 
-    const decryptFn = otherUserId
-        ? (data: ArrayBuffer, _: number) => e2e.decryptBinary(data, otherUserId)
-        : conversation?.type === 'GROUP' && conversation?.id
-            ? (data: ArrayBuffer, senderId: number) => e2e.decryptBinaryFromGroup(data, conversation.id, senderId)
-            : undefined;
+    const decryptFn = async (
+        data: ArrayBuffer,
+        senderId: number,
+        messageId?: number | null,
+    ): Promise<ArrayBuffer> => {
+        if (messageId) {
+            const mediaKey = await loadMediaKey(messageId).catch(() => null);
+            if (mediaKey) {
+                try { return await decryptMedia(data, mediaKey.key, mediaKey.iv); } catch {}
+            }
+        }
+        // Legacy fallback: old files encrypted via DR binary
+        if (otherUserId) return e2e.decryptBinary(data, otherUserId);
+        if (conversation?.type === 'GROUP' && conversation?.id)
+            return e2e.decryptBinaryFromGroup(data, conversation.id, senderId);
+        return data;
+    };
 
     const {
         messages, typingUsers,
@@ -277,11 +291,17 @@ export default function ChatArea({
             const localBlobUrl = URL.createObjectURL(fileToProcess);
             let fileToUpload = fileToProcess;
             let encMeta: string | undefined;
+            let pendingKey: { key: Uint8Array; iv: Uint8Array } | null = null;
+            let keyEnvelope: string | undefined;
+
             if (otherUserId) {
-                const buf = await fileToProcess.arrayBuffer();
-                const encBuf = await e2e.encryptBinary(buf, otherUserId);
-                fileToUpload = new File([encBuf], fileToProcess.name, { type: fileToProcess.type });
+                // AES-256-GCM for the file body; DR wraps only the 44-byte key+iv
+                const { encryptedBlob, key, iv } = await encryptMedia(fileToProcess);
+                const packed = packMediaKey(key, iv);
+                keyEnvelope = await e2e.encrypt(MEDIA_KEY_PREFIX + b64Enc(packed), otherUserId);
+                fileToUpload = new File([encryptedBlob], fileToProcess.name, { type: fileToProcess.type });
                 encMeta = JSON.stringify({ encrypted: true });
+                pendingKey = { key, iv };
             } else if (conversation?.type === 'GROUP' && conversation?.id) {
                 const buf = await fileToProcess.arrayBuffer();
                 const encBuf = await e2e.encryptBinaryForGroup(buf, conversation.id, groupMemberIds);
@@ -289,10 +309,15 @@ export default function ChatArea({
                 fileToUpload = new File([encBuf], fileToProcess.name, { type: fileToProcess.type });
                 encMeta = JSON.stringify({ encrypted: true });
             }
+
             const r = await uploadFile(fileToUpload, setUploadProgress, ctrl.signal);
+
+            if (pendingKey) setPendingMediaKey(r.url, pendingKey.key, pendingKey.iv);
+
             sendFileMessage({
                 fileUrl: r.url, fileName: file.name, fileType: displayMime,
-                fileSize: file.size, content: caption?.trim() || undefined,
+                fileSize: file.size,
+                content: keyEnvelope ?? caption?.trim() ?? undefined,
                 replyToId: replyTo?.id, metadata: encMeta, _localBlobUrl: localBlobUrl,
             });
             setReplyTo(null);
@@ -343,10 +368,17 @@ export default function ChatArea({
         try {
             const baseMeta = { waveform, duration, mimeType };
             let fileToUpload: File, metaObj: object;
+            let pendingKey: { key: Uint8Array; iv: Uint8Array } | null = null;
+            let keyEnvelope: string | undefined;
+
             if (otherUserId) {
-                const enc = await e2e.encryptBinary(await blob.arrayBuffer(), otherUserId);
-                fileToUpload = new File([enc], `voice.${mimeToExtension(mimeType)}`, { type: mimeType });
+                // AES-256-GCM for audio body; DR wraps only the 44-byte key+iv
+                const { encryptedBlob, key, iv } = await encryptMedia(blob);
+                const packed = packMediaKey(key, iv);
+                keyEnvelope = await e2e.encrypt(MEDIA_KEY_PREFIX + b64Enc(packed), otherUserId);
+                fileToUpload = new File([encryptedBlob], `voice.${mimeToExtension(mimeType)}`, { type: mimeType });
                 metaObj = { ...baseMeta, encrypted: true };
+                pendingKey = { key, iv };
             } else if (conversation?.type === 'GROUP' && conversation?.id) {
                 const enc = await e2e.encryptBinaryForGroup(await blob.arrayBuffer(), conversation.id);
                 fileToUpload = new File([enc], `voice.${mimeToExtension(mimeType)}`, { type: mimeType });
@@ -355,8 +387,10 @@ export default function ChatArea({
                 fileToUpload = new File([blob], `voice.${mimeToExtension(mimeType)}`, { type: mimeType });
                 metaObj = baseMeta;
             }
+
             const r = await uploadFile(fileToUpload, setUploadProgress, ctrl.signal);
-            sendFileMessage({ fileUrl: r.url, fileName: 'Voice message', fileType: mimeType, fileSize: blob.size, metadata: JSON.stringify(metaObj) });
+            if (pendingKey) setPendingMediaKey(r.url, pendingKey.key, pendingKey.iv);
+            sendFileMessage({ fileUrl: r.url, fileName: 'Voice message', fileType: mimeType, fileSize: blob.size, content: keyEnvelope, metadata: JSON.stringify(metaObj) });
         } catch (err: any) {
             if (err.message !== 'Upload cancelled') setUploadError(err.message ?? 'Error');
         } finally { setUploadProgress(null); abortRef.current = null; }

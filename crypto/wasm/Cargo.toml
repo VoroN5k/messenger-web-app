@@ -13,3 +13,9 @@ js-sys                   = "0.3"
 console_error_panic_hook = "0.1"
 # getrandom must enable the `js` feature so OsRng works inside a browser/worker
 getrandom = { version = "0.2", features = ["js"] }
+
+[profile.release]
+opt-level = "z"     # Оптимізація за розміром (важливо для завантаження в браузері)
+lto = true          # Link Time Optimization (видаляє зайве з усіх залежностей)
+codegen-units = 1   # Покращує якість оптимізації
+panic = "abort"     # Прибирає важку логіку розкручування стеку при помилках

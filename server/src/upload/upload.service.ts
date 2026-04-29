@@ -5,7 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 
-const MAX_FILE_SIZE   = 10 * 1024 * 1024;
+const MAX_FILE_SIZE   = 10 * 1024 * 1024; //
 const MAX_AVATAR_SIZE =  5 * 1024 * 1024;
 const AVATAR_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
