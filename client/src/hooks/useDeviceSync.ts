@@ -294,8 +294,15 @@ export function useDeviceSync(
         const receivedHashes = new Map<number, Uint8Array>(); // seq → sha256
 
         return new Promise<void>((resolve, reject) => {
+            // settled prevents double-resolution from the dc.onclose race:
+            // PC closes its DC right after sending the manifest, which can trigger
+            // dc.onclose on the target while onmessage is still processing the manifest.
+            let settled = false;
+            const safeResolve = () => { if (!settled) { settled = true; resolve(); } };
+            const safeReject  = (e: Error) => { if (!settled) { settled = true; reject(e); } };
+
             dc.onmessage = async (ev: MessageEvent<ArrayBuffer>) => {
-                if (abortedRef.current) { reject(new Error('aborted')); return; }
+                if (abortedRef.current) { safeReject(new Error('aborted')); return; }
                 const frame = decodeFrame(ev.data);
                 if (!frame) return;
 
@@ -306,7 +313,6 @@ export function useDeviceSync(
                         await importSyncRecord(plain);
                         patch({
                             transferred: receivedHashes.size,
-                            // total unknown until manifest — show spinner (progress=0)
                             progress: 0,
                         });
 
@@ -316,43 +322,41 @@ export function useDeviceSync(
                         const { plain: rawManifest } = await wasm.syncOpenChunk(
                             keys, frame.seq, frame.data,
                         );
-                        // Constant-time HMAC verify + parse (inside WASM Rust)
                         const { entries } = await wasm.syncVerifyManifest(macKey, rawManifest);
 
-                        // entries: [id(8 BE) || sha256(32)] × count
                         if (entries.length % 40 !== 0) {
-                            reject(new Error('Невірний формат маніфесту')); return;
+                            safeReject(new Error('Невірний формат маніфесту')); return;
                         }
                         const count = entries.length / 40;
 
                         if (receivedHashes.size !== count) {
-                            reject(new Error(
+                            safeReject(new Error(
                                 `Маніфест: очікували ${count} записів, отримали ${receivedHashes.size}`,
                             ));
                             return;
                         }
 
                         for (let i = 0; i < count; i++) {
-                            const off            = i * 40;
-                            const seq            = u64BEToSeq(entries, off);
-                            const expectedHash   = entries.slice(off + 8, off + 40);
-                            const receivedHash   = receivedHashes.get(seq);
+                            const off          = i * 40;
+                            const seq          = u64BEToSeq(entries, off);
+                            const expectedHash = entries.slice(off + 8, off + 40);
+                            const receivedHash = receivedHashes.get(seq);
                             if (!receivedHash || !timingSafeEq(expectedHash, receivedHash)) {
-                                reject(new Error(`Порушення цілісності на записі ${seq}`));
+                                safeReject(new Error(`Порушення цілісності на записі ${seq}`));
                                 return;
                             }
                         }
 
-                        resolve();
+                        safeResolve();
                     }
                 } catch (e) {
-                    reject(e);
+                    safeReject(e as Error);
                 }
             };
 
-            dc.onerror = () => reject(new Error('DataChannel помилка'));
+            dc.onerror = () => safeReject(new Error('DataChannel помилка'));
             dc.onclose = () => {
-                if (!abortedRef.current) reject(new Error('DataChannel закрито передчасно'));
+                if (!abortedRef.current) safeReject(new Error('DataChannel закрито передчасно'));
             };
         });
     }, [patch]);
