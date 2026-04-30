@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/src/store/useAuthStore';
 import api from '@/src/lib/axios';
+import { useSignedUrl } from '@/src/hooks/useSignedUrl';
 import {
     Bug, Lightbulb, MessageSquare, MoreHorizontal,
     ChevronLeft, ChevronRight, RefreshCw, Check,
@@ -117,6 +118,20 @@ function NoteEditor({ report, onSave }: {
                 Cancel
             </button>
         </div>
+    );
+}
+
+function ReportScreenshot({ imageUrl }: { imageUrl: string }) {
+    const signedUrl = useSignedUrl(imageUrl);
+    if (!signedUrl) return <p className="text-[11px]" style={{ color: 'var(--text-3)' }}>Loading…</p>;
+    return (
+        <img
+            src={signedUrl}
+            alt="Report screenshot"
+            className="rounded-lg max-h-64 object-contain w-full cursor-zoom-in"
+            style={{ border: '1px solid var(--border)', background: 'rgba(0,0,0,0.3)' }}
+            onClick={() => window.open(signedUrl, '_blank')}
+        />
     );
 }
 
@@ -364,13 +379,7 @@ export default function AdminReportsPage() {
                                                 <div>
                                                     <p className="text-[11px] font-semibold uppercase tracking-widest mb-2"
                                                        style={{ color: 'var(--text-3)' }}>Screenshot</p>
-                                                    <img
-                                                        src={report.metadata.imageUrl}
-                                                        alt="Report screenshot"
-                                                        className="rounded-lg max-h-64 object-contain w-full cursor-zoom-in"
-                                                        style={{ border: '1px solid var(--border)', background: 'rgba(0,0,0,0.3)' }}
-                                                        onClick={() => window.open(report.metadata?.imageUrl, '_blank')}
-                                                    />
+                                                    <ReportScreenshot imageUrl={report.metadata.imageUrl} />
                                                 </div>
                                             )}
 

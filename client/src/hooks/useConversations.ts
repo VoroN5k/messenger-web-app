@@ -32,8 +32,21 @@ export const useConversations = (socket: any, activeConversationId?: number) => 
         if (!conv.lastMessage?.content || !conv.lastMessage.content.trim()) return conv;
 
         const c = conv.lastMessage.content;
-        const isCiphertext = c.length > 20 && /^[A-Za-z0-9_\-]+$/.test(c);
+        const isCiphertext = c.length > 20 && (
+            c.startsWith('v2:') || c.startsWith('v2g:') || c.startsWith('v3:') ||
+            /^[A-Za-z0-9_\-]+$/.test(c)
+        );
         if (!isCiphertext) return conv;
+
+        // v3 messages: we don't have envelopes in lastMessage, use plaintext cache
+        if (c.startsWith('v3:') && conv.lastMessage.id) {
+            try {
+                const { loadPlaintext } = await import('@/src/lib/cryptoDb');
+                const cached = await loadPlaintext(conv.lastMessage.id);
+                if (cached) return { ...conv, lastMessage: { ...conv.lastMessage, content: cached.content } };
+            } catch {}
+            return conv;
+        }
 
         try {
             let plain: string;
@@ -132,11 +145,14 @@ export const useConversations = (socket: any, activeConversationId?: number) => 
 
         const onMessage = async (msg: Message) => {
             const isOwnMessage = String(msg.senderId) === String(currentUserId);
-            const isCiphertext = msg.content?.length > 20 && /^[A-Za-z0-9_\-]+$/.test(msg.content ?? '');
+            const c = msg.content ?? '';
+            const isCiphertext = c.length > 20 && (
+                c.startsWith('v2:') || c.startsWith('v2g:') || c.startsWith('v3:') ||
+                /^[A-Za-z0-9_\-]+$/.test(c)
+            );
 
-            const targetConv = convsRef.current.find((c) => c.id === msg.conversationId);
+            const targetConv = convsRef.current.find((cv) => cv.id === msg.conversationId);
             if (!targetConv) {
-                // New conversation from socket — refetch to get it
                 fetchConversations();
                 return;
             }
@@ -145,11 +161,13 @@ export const useConversations = (socket: any, activeConversationId?: number) => 
 
             if (isCiphertext) {
                 try {
-                    if (targetConv.type === 'DIRECT') {
+                    // v3: decrypt via per-device envelope (envelopes arrive in socket payload)
+                    if (c.startsWith('v3:') && msg.senderDeviceId && msg.envelopes?.length) {
+                        const plain = await e2e.decryptV3(msg.content, msg.senderDeviceId, msg.envelopes);
+                        if (plain !== null) plainContent = plain;
+                    } else if (targetConv.type === 'DIRECT') {
                         const otherMember = targetConv.members.find((m) => m.userId !== currentUserId);
-                        if (otherMember) {
-                            plainContent = await e2e.decrypt(msg.content, otherMember.userId);
-                        }
+                        if (otherMember) plainContent = await e2e.decrypt(msg.content, otherMember.userId);
                     } else if (targetConv.type === 'GROUP') {
                         plainContent = await e2e.decryptFromGroup(msg.content, targetConv.id, Number(msg.senderId));
                     }

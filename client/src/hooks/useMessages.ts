@@ -118,6 +118,20 @@ export const useMessages = (
     const isLegacyCipher = (s: string) =>
         looksEncrypted(s) && !s.startsWith('v2:') && !s.startsWith('v2g:') && !s.startsWith('v3:');
 
+    // Decrypts a replyTo reference: prefers plaintext cache (by id) over DR decrypt.
+    // v3 reply content cannot be decrypted without envelopes, so cache is the only path.
+    const resolveReplyContent = useCallback(async (
+        replyTo: NonNullable<Message['replyTo']>,
+        fallbackSenderId: number | string,
+    ): Promise<string> => {
+        if (replyTo.id) {
+            const cached = await loadPlaintext(replyTo.id).catch(() => null);
+            if (cached) return cached.content;
+        }
+        if (replyTo.content?.startsWith('v3:')) return replyTo.content; // no envelopes — can't decrypt
+        return decryptContent(replyTo.content ?? '', fallbackSenderId).catch(() => replyTo.content ?? '');
+    }, [decryptContent]);
+
     const decryptMessages = useCallback(async (raw: Message[]): Promise<Message[]> => {
         return Promise.all(raw.map(async msg => {
             let result = msg;
@@ -179,8 +193,7 @@ export const useMessages = (
                         result = { ...result, content: cached.content };
                         if (cached.isLegacy) result = { ...result, _isLegacy: true };
                         if (msg.replyTo?.content && looksEncrypted(msg.replyTo.content)) {
-                            const plain = await decryptContent(msg.replyTo.content, msg.senderId).catch(() => msg.replyTo!.content);
-                            result = { ...result, replyTo: { ...result.replyTo!, content: plain } };
+                            result = { ...result, replyTo: { ...result.replyTo!, content: await resolveReplyContent(msg.replyTo, msg.senderId) } };
                         }
                         return result;
                     }
@@ -198,12 +211,11 @@ export const useMessages = (
                 }
             }
             if (msg.replyTo?.content && looksEncrypted(msg.replyTo.content)) {
-                const plain = await decryptContent(msg.replyTo.content, msg.senderId).catch(() => msg.replyTo!.content);
-                result = { ...result, replyTo: { ...result.replyTo!, content: plain } };
+                result = { ...result, replyTo: { ...result.replyTo!, content: await resolveReplyContent(msg.replyTo, msg.senderId) } };
             }
             return result;
         }));
-    }, [decryptContent, e2e]);
+    }, [decryptContent, resolveReplyContent, e2e]);
 
     // Initial load
     useEffect(() => {
@@ -314,18 +326,33 @@ export const useMessages = (
             let decryptedMsg = msg;
 
             if (isOwnEcho) {
-                // Own echo: we already have the plaintext in the optimistic message.
-                // Match by _pendingCipher (set when we encrypted the text).
+                // Own echo: prefer plaintext from the optimistic message on this device.
                 const rawCipher = msg.content;
                 const optMsg = messagesRef.current.find(
                     m => !m.id && String(m.senderId) === String(currentUserId) && m._pendingCipher === rawCipher,
                 ) ?? messagesRef.current.slice().reverse().find(
-                    // Fallback for offline-queue messages that lack _pendingCipher
                     m => !m.id && String(m.senderId) === String(currentUserId),
                 );
-                const plaintext = optMsg?.content ?? rawCipher;
+
+                let plaintext = rawCipher;
+                if (optMsg) {
+                    plaintext = optMsg.content;
+                } else if (msg.id) {
+                    // Different device of the same user — try local cache first
+                    const cached = await loadPlaintext(msg.id).catch(() => null);
+                    if (cached) {
+                        plaintext = cached.content;
+                    } else if (msg.content?.startsWith('v3:') && msg.senderDeviceId && msg.envelopes?.length) {
+                        // Decrypt the per-device envelope intended for this device
+                        const plain = await e2e.decryptV3(msg.content, msg.senderDeviceId, msg.envelopes).catch(() => null);
+                        if (plain !== null) {
+                            savePlaintext(msg.id, plain).catch(() => {});
+                            plaintext = plain;
+                        }
+                    }
+                }
+
                 decryptedMsg = { ...msg, content: plaintext };
-                // Cache so page reload survives
                 if (msg.id && plaintext !== rawCipher) {
                     savePlaintext(msg.id, plaintext).catch(() => {});
                 }
@@ -388,7 +415,7 @@ export const useMessages = (
                     }
                 }
                 if (msg.replyTo?.content && looksEncrypted(msg.replyTo.content)) {
-                    const plain = await decryptContent(msg.replyTo.content, msg.senderId).catch(() => msg.replyTo!.content);
+                    const plain = await resolveReplyContent(msg.replyTo, msg.senderId);
                     decryptedMsg = { ...decryptedMsg, replyTo: { ...decryptedMsg.replyTo!, content: plain } };
                 }
             }
