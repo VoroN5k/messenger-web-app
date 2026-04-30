@@ -367,7 +367,16 @@ export function MessageItem(props: Readonly<MessageItemProps>) {
                         ) : (
                             <>
                                 {msg.forwardedFrom && <ForwardBubble forward={msg.forwardedFrom} isMe={isMe} />}
-                                {msg.replyTo       && <ReplyBubble   reply={msg.replyTo}          isMe={isMe} />}
+                                {msg.replyTo       && (
+                                    <ReplyBubble
+                                        reply={msg.replyTo}
+                                        isMe={isMe}
+                                        onScrollTo={msg.replyTo.id ? () => {
+                                            const el = msgRefsMap.current[msg.replyTo!.id!];
+                                            el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                        } : undefined}
+                                    />
+                                )}
 
                                 {isVoice && (
                                     <VoiceBubble
