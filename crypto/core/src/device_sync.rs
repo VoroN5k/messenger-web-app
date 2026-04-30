@@ -366,8 +366,8 @@ mod tests {
         let target_pub2 = target.public_key_bytes();
 
         let sk = source2.derive_sync_keys(&target_pub, &otp).unwrap();
-        let tk = target.derive_sync_keys(&target_pub2, &otp);
-        // Can't complete target side without source_pub, just check source derived correctly
+        // Can't complete target side without source_pub — just verify source derived non-zero key
+        let _ = target.derive_sync_keys(&target_pub2, &otp);
         assert_ne!(sk.chunk_key, [0u8; 32]);
     }
 
