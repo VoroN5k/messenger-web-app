@@ -33,6 +33,7 @@ import {
 import { legacyDecryptBinary, legacyDecryptText, legacyDeriveSharedKey } from '@/src/lib/cryptoLegacy';
 import { loadPrivateKey } from '@/src/lib/crypto';
 import { getStoredDeviceId, storeDeviceId, clearDeviceId } from '@/src/lib/deviceId';
+import { DeviceKeyPair, getOrCreateDeviceKeys, clearDeviceKeys } from '@/src/lib/deviceKeys';
 
 const IS_BROWSER =
     typeof window !== 'undefined' &&
@@ -61,7 +62,8 @@ const v3DrLocks           = new Map<string, Promise<unknown>>();
 const deviceBundleCache   = new Map<number, Promise<Uint8Array | null>>();
 
 // v3 multi-device state
-let myDeviceId: number | null = null;
+let myDeviceId:  number        | null = null;
+let deviceKeys:  DeviceKeyPair | null = null;
 
 const V3_DM = 'v3:';
 
@@ -136,6 +138,19 @@ function buildBundle(k: IdentityKeys): Uint8Array {
     b.set(k.spkPub,    64);
     b.set(k.spkSig,    96);
     b[160] = 0; // no OPK in v2.0
+    return b;
+}
+
+// Device bundle uses the shared identity signing key for authenticity but
+// device-specific DH keys so that each physical browser gets a unique bundle
+// → unique device ID → separate message envelopes per device.
+function buildDeviceBundle(ikSignPub: Uint8Array, dk: DeviceKeyPair): Uint8Array {
+    const b = new Uint8Array(161);
+    b.set(ikSignPub,   0);
+    b.set(dk.ikDhPub, 32);
+    b.set(dk.spkPub,  64);
+    b.set(dk.spkSig,  96);
+    b[160] = 0;
     return b;
 }
 
@@ -340,12 +355,12 @@ async function drDeviceDecrypt(
             }
 
             const { sk } = await wasm.x3dhReceive(
-                identity!.ikDhSecret,
-                identity!.spkSecret,
+                deviceKeys!.ikDhSecret,
+                deviceKeys!.spkSecret,
                 new Uint8Array(0),
                 initMsg,
             );
-            const { sessionBytes: sb } = await wasm.ratchetInitReceiver(sk, identity!.spkSecret);
+            const { sessionBytes: sb } = await wasm.ratchetInitReceiver(sk, deviceKeys!.spkSecret);
             zeroize(sk);
             sessionBytes = sb;
             const { plaintext, newSessionBytes } = await wasm.ratchetDecrypt(
@@ -627,10 +642,14 @@ export function useE2E() {
                 identity      = keys!;
                 initialized   = true;
 
-                // Register this browser as a v3 device (idempotent — same bundle → same id)
+                // Register this browser as a v3 device using device-specific keys.
+                // Each physical browser generates unique DH keys (stored in localStorage)
+                // so it receives its own device ID and separate message envelopes.
                 try {
                     const storedDeviceId = getStoredDeviceId(user.id);
-                    const bundle = b64Enc(buildBundle(keys!));
+                    const dk = await getOrCreateDeviceKeys(user.id, keys!.ikSignSeed);
+                    deviceKeys = dk;
+                    const bundle = b64Enc(buildDeviceBundle(keys!.ikSignPub, dk));
                     const { data } = await api.post<{ deviceId: number }>('/devices', {
                         bundle,
                         deviceName: navigator.userAgent.slice(0, 200),
@@ -661,7 +680,7 @@ export function useE2E() {
         if (!user?.id) {
             identity = null; legacyPrivKey = null; initialized = false;
             initPromise = null; currentUserId = null; keysWereRotated = false;
-            pendingRecoveryBlob = null; myDeviceId = null;
+            pendingRecoveryBlob = null; myDeviceId = null; deviceKeys = null;
             legacyKeyCache.clear(); peerV2Cache.clear();
             drLocks.clear(); groupLocks.clear(); v3DrLocks.clear(); deviceBundleCache.clear();
             onReadyCallbacks = [];
@@ -901,9 +920,11 @@ export function useE2E() {
             await saveIdentityKeys(currentUserId, keys);
             legacyPrivKey = await loadPrivateKey(currentUserId).catch(() => null);
             identity = keys; initialized = true; pendingRecoveryBlob = null;
-            // Register device after PIN unlock
+            // Register device after PIN unlock using device-specific keys
             try {
-                const bundle = b64Enc(buildBundle(keys));
+                const dk = await getOrCreateDeviceKeys(currentUserId, keys.ikSignSeed);
+                deviceKeys = dk;
+                const bundle = b64Enc(buildDeviceBundle(keys.ikSignPub, dk));
                 const { data } = await api.post<{ deviceId: number }>('/devices', {
                     bundle, deviceName: navigator.userAgent.slice(0, 200),
                 });
@@ -949,9 +970,12 @@ export function useE2E() {
         await saveIdentityKeys(myUserId, keys);
         await api.post('/keys/v2', { bundle: b64Enc(buildBundle(keys)) });
         try { await api.delete('/conversations/sender-keys/mine-all'); } catch {}
-        // Register fresh device for the new keys
+        // Rotate device keys alongside identity keys so new device ID is issued
+        clearDeviceKeys(myUserId); deviceKeys = null;
         try {
-            const bundle = b64Enc(buildBundle(keys));
+            const dk = await getOrCreateDeviceKeys(myUserId, keys.ikSignSeed);
+            deviceKeys = dk;
+            const bundle = b64Enc(buildDeviceBundle(keys.ikSignPub, dk));
             const { data } = await api.post<{ deviceId: number }>('/devices', {
                 bundle, deviceName: navigator.userAgent.slice(0, 200),
             });
@@ -967,7 +991,8 @@ export function useE2E() {
         await clearAllCryptoState(user.id);
         await deleteIdentityKeys(user.id);
         clearDeviceId(user.id);
-        myDeviceId = null;
+        clearDeviceKeys(user.id);
+        myDeviceId = null; deviceKeys = null;
         v3DrLocks.clear(); deviceBundleCache.clear();
     }, [user?.id]);
 
