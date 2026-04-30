@@ -12,7 +12,10 @@
       "Bash(rustup target *)",
       "Bash(where link.exe)",
       "Bash(npx prisma *)",
-      "Bash(cargo build *)"
+      "Bash(cargo build *)",
+      "Bash(grep -v \"^\\\\s*$\")",
+      "Bash(npm install *)",
+      "Bash(wasm-pack build *)"
     ]
   }
 }

@@ -19,7 +19,9 @@ import {
 } from 'lucide-react';
 import { TwoFactorSection } from "@/src/components/settings/TwoFactorSection";
 import { deletePrivateKey } from '@/src/lib/crypto';
-import {ResetDRSessionRow} from "@/src/components/settings/ResetDRSessionRow";
+import { ResetDRSessionRow } from "@/src/components/settings/ResetDRSessionRow";
+import { DeviceSyncModal } from "@/src/components/settings/DeviceSyncModal";
+import { useSocket } from "@/src/context/SocketContext";
 
 type ThemeOption = 'light' | 'dark';
 
@@ -205,6 +207,8 @@ function ActiveDevicesSection() {
     const [terminatingId, setTerminatingId] = useState<number | null>(null);
     const [terminatingAll,setTerminatingAll]= useState(false);
     const [error,         setError]         = useState('');
+    const [showSyncModal, setShowSyncModal] = useState(false);
+    const socket = useSocket();
     const router = useRouter();
 
     const fetchSessions = useCallback(async () => {
@@ -264,45 +268,62 @@ function ActiveDevicesSection() {
     const otherSessions  = sessions.filter(s => !s.isCurrent);
 
     return (
-        <div className="divide-y divide-slate-100 dark:divide-slate-800">
-            {error && <p className="px-4 py-3 text-[13px] text-red-500 bg-red-50/50 dark:bg-red-900/10">{error}</p>}
+        <>
+            <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                {error && <p className="px-4 py-3 text-[13px] text-red-500 bg-red-50/50 dark:bg-red-900/10">{error}</p>}
 
-            {currentSession && (
-                <div className="px-4 py-3 hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
-                    <p className="text-[11px] font-semibold text-violet-600 dark:text-violet-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                        <Wifi size={12} /> Поточний пристрій
-                    </p>
-                    <SessionRow session={currentSession} isCurrent />
-                </div>
-            )}
-
-            {otherSessions.length > 0 && (
-                <div className="px-4 py-3">
-                    <div className="flex items-center justify-between mb-3">
-                        <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-                            <Globe size={12} /> Інші сесії · {otherSessions.length}
+                {currentSession && (
+                    <div className="px-4 py-3 hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+                        <p className="text-[11px] font-semibold text-violet-600 dark:text-violet-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                            <Wifi size={12} /> Поточний пристрій
                         </p>
-                        <button onClick={terminateAll} disabled={terminatingAll}
-                                className="text-[12px] font-medium text-red-500 hover:text-red-600 disabled:opacity-50 transition-colors">
-                            {terminatingAll ? 'Завершення...' : 'Завершити всі'}
-                        </button>
+                        <SessionRow session={currentSession} isCurrent />
                     </div>
-                    <div className="space-y-1">
-                        {otherSessions.map(session => (
-                            <div key={session.id} className="flex items-center gap-3 group hover:bg-slate-50 dark:hover:bg-slate-800/50 p-2 -mx-2 rounded-xl transition-colors">
-                                <div className="flex-1 min-w-0">
-                                    <SessionRow session={session} />
+                )}
+
+                {otherSessions.length > 0 && (
+                    <div className="px-4 py-3">
+                        <div className="flex items-center justify-between mb-3">
+                            <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                                <Globe size={12} /> Інші сесії · {otherSessions.length}
+                            </p>
+                            <button onClick={terminateAll} disabled={terminatingAll}
+                                    className="text-[12px] font-medium text-red-500 hover:text-red-600 disabled:opacity-50 transition-colors">
+                                {terminatingAll ? 'Завершення...' : 'Завершити всі'}
+                            </button>
+                        </div>
+                        <div className="space-y-1">
+                            {otherSessions.map(session => (
+                                <div key={session.id} className="flex items-center gap-3 group hover:bg-slate-50 dark:hover:bg-slate-800/50 p-2 -mx-2 rounded-xl transition-colors">
+                                    <div className="flex-1 min-w-0">
+                                        <SessionRow session={session} />
+                                    </div>
+                                    <button onClick={() => terminateSession(session.id)} disabled={terminatingId === session.id}
+                                            className="shrink-0 p-2 rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 opacity-0 group-hover:opacity-100 transition-all cursor-pointer">
+                                        {terminatingId === session.id ? <Loader2 size={16} className="animate-spin" /> : <LogOut size={16} />}
+                                    </button>
                                 </div>
-                                <button onClick={() => terminateSession(session.id)} disabled={terminatingId === session.id}
-                                        className="shrink-0 p-2 rounded-full text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 opacity-0 group-hover:opacity-100 transition-all cursor-pointer">
-                                    {terminatingId === session.id ? <Loader2 size={16} className="animate-spin" /> : <LogOut size={16} />}
-                                </button>
-                            </div>
-                        ))}
+                            ))}
+                        </div>
                     </div>
+                )}
+
+                <div
+                    onClick={() => setShowSyncModal(true)}
+                    className="px-4 py-3 flex items-center justify-between hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors cursor-pointer group"
+                >
+                    <div>
+                        <p className="text-sm font-medium text-slate-800 dark:text-slate-200">Перенести на новий пристрій</p>
+                        <p className="text-[13px] text-slate-500 mt-0.5">Безпечна передача ключів через QR-код</p>
+                    </div>
+                    <ChevronRight size={16} className="text-slate-300 dark:text-slate-600 group-hover:text-emerald-500 transition-colors" />
                 </div>
+            </div>
+
+            {showSyncModal && (
+                <DeviceSyncModal socket={socket} onClose={() => setShowSyncModal(false)} />
             )}
-        </div>
+        </>
     );
 }
 

@@ -728,27 +728,42 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
 
     // ── Device Sync (VSP-1) ────────────────────────────────────────────────────
     //
-    // Secure history transfer between two devices of the same user account.
+    // Secure 4-step history transfer between two devices of the same user account.
     //
-    // Security model:
-    //   - Both sockets MUST share the same authenticated userId (JWT-verified).
-    //   - The OTP from the QR code is NEVER transmitted here; it stays on-device.
-    //   - The server routes ephemeral X25519 public keys and WebRTC signaling
-    //     but cannot derive the VSP-1 session key without the OTP.
-    //   - Sessions expire after SYNC_SESSION_TTL_MS regardless of activity.
-    //   - Only two participants: source (creator) + target (joiner).
+    // Signaling flow:
+    //   1. Source → deviceSyncStart({ sessionId, ekSource, sdpOffer })
+    //      Server: stores ekSource + sdpOffer; emits deviceSyncReady to source.
+    //
+    //   2. Target → deviceSyncJoin({ sessionId, ekTarget })
+    //      Server: verifies same userId; emits deviceSyncOffer({ekSource, sdpOffer})
+    //      to target; emits deviceSyncPeerJoined({ ekTarget }) to source.
+    //
+    //   3. Target creates SDP answer (now it has the offer).
+    //      Target → deviceSyncRelayAnswer({ sessionId, sdpAnswer })
+    //      Server: relays sdpAnswer to source via deviceSyncPeerAnswer.
+    //
+    //   4. Both exchange ICE candidates via deviceSyncIce.
+    //      DataChannel opens → VSP-1 data transfer begins.
+    //
+    // Security:
+    //   - Both sockets MUST share the same JWT-authenticated userId.
+    //   - OTP is NEVER transmitted; server cannot derive the VSP-1 session key.
+    //   - ekSource/sdpOffer are stored transiently and cleared once target joins.
+    //   - Sessions expire after SYNC_SESSION_TTL_MS; max 2 participants.
 
-    private static readonly SYNC_SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
-    private static readonly SESSION_ID_RE = /^[0-9a-f]{32}$/;    // 16 bytes hex
+    private static readonly SYNC_SESSION_TTL_MS = 5 * 60 * 1000;
+    private static readonly SESSION_ID_RE        = /^[0-9a-f]{32}$/;
 
     private syncSessions = new Map<string, {
         userId: number;
         sourceSocketId: string;
         targetSocketId?: string;
         expiresAt: number;
+        // Transient — cleared after target joins so server doesn't hold them longer than needed
+        ekSource?: string;
+        sdpOffer?: RTCSessionDescriptionInit;
     }>();
 
-    /** Remove all sessions past their TTL. Called from the cleanup interval. */
     private purgeExpiredSyncSessions(): void {
         const now = Date.now();
         for (const [id, session] of this.syncSessions.entries()) {
@@ -760,12 +775,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     }
 
     /**
-     * Source device advertises a new sync session.
+     * Step 1 — Source creates a session and advertises its WebRTC offer.
      *
-     * Payload:
-     *   sessionId  – 32 hex chars (16 random bytes), also embedded in QR code
-     *   ekSource   – base64url-encoded 32-byte ephemeral X25519 public key
-     *   sdpOffer   – WebRTC SDP offer from the source device
+     * ekSource and sdpOffer are stored transiently until the target joins (step 2),
+     * then immediately cleared. The server never holds them across the TTL.
      */
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('deviceSyncStart')
@@ -777,13 +790,12 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
 
         const userId = client.data.user.id as number;
 
-        if (!ChatGateway.SESSION_ID_RE.test(data.sessionId)) {
-            client.emit('deviceSyncError', { sessionId: data.sessionId, reason: 'invalid_session_id' });
+        if (!ChatGateway.SESSION_ID_RE.test(data.sessionId ?? '')) {
+            client.emit('deviceSyncError', { reason: 'invalid_session_id' });
             return;
         }
         if (this.syncSessions.has(data.sessionId)) {
-            // Duplicate session ID — either a retry or a collision (astronomically unlikely)
-            client.emit('deviceSyncError', { sessionId: data.sessionId, reason: 'session_exists' });
+            client.emit('deviceSyncError', { reason: 'session_exists' });
             return;
         }
 
@@ -791,6 +803,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
             userId,
             sourceSocketId: client.id,
             expiresAt: Date.now() + ChatGateway.SYNC_SESSION_TTL_MS,
+            ekSource: data.ekSource,
+            sdpOffer: data.sdpOffer,
         });
 
         client.join(`dsync_${data.sessionId}`);
@@ -799,98 +813,89 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     }
 
     /**
-     * Target device (same user, different socket) joins the session.
+     * Step 2 — Target (same user, different socket) joins and receives the SDP offer.
      *
-     * Payload:
-     *   sessionId  – must match an existing session belonging to this userId
-     *   ekTarget   – base64url-encoded 32-byte ephemeral X25519 public key
-     *   sdpAnswer  – WebRTC SDP answer
-     *
-     * If all checks pass, relays ekSource + sdpOffer to the target and
-     * ekTarget + sdpAnswer to the source so both can complete VSP-1 + WebRTC.
+     * Server immediately clears ekSource/sdpOffer from memory after forwarding them.
+     * Target receives: deviceSyncOffer({ ekSource, sdpOffer })
+     * Source receives: deviceSyncPeerJoined({ ekTarget })
      */
     @UseGuards(WsJwtGuard)
-    @SubscribeMessage('deviceSyncAnswer')
-    async handleDeviceSyncAnswer(
+    @SubscribeMessage('deviceSyncJoin')
+    handleDeviceSyncJoin(
         @ConnectedSocket() client: Socket,
-        @MessageBody() data: { sessionId: string; ekTarget: string; sdpAnswer: RTCSessionDescriptionInit },
+        @MessageBody() data: { sessionId: string; ekTarget: string },
     ) {
-        if (!this.rateLimit(client, this.syncLimiter, 'deviceSyncAnswer')) return;
+        if (!this.rateLimit(client, this.syncLimiter, 'deviceSyncJoin')) return;
 
-        const userId = client.data.user.id as number;
+        const userId  = client.data.user.id as number;
         const session = this.syncSessions.get(data.sessionId);
 
-        // All guard clauses in one block — any failure leaks nothing about
-        // other users' sessions because we only expose 'not_found' / 'not_available'.
         if (!session || session.expiresAt <= Date.now()) {
-            client.emit('deviceSyncError', { sessionId: data.sessionId, reason: 'not_found' });
+            client.emit('deviceSyncError', { reason: 'not_found' });
             return;
         }
         if (session.userId !== userId) {
-            // Different user trying to hijack another user's session
-            client.emit('deviceSyncError', { sessionId: data.sessionId, reason: 'not_found' });
+            // Silently return the same error to avoid leaking session ownership info
+            client.emit('deviceSyncError', { reason: 'not_found' });
             this.logger.warn(
-                `Sync session ${data.sessionId}: user ${userId} tried to join session owned by ${session.userId}`,
+                `Sync ${data.sessionId}: user ${userId} tried to join session owned by ${session.userId}`,
             );
             return;
         }
         if (session.targetSocketId) {
-            // A third device is trying to join — not allowed
-            client.emit('deviceSyncError', { sessionId: data.sessionId, reason: 'not_available' });
+            client.emit('deviceSyncError', { reason: 'not_available' });
             return;
         }
         if (session.sourceSocketId === client.id) {
-            // Source cannot answer its own session
-            client.emit('deviceSyncError', { sessionId: data.sessionId, reason: 'not_available' });
+            client.emit('deviceSyncError', { reason: 'not_available' });
             return;
         }
 
         session.targetSocketId = client.id;
         client.join(`dsync_${data.sessionId}`);
 
-        // Retrieve the ekSource from the source socket's stored data.
-        // We ask the source to re-emit it so we don't store X25519 keys server-side.
-        // Relay sdpAnswer to source, then source will emit its ekSource back.
+        // Forward stored offer to target, then immediately clear from server memory
+        const { ekSource, sdpOffer } = session;
+        session.ekSource = undefined;
+        session.sdpOffer = undefined;
+
+        client.emit('deviceSyncOffer', {
+            sessionId: data.sessionId,
+            ekSource,
+            sdpOffer,
+        });
+
+        // Notify source that target has joined (send only ekTarget — no sdpAnswer yet)
         this.server.to(session.sourceSocketId).emit('deviceSyncPeerJoined', {
             sessionId: data.sessionId,
             ekTarget: data.ekTarget,
-            sdpAnswer: data.sdpAnswer,
         });
 
-        client.emit('deviceSyncJoined', { sessionId: data.sessionId });
         this.logger.log(`Sync session ${data.sessionId}: target joined (user ${userId})`);
     }
 
     /**
-     * Source responds to 'deviceSyncPeerJoined' by sending its ekSource to the target.
-     * This keeps X25519 public keys flowing peer-to-peer through the server without
-     * the server needing to store them.
-     *
-     * Payload:
-     *   sessionId – must match a session where this socket is the source
-     *   ekSource  – base64url X25519 public key (same value as in deviceSyncStart)
-     *   sdpOffer  – SDP offer (same value as in deviceSyncStart)
+     * Step 3 — Target relays its SDP answer to the source.
+     * Called after target receives deviceSyncOffer and creates an RTCSessionDescription answer.
      */
     @UseGuards(WsJwtGuard)
-    @SubscribeMessage('deviceSyncRelayOffer')
-    handleDeviceSyncRelayOffer(
+    @SubscribeMessage('deviceSyncRelayAnswer')
+    handleDeviceSyncRelayAnswer(
         @ConnectedSocket() client: Socket,
-        @MessageBody() data: { sessionId: string; ekSource: string; sdpOffer: RTCSessionDescriptionInit },
+        @MessageBody() data: { sessionId: string; sdpAnswer: RTCSessionDescriptionInit },
     ) {
         const session = this.syncSessions.get(data.sessionId);
-        if (!session || session.sourceSocketId !== client.id || !session.targetSocketId) return;
+        if (!session || session.targetSocketId !== client.id) return;
 
-        this.server.to(session.targetSocketId).emit('deviceSyncOffer', {
+        this.server.to(session.sourceSocketId).emit('deviceSyncPeerAnswer', {
             sessionId: data.sessionId,
-            ekSource: data.ekSource,
-            sdpOffer: data.sdpOffer,
+            sdpAnswer: data.sdpAnswer,
         });
     }
 
     /**
-     * Relay a WebRTC ICE candidate between source and target.
-     *
-     * Only participants of the session (source or target socket) may send candidates.
+     * Step 4 — Relay a WebRTC ICE candidate between source and target.
+     * Only session participants (source or target socket) may send candidates.
      */
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('deviceSyncIce')
@@ -903,10 +908,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
 
         const isSource = session.sourceSocketId === client.id;
         const isTarget = session.targetSocketId === client.id;
-        if (!isSource && !isTarget) return; // not a participant — silently drop
+        if (!isSource && !isTarget) return;
 
         const peerSocketId = isSource ? session.targetSocketId : session.sourceSocketId;
-        if (!peerSocketId) return; // target not yet joined
+        if (!peerSocketId) return;
 
         this.server.to(peerSocketId).emit('deviceSyncIce', {
             sessionId: data.sessionId,
@@ -914,10 +919,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
         });
     }
 
-    /**
-     * Either participant can abort the session at any time.
-     * The peer is notified and the session is deleted.
-     */
+    /** Either participant can abort the session at any time. */
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('deviceSyncAbort')
     handleDeviceSyncAbort(
@@ -940,7 +942,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
                 reason: 'peer_aborted',
             });
         }
-
         client.emit('deviceSyncAborted', { sessionId: data.sessionId, reason: 'self_aborted' });
         this.logger.log(`Sync session ${data.sessionId} aborted by socket ${client.id}`);
     }
