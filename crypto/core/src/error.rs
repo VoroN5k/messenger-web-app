@@ -25,4 +25,10 @@ pub enum CryptoError {
 
     #[error("too many skipped messages: possible DoS")]
     SkipLimitExceeded,
+
+    #[error("lz4 decompression failed")]
+    DecompressionFailed,
+
+    #[error("manifest MAC verification failed")]
+    ManifestTampered,
 }

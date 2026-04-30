@@ -2,6 +2,7 @@ use js_sys::Uint8Array;
 use wasm_bindgen::prelude::*;
 
 use messenger_crypto_core::{
+    device_sync::{self, ManifestEntry, SyncKeypair, SyncKeys},
     double_ratchet::{self, MessageHeader, RatchetState},
     group::{
         self,
@@ -340,4 +341,167 @@ impl GroupReceiverSession {
         let pt = group::decrypt(&mut self.state, &msg).map_err(js_err)?;
         Ok(Uint8Array::from(pt.as_slice()))
     }
+}
+
+// ── Device Sync (VSP-1) ───────────────────────────────────────────────────────
+
+/// Generate a 128-bit OTP for the QR code.
+/// Returns 16 bytes. Never send through the signaling server.
+#[wasm_bindgen(js_name = syncGenerateOtp)]
+pub fn sync_generate_otp() -> Uint8Array {
+    console_error_panic_hook::set_once();
+    Uint8Array::from(device_sync::generate_otp().as_ref())
+}
+
+/// Generate a 128-bit random session ID for WebSocket room routing.
+/// Returns 16 bytes. Safe to include in QR code alongside OTP.
+#[wasm_bindgen(js_name = syncGenerateSessionId)]
+pub fn sync_generate_session_id() -> Uint8Array {
+    console_error_panic_hook::set_once();
+    Uint8Array::from(device_sync::generate_session_id().as_ref())
+}
+
+/// Generate an ephemeral X25519 keypair for VSP-1.
+/// Returns `secret(32) || public(32)` = 64 bytes.
+/// `public(32)` is sent to the peer via signaling; `secret(32)` stays local.
+#[wasm_bindgen(js_name = syncGenerateKeypair)]
+pub fn sync_generate_keypair() -> Uint8Array {
+    console_error_panic_hook::set_once();
+    let kp = SyncKeypair::generate();
+    let mut out = [0u8; 64];
+    out[..32].copy_from_slice(&kp.secret_bytes());
+    out[32..].copy_from_slice(&kp.public_key_bytes());
+    Uint8Array::from(out.as_ref())
+}
+
+/// VSP-1 key derivation.
+///
+/// - `secret`: 32-byte ephemeral X25519 secret from `syncGenerateKeypair`
+/// - `peer_pub`: 32-byte ephemeral X25519 public key received from the peer
+/// - `otp`: 16-byte OTP from the QR code
+///
+/// Returns `chunk_key(32) || mac_key(32)` = 64 bytes.
+/// Both sides must call this — they get identical keys if OTP is correct.
+#[wasm_bindgen(js_name = syncDeriveKeys)]
+pub fn sync_derive_keys(
+    secret: &[u8],
+    peer_pub: &[u8],
+    otp: &[u8],
+) -> Result<Uint8Array, JsValue> {
+    console_error_panic_hook::set_once();
+    let secret_arr = to32(secret)?;
+    let peer_arr = to32(peer_pub)?;
+    let otp_arr: [u8; 16] = otp.try_into().map_err(|_| JsValue::from_str("otp must be 16 bytes"))?;
+
+    let kp = SyncKeypair::from_secret(secret_arr);
+    let keys = kp.derive_sync_keys(&peer_arr, &otp_arr).map_err(js_err)?;
+    Ok(Uint8Array::from(keys.to_bytes().as_ref()))
+}
+
+/// Seal one DataChannel chunk.
+///
+/// - `chunk_key`: 32 bytes (first half of syncDeriveKeys output)
+/// - `mac_key`: 32 bytes (second half of syncDeriveKeys output, unused here — kept for API symmetry)
+/// - `seq`: monotonically increasing sequence number (prevents reordering)
+/// - `plaintext`: raw IDB record bytes
+///
+/// Returns `nonce(12) || AES-256-GCM(lz4_frame(plaintext), aad=seq_be(4))`.
+#[wasm_bindgen(js_name = syncSealChunk)]
+pub fn sync_seal_chunk(
+    keys_bytes: &[u8],
+    seq: u32,
+    plaintext: &[u8],
+) -> Result<Uint8Array, JsValue> {
+    let keys_arr: [u8; 64] = keys_bytes
+        .try_into()
+        .map_err(|_| JsValue::from_str("keys must be 64 bytes"))?;
+    let keys = SyncKeys::from_bytes(&keys_arr);
+    let sealed = device_sync::seal_chunk(&keys, seq, plaintext).map_err(js_err)?;
+    Ok(Uint8Array::from(sealed.as_slice()))
+}
+
+/// Open one DataChannel chunk sealed by `syncSealChunk`.
+///
+/// Returns the original plaintext. Throws if the MAC is invalid, the sequence
+/// number is wrong, or the lz4 stream is corrupt.
+#[wasm_bindgen(js_name = syncOpenChunk)]
+pub fn sync_open_chunk(
+    keys_bytes: &[u8],
+    seq: u32,
+    data: &[u8],
+) -> Result<Uint8Array, JsValue> {
+    let keys_arr: [u8; 64] = keys_bytes
+        .try_into()
+        .map_err(|_| JsValue::from_str("keys must be 64 bytes"))?;
+    let keys = SyncKeys::from_bytes(&keys_arr);
+    let plain = device_sync::open_chunk(&keys, seq, data).map_err(js_err)?;
+    Ok(Uint8Array::from(plain.as_slice()))
+}
+
+/// Compute SHA-256 of an IDB record value for manifest inclusion.
+/// Returns 32 bytes.
+#[wasm_bindgen(js_name = syncHashEntry)]
+pub fn sync_hash_entry(data: &[u8]) -> Uint8Array {
+    Uint8Array::from(device_sync::hash_entry(data).as_ref())
+}
+
+/// Build an HMAC-SHA256-authenticated transfer manifest.
+///
+/// - `mac_key`: 32 bytes (second half of syncDeriveKeys output)
+/// - `ids`: packed u64 big-endian array, `n × 8` bytes — one per IDB record
+/// - `hashes`: packed SHA-256 array, `n × 32` bytes — from `syncHashEntry`
+///
+/// Returns the manifest bytes to send over DataChannel after all chunks.
+#[wasm_bindgen(js_name = syncBuildManifest)]
+pub fn sync_build_manifest(
+    mac_key: &[u8],
+    ids: &[u8],
+    hashes: &[u8],
+) -> Result<Uint8Array, JsValue> {
+    let mac_arr = to32(mac_key)?;
+
+    if ids.len() % 8 != 0 {
+        return Err(JsValue::from_str("ids must be n×8 bytes"));
+    }
+    if hashes.len() % 32 != 0 {
+        return Err(JsValue::from_str("hashes must be n×32 bytes"));
+    }
+    let n = ids.len() / 8;
+    if hashes.len() / 32 != n {
+        return Err(JsValue::from_str("ids and hashes counts must match"));
+    }
+
+    let entries: Vec<ManifestEntry> = (0..n)
+        .map(|i| {
+            let id = u64::from_be_bytes(ids[i * 8..i * 8 + 8].try_into().unwrap());
+            let hash: [u8; 32] = hashes[i * 32..i * 32 + 32].try_into().unwrap();
+            ManifestEntry { id, hash }
+        })
+        .collect();
+
+    let manifest = device_sync::build_manifest(&mac_arr, &entries);
+    Ok(Uint8Array::from(manifest.as_slice()))
+}
+
+/// Verify the manifest HMAC and parse entries.
+///
+/// - `mac_key`: 32 bytes
+/// - `manifest`: bytes received from the source device
+///
+/// Returns `[id(8 BE) || sha256(32)] × count` = packed entries, or throws on
+/// MAC failure / format error.
+#[wasm_bindgen(js_name = syncVerifyManifest)]
+pub fn sync_verify_manifest(
+    mac_key: &[u8],
+    manifest: &[u8],
+) -> Result<Uint8Array, JsValue> {
+    let mac_arr = to32(mac_key)?;
+    let entries = device_sync::verify_manifest(&mac_arr, manifest).map_err(js_err)?;
+
+    let mut out = Vec::with_capacity(entries.len() * 40);
+    for e in &entries {
+        out.extend_from_slice(&e.id.to_be_bytes());
+        out.extend_from_slice(&e.hash);
+    }
+    Ok(Uint8Array::from(out.as_slice()))
 }

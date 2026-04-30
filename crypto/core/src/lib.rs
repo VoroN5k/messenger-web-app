@@ -1,3 +1,4 @@
+pub mod device_sync;
 pub mod double_ratchet;
 pub mod error;
 pub mod group;
