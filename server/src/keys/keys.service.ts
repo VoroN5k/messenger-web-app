@@ -1,6 +1,7 @@
 import {Injectable, NotFoundException, UnauthorizedException} from "@nestjs/common";
 import {PrismaService} from "../prisma/prisma.service.js";
 import {EmailService} from "../auth/email/email.service.js";
+import { verifyKeyBundle } from '../common/verify-bundle.js';
 
 @Injectable()
 export class KeysService {
@@ -77,6 +78,7 @@ export class KeysService {
     // ── V2 key bundle (X3DH) ────────────────────────────────────────────────
 
     async publishBundleV2(userId: number, bundle: string) {
+        verifyKeyBundle(bundle);
         return this.prisma.userKeyBundleV2.upsert({
             where:  { userId },
             create: { userId, bundle },

@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { verifyKeyBundle } from '../common/verify-bundle.js';
 
 const MAX_DEVICES = 5;
 
@@ -8,6 +9,8 @@ export class DevicesService {
     constructor(private readonly prisma: PrismaService) {}
 
     async register(userId: number, bundle: string, deviceName?: string): Promise<{ deviceId: number }> {
+        verifyKeyBundle(bundle);
+
         // Idempotent: same bundle for same user → return existing device
         const existing = await this.prisma.device.findFirst({
             where: { userId, bundle },
