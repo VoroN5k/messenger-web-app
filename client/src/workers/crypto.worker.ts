@@ -147,6 +147,53 @@ function dispatch(type: string, p: Payload): Record<string, unknown> {
             } finally { s.free(); }
         }
 
+        // ── Device Sync (VSP-1) ─────────────────────────────────────────────────
+        case 'syncGenerateOtp':
+            return { otp: mod.syncGenerateOtp() };
+        case 'syncGenerateSessionId':
+            return { sessionId: mod.syncGenerateSessionId() };
+        case 'syncGenerateKeypair':
+            return { keypair: mod.syncGenerateKeypair() };
+        case 'syncDeriveKeys':
+            return {
+                keys: mod.syncDeriveKeys(
+                    u8(p.secret,  'secret'),
+                    u8(p.peerPub, 'peerPub'),
+                    u8(p.otp,     'otp'),
+                ),
+            };
+        case 'syncSealChunk':
+            return {
+                sealed: mod.syncSealChunk(
+                    u8(p.keys,      'keys'),
+                    p.seq as number,
+                    u8(p.plaintext, 'plaintext'),
+                ),
+            };
+        case 'syncOpenChunk':
+            return {
+                plain: mod.syncOpenChunk(
+                    u8(p.keys, 'keys'),
+                    p.seq as number,
+                    u8(p.data, 'data'),
+                ),
+            };
+        case 'syncBuildManifest':
+            return {
+                manifest: mod.syncBuildManifest(
+                    u8(p.macKey,  'macKey'),
+                    u8(p.ids,    'ids'),
+                    u8(p.hashes, 'hashes'),
+                ),
+            };
+        case 'syncVerifyManifest':
+            return {
+                entries: mod.syncVerifyManifest(
+                    u8(p.macKey,   'macKey'),
+                    u8(p.manifest, 'manifest'),
+                ),
+            };
+
         default:
             throw new Error(`Unknown crypto operation: ${type}`);
     }

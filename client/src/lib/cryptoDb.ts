@@ -1,7 +1,17 @@
-const DB_NAME = 'messenger-e2e-v2';
-const DB_VERSION = 3;
+export const DB_NAME = 'messenger-e2e-v2';
+export const DB_VERSION = 3;
 
-type StoreName = 'identity' | 'ratchet' | 'group_sender' | 'group_receiver' | 'msg_plaintext' | 'media_keys';
+export type StoreName = 'identity' | 'ratchet' | 'group_sender' | 'group_receiver' | 'msg_plaintext' | 'media_keys';
+
+// Ordered list used by device-sync export/import; order is stable across versions.
+export const SYNC_STORES: ReadonlyArray<{ name: StoreName; id: number; binary: boolean }> = [
+    { name: 'identity',       id: 1, binary: true  },
+    { name: 'ratchet',        id: 2, binary: true  },
+    { name: 'group_sender',   id: 3, binary: true  },
+    { name: 'group_receiver', id: 4, binary: true  },
+    { name: 'msg_plaintext',  id: 5, binary: false },
+    { name: 'media_keys',     id: 6, binary: true  },
+] as const;
 
 function open(): Promise<IDBDatabase> {
     return new Promise((res, rej) => {
@@ -325,6 +335,118 @@ export async function clearAllCryptoState(userId: number): Promise<void> {
         idbClear(db, 'msg_plaintext'),
         idbClear(db, 'media_keys'),
     ]);
+}
+
+// ---------------------------------------------------------------------------
+// Device-sync export / import helpers
+// ---------------------------------------------------------------------------
+
+/** Count all records across every sync-eligible store. */
+export async function countSyncRecords(): Promise<number> {
+    const db = await open();
+    const counts = await Promise.all(
+        SYNC_STORES.map(({ name }) =>
+            new Promise<number>((res, rej) => {
+                const req = db.transaction(name, 'readonly').objectStore(name).count();
+                req.onsuccess = () => res(req.result);
+                req.onerror   = () => rej(req.error);
+            }),
+        ),
+    );
+    return counts.reduce((a, b) => a + b, 0);
+}
+
+/**
+ * Async iterator over every IDB record in all sync stores.
+ * Yields one record at a time so callers can apply backpressure.
+ *
+ * Yielded value:
+ *   storeId  — numeric ID (see SYNC_STORES)
+ *   key      — string IDB key
+ *   payload  — STORE_ID(1) || KEY_LEN(2 BE) || KEY_UTF8 || VALUE_BYTES
+ */
+export async function* exportSyncRecords(): AsyncGenerator<{
+    storeId: number;
+    key: string;
+    payload: Uint8Array;
+}> {
+    const db  = await open();
+    const enc = new TextEncoder();
+
+    for (const { name, id: storeId, binary } of SYNC_STORES) {
+        yield* cursorIterator(db, name, storeId, binary, enc);
+    }
+}
+
+async function* cursorIterator(
+    db: IDBDatabase,
+    storeName: StoreName,
+    storeId: number,
+    binary: boolean,
+    enc: TextEncoder,
+): AsyncGenerator<{ storeId: number; key: string; payload: Uint8Array }> {
+    // Read all keys + values in one synchronous transaction before yielding.
+    // Cursor-based iteration yields across async gaps (drainDC, WASM calls) which
+    // causes the IDB transaction to auto-commit → "transaction not active" error.
+    const pairs = await new Promise<Array<{ key: string; value: unknown }>>((res, rej) => {
+        const tx      = db.transaction(storeName, 'readonly');
+        const store   = tx.objectStore(storeName);
+        const keysReq = store.getAllKeys();
+        const valsReq = store.getAll();
+        tx.oncomplete = () =>
+            res(keysReq.result.map((k, i) => ({ key: String(k), value: valsReq.result[i] })));
+        tx.onerror  = () => rej(tx.error);
+        tx.onabort  = () => rej(new Error(`IDB transaction aborted on ${storeName}`));
+    });
+
+    for (const { key, value } of pairs) {
+        const keyBytes = enc.encode(key);
+        let valueBytes: Uint8Array;
+        if (binary && value instanceof ArrayBuffer) {
+            valueBytes = new Uint8Array(value);
+        } else {
+            valueBytes = enc.encode(JSON.stringify(value));
+        }
+
+        const payload = new Uint8Array(1 + 2 + keyBytes.length + valueBytes.length);
+        payload[0] = storeId;
+        payload[1] = (keyBytes.length >> 8) & 0xff;
+        payload[2] = keyBytes.length & 0xff;
+        payload.set(keyBytes, 3);
+        payload.set(valueBytes, 3 + keyBytes.length);
+
+        yield { storeId, key, payload };
+    }
+}
+
+/**
+ * Parse a raw chunk payload (as produced by exportSyncRecords) and
+ * write the record to IndexedDB. Safe to call concurrently for different keys.
+ */
+export async function importSyncRecord(payload: Uint8Array): Promise<void> {
+    if (payload.length < 4) throw new Error('sync record too short');
+
+    const storeId  = payload[0];
+    const keyLen   = (payload[1] << 8) | payload[2];
+    if (payload.length < 3 + keyLen) throw new Error('sync record truncated');
+
+    const dec      = new TextDecoder();
+    const key      = dec.decode(payload.slice(3, 3 + keyLen));
+    const rawValue = payload.slice(3 + keyLen);
+
+    const meta = SYNC_STORES.find(s => s.id === storeId);
+    if (!meta) throw new Error(`unknown store id: ${storeId}`);
+
+    const db = await open();
+    const value: unknown = meta.binary
+        ? rawValue.buffer.slice(rawValue.byteOffset, rawValue.byteOffset + rawValue.byteLength) as ArrayBuffer
+        : JSON.parse(dec.decode(rawValue));
+
+    await new Promise<void>((res, rej) => {
+        const req = db.transaction(meta.name, 'readwrite').objectStore(meta.name).put(value, key);
+        req.onsuccess = () => res();
+        req.onerror   = () => rej(req.error);
+    });
 }
 
 // ---------------------------------------------------------------------------

@@ -122,4 +122,36 @@ export const wasm = {
         call<{ receiverBytes: Uint8Array }>('groupReceiverFromDist', { distMsgBytes }),
     groupReceiverDecrypt: (receiverBytes: Uint8Array, data: Uint8Array) =>
         call<{ plaintext: Uint8Array; newReceiverBytes: Uint8Array }>('groupReceiverDecrypt', { receiverBytes, data }),
+
+    // ── Device Sync (VSP-1) ────────────────────────────────────────────────
+    // All crypto runs in the worker — no lz4/AES on the main thread.
+
+    syncGenerateOtp: () =>
+        call<{ otp: Uint8Array }>('syncGenerateOtp'),
+    syncGenerateSessionId: () =>
+        call<{ sessionId: Uint8Array }>('syncGenerateSessionId'),
+
+    // Returns secret(32) || public(32) = 64 bytes
+    syncGenerateKeypair: () =>
+        call<{ keypair: Uint8Array }>('syncGenerateKeypair'),
+
+    // Returns chunk_key(32) || mac_key(32) = 64 bytes
+    syncDeriveKeys: (secret: Uint8Array, peerPub: Uint8Array, otp: Uint8Array) =>
+        call<{ keys: Uint8Array }>('syncDeriveKeys', { secret, peerPub, otp }),
+
+    // Returns nonce(12) || AES-GCM(lz4(plaintext), aad=seq)
+    syncSealChunk: (keys: Uint8Array, seq: number, plaintext: Uint8Array) =>
+        call<{ sealed: Uint8Array }>('syncSealChunk', { keys, seq, plaintext }),
+
+    // Returns decompressed plaintext; throws on AEAD/decompression failure
+    syncOpenChunk: (keys: Uint8Array, seq: number, data: Uint8Array) =>
+        call<{ plain: Uint8Array }>('syncOpenChunk', { keys, seq, data }),
+
+    // ids = u64[] as packed BE bytes (n×8), hashes = sha256[] as packed bytes (n×32)
+    syncBuildManifest: (macKey: Uint8Array, ids: Uint8Array, hashes: Uint8Array) =>
+        call<{ manifest: Uint8Array }>('syncBuildManifest', { macKey, ids, hashes }),
+
+    // Returns [id(8 BE) || sha256(32)] × count, or throws on HMAC failure
+    syncVerifyManifest: (macKey: Uint8Array, manifest: Uint8Array) =>
+        call<{ entries: Uint8Array }>('syncVerifyManifest', { macKey, manifest }),
 };
