@@ -11,6 +11,9 @@ import { ConversationsService }   from '../conversations/conversations.service.j
 import { FriendsService }         from '../friends/friends.service.js';
 import { PushService }            from '../push/push.service.js';
 import { WsRateLimiter }          from './ws-rate-limiter.js';
+import { SyncSessionService }     from './sync-session.service.js';
+import { createAdapter }          from '@socket.io/redis-adapter';
+import { Redis }                  from 'ioredis';
 
 @WebSocketGateway({
     path: '/rt',
@@ -47,11 +50,12 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     private readonly syncLimiter = new WsRateLimiter(5, 60);
 
     constructor(
-        private readonly prisma:      PrismaService,
-        private readonly jwtService:  JwtService,
-        private readonly convService: ConversationsService,
-        private readonly friends:     FriendsService,
-        private readonly push:        PushService,
+        private readonly prisma:        PrismaService,
+        private readonly jwtService:    JwtService,
+        private readonly convService:   ConversationsService,
+        private readonly friends:       FriendsService,
+        private readonly push:          PushService,
+        private readonly syncSessions:  SyncSessionService,
     ) {
         // Clean up stale rate-limit windows and expired sync sessions every 5 minutes
         setInterval(() => {
@@ -63,7 +67,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
             this.callLimiter.cleanup();
             this.forwardLimiter.cleanup();
             this.syncLimiter.cleanup();
-            this.purgeExpiredSyncSessions();
+            this.syncSessions.purgeExpired();
         }, 5 * 60 * 1000);
     }
 
@@ -141,6 +145,23 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     }
 
     async onModuleInit() {
+        // Wire Socket.io Redis adapter so server.to(socketId) works across instances
+        const redisUrl = process.env.REDIS_URL;
+        if (redisUrl) {
+            try {
+                const pubClient = new Redis(redisUrl);
+                const subClient = pubClient.duplicate();
+                await Promise.all([
+                    new Promise<void>((res, rej) => pubClient.once('ready', res).once('error', rej)),
+                    new Promise<void>((res, rej) => subClient.once('ready', res).once('error', rej)),
+                ]);
+                this.server.adapter(createAdapter(pubClient, subClient));
+                this.logger.log('Socket.io Redis adapter activated');
+            } catch (err: any) {
+                this.logger.error(`Redis adapter init failed: ${err.message} — falling back to in-memory`);
+            }
+        }
+
         try {
             const pending = await this.convService.getPendingScheduledMessages();
             for (const msg of pending) {
@@ -148,12 +169,11 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
                 if (delay > 0) {
                     this.scheduleMessageDelivery(msg.id, msg.conversationId, delay);
                 } else {
-                    // Overdue - deliver immediately
                     this.deliverScheduledMessage(msg.id, msg.conversationId);
                 }
             }
             this.logger.log(`Reloaded ${pending.length} pending scheduled messages`);
-        } catch (e : any) {
+        } catch (e: any) {
             this.logger.warn(`Failed to reload scheduled messages: ${e.message}`);
         }
     }
@@ -196,20 +216,20 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
         if (!userId) return;
 
         // Abort any in-progress sync session this socket is part of
-        for (const [sessionId, session] of this.syncSessions.entries()) {
-            if (session.sourceSocketId === client.id || session.targetSocketId === client.id) {
-                this.syncSessions.delete(sessionId);
-                const peerSocketId = session.sourceSocketId === client.id
-                    ? session.targetSocketId
-                    : session.sourceSocketId;
-                if (peerSocketId) {
-                    this.server.to(peerSocketId).emit('deviceSyncAborted', {
-                        sessionId,
-                        reason: 'peer_disconnected',
-                    });
-                }
-                this.logger.log(`Sync session ${sessionId} aborted: socket ${client.id} disconnected`);
+        const found = await this.syncSessions.getSessionBySocket(client.id);
+        if (found) {
+            const { sessionId, session } = found;
+            await this.syncSessions.deleteSession(sessionId);
+            const peerSocketId = session.sourceSocketId === client.id
+                ? session.targetSocketId
+                : session.sourceSocketId;
+            if (peerSocketId) {
+                this.server.to(peerSocketId).emit('deviceSyncAborted', {
+                    sessionId,
+                    reason: 'peer_disconnected',
+                });
             }
+            this.logger.log(`Sync session ${sessionId} aborted: socket ${client.id} disconnected`);
         }
 
         for (const [callId, call] of this.activeCalls.entries()) {
@@ -754,26 +774,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     private static readonly SYNC_SESSION_TTL_MS = 5 * 60 * 1000;
     private static readonly SESSION_ID_RE        = /^[0-9a-f]{32}$/;
 
-    private syncSessions = new Map<string, {
-        userId: number;
-        sourceSocketId: string;
-        targetSocketId?: string;
-        expiresAt: number;
-        // Transient — cleared after target joins so server doesn't hold them longer than needed
-        ekSource?: string;
-        sdpOffer?: RTCSessionDescriptionInit;
-    }>();
-
-    private purgeExpiredSyncSessions(): void {
-        const now = Date.now();
-        for (const [id, session] of this.syncSessions.entries()) {
-            if (session.expiresAt <= now) {
-                this.syncSessions.delete(id);
-                this.logger.debug(`Purged expired sync session ${id}`);
-            }
-        }
-    }
-
     /**
      * Step 1 — Source creates a session and advertises its WebRTC offer.
      *
@@ -782,7 +782,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
      */
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('deviceSyncStart')
-    handleDeviceSyncStart(
+    async handleDeviceSyncStart(
         @ConnectedSocket() client: Socket,
         @MessageBody() data: { sessionId: string; ekSource: string; sdpOffer: RTCSessionDescriptionInit },
     ) {
@@ -794,18 +794,19 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
             client.emit('deviceSyncError', { reason: 'invalid_session_id' });
             return;
         }
-        if (this.syncSessions.has(data.sessionId)) {
+        if (await this.syncSessions.has(data.sessionId)) {
             client.emit('deviceSyncError', { reason: 'session_exists' });
             return;
         }
 
-        this.syncSessions.set(data.sessionId, {
+        await this.syncSessions.set(data.sessionId, {
             userId,
             sourceSocketId: client.id,
             expiresAt: Date.now() + ChatGateway.SYNC_SESSION_TTL_MS,
             ekSource: data.ekSource,
             sdpOffer: data.sdpOffer,
         });
+        await this.syncSessions.trackSocket(client.id, data.sessionId);
 
         client.join(`dsync_${data.sessionId}`);
         client.emit('deviceSyncReady', { sessionId: data.sessionId });
@@ -821,21 +822,20 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
      */
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('deviceSyncJoin')
-    handleDeviceSyncJoin(
+    async handleDeviceSyncJoin(
         @ConnectedSocket() client: Socket,
         @MessageBody() data: { sessionId: string; ekTarget: string },
     ) {
         if (!this.rateLimit(client, this.syncLimiter, 'deviceSyncJoin')) return;
 
         const userId  = client.data.user.id as number;
-        const session = this.syncSessions.get(data.sessionId);
+        const session = await this.syncSessions.get(data.sessionId);
 
         if (!session || session.expiresAt <= Date.now()) {
             client.emit('deviceSyncError', { reason: 'not_found' });
             return;
         }
         if (session.userId !== userId) {
-            // Silently return the same error to avoid leaking session ownership info
             client.emit('deviceSyncError', { reason: 'not_found' });
             this.logger.warn(
                 `Sync ${data.sessionId}: user ${userId} tried to join session owned by ${session.userId}`,
@@ -851,22 +851,21 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
             return;
         }
 
-        session.targetSocketId = client.id;
+        const { ekSource, sdpOffer, sourceSocketId } = session;
+
+        // Update session: record target, clear transient offer data
+        await this.syncSessions.update(data.sessionId, {
+            targetSocketId: client.id,
+            ekSource: undefined,
+            sdpOffer: undefined,
+        });
+        await this.syncSessions.trackSocket(client.id, data.sessionId);
+
         client.join(`dsync_${data.sessionId}`);
 
-        // Forward stored offer to target, then immediately clear from server memory
-        const { ekSource, sdpOffer } = session;
-        session.ekSource = undefined;
-        session.sdpOffer = undefined;
+        client.emit('deviceSyncOffer', { sessionId: data.sessionId, ekSource, sdpOffer });
 
-        client.emit('deviceSyncOffer', {
-            sessionId: data.sessionId,
-            ekSource,
-            sdpOffer,
-        });
-
-        // Notify source that target has joined (send only ekTarget — no sdpAnswer yet)
-        this.server.to(session.sourceSocketId).emit('deviceSyncPeerJoined', {
+        this.server.to(sourceSocketId).emit('deviceSyncPeerJoined', {
             sessionId: data.sessionId,
             ekTarget: data.ekTarget,
         });
@@ -880,11 +879,11 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
      */
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('deviceSyncRelayAnswer')
-    handleDeviceSyncRelayAnswer(
+    async handleDeviceSyncRelayAnswer(
         @ConnectedSocket() client: Socket,
         @MessageBody() data: { sessionId: string; sdpAnswer: RTCSessionDescriptionInit },
     ) {
-        const session = this.syncSessions.get(data.sessionId);
+        const session = await this.syncSessions.get(data.sessionId);
         if (!session || session.targetSocketId !== client.id) return;
 
         this.server.to(session.sourceSocketId).emit('deviceSyncPeerAnswer', {
@@ -899,11 +898,11 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
      */
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('deviceSyncIce')
-    handleDeviceSyncIce(
+    async handleDeviceSyncIce(
         @ConnectedSocket() client: Socket,
         @MessageBody() data: { sessionId: string; candidate: RTCIceCandidateInit },
     ) {
-        const session = this.syncSessions.get(data.sessionId);
+        const session = await this.syncSessions.get(data.sessionId);
         if (!session || session.expiresAt <= Date.now()) return;
 
         const isSource = session.sourceSocketId === client.id;
@@ -922,18 +921,18 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     /** Either participant can abort the session at any time. */
     @UseGuards(WsJwtGuard)
     @SubscribeMessage('deviceSyncAbort')
-    handleDeviceSyncAbort(
+    async handleDeviceSyncAbort(
         @ConnectedSocket() client: Socket,
         @MessageBody() data: { sessionId: string },
     ) {
-        const session = this.syncSessions.get(data.sessionId);
+        const session = await this.syncSessions.get(data.sessionId);
         if (!session) return;
 
         const isSource = session.sourceSocketId === client.id;
         const isTarget = session.targetSocketId === client.id;
         if (!isSource && !isTarget) return;
 
-        this.syncSessions.delete(data.sessionId);
+        await this.syncSessions.deleteSession(data.sessionId);
 
         const peerSocketId = isSource ? session.targetSocketId : session.sourceSocketId;
         if (peerSocketId) {

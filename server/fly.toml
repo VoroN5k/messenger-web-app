@@ -13,6 +13,7 @@
 #   VAPID_PRIVATE_KEY
 #   MAIL_HOST  MAIL_PORT  MAIL_USER  MAIL_PASS
 #   CLIENT_URL            — public URL of the deployed client (e.g. https://voronsk-client.fly.dev)
+#   REDIS_URL             — fly Redis URL (run: fly redis create, then fly redis status <name>)
 
 app            = 'voronsk-server'
 primary_region = 'fra'          # Frankfurt — close to Supabase eu-west-1
@@ -38,10 +39,7 @@ primary_region = 'fra'          # Frankfurt — close to Supabase eu-west-1
   auto_stop_machines   = 'stop'
   auto_start_machines  = true
   min_machines_running = 1
-  # syncSessions lives in-memory — multiple instances would cause not_found
-  # on deviceSyncJoin when PC and phone hit different machines.
-  # Lift this to 2+ only after adding a Redis session store + Socket.io adapter.
-  max_machines_running = 1
+  max_machines_running = 2
 
   [http_service.concurrency]
     type       = 'connections'
