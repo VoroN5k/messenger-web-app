@@ -133,10 +133,12 @@ export const useMessages = (
     }, [decryptContent]);
 
     const decryptMessages = useCallback(async (raw: Message[]): Promise<Message[]> => {
-        return Promise.all(raw.map(async msg => {
+        // Pass 1: decrypt all message content and populate the plaintext cache.
+        // savePlaintext is awaited so that pass 2 can reliably find entries written here.
+        const pass1 = await Promise.all(raw.map(async msg => {
             let result = msg;
 
-            // ── v3 multi-device: content is AES-GCM encrypted with a per-device DR key ──
+            // ── v3 multi-device ──────────────────────────────────────────────
             if (msg.content?.startsWith('v3:') && msg.senderDeviceId && msg.envelopes?.length) {
                 if (msg.id) {
                     const cached = await loadPlaintext(msg.id).catch(() => null);
@@ -154,7 +156,7 @@ export const useMessages = (
                 try {
                     const plain = await e2e.decryptV3(msg.content, msg.senderDeviceId, msg.envelopes);
                     if (plain !== null) {
-                        if (msg.id) savePlaintext(msg.id, plain).catch(() => {});
+                        if (msg.id) await savePlaintext(msg.id, plain).catch(() => {});
                         if (msg.fileUrl && plain.startsWith(MEDIA_KEY_PREFIX)) {
                             const packed = b64Dec(plain.slice(MEDIA_KEY_PREFIX.length));
                             const { key, iv } = unpackMediaKey(packed);
@@ -185,16 +187,13 @@ export const useMessages = (
                 return { ...result, content: '' };
             }
 
+            // ── v2 text ──────────────────────────────────────────────────────
             if (msg.content && looksEncrypted(msg.content)) {
-                // Signal DR is one-way: check local cache before touching the session
                 if (msg.id) {
                     const cached = await loadPlaintext(msg.id).catch(() => null);
                     if (cached) {
                         result = { ...result, content: cached.content };
                         if (cached.isLegacy) result = { ...result, _isLegacy: true };
-                        if (msg.replyTo?.content && looksEncrypted(msg.replyTo.content)) {
-                            result = { ...result, replyTo: { ...result.replyTo!, content: await resolveReplyContent(msg.replyTo, msg.senderId) } };
-                        }
                         return result;
                     }
                 }
@@ -202,7 +201,7 @@ export const useMessages = (
                 try {
                     const decrypted = await decryptContent(msg.content, msg.senderId);
                     if (msg.id && !decrypted.startsWith('[🔒')) {
-                        savePlaintext(msg.id, decrypted, legacy).catch(() => {});
+                        await savePlaintext(msg.id, decrypted, legacy).catch(() => {});
                     }
                     result = { ...result, content: decrypted };
                     if (legacy) result = { ...result, _isLegacy: true };
@@ -210,10 +209,19 @@ export const useMessages = (
                     result = { ...result, content: '[🔒 Не вдалося розшифрувати]' };
                 }
             }
-            if (msg.replyTo?.content && looksEncrypted(msg.replyTo.content)) {
-                result = { ...result, replyTo: { ...result.replyTo!, content: await resolveReplyContent(msg.replyTo, msg.senderId) } };
-            }
+
             return result;
+        }));
+
+        // Pass 2: resolve replyTo previews from the now-fully-populated plaintext cache.
+        // Running after pass 1 guarantees that any message in this batch whose plaintext
+        // was just written to IDB can be found by resolveReplyContent without a race.
+        return Promise.all(pass1.map(async msg => {
+            if (msg.replyTo?.content && looksEncrypted(msg.replyTo.content)) {
+                const plain = await resolveReplyContent(msg.replyTo, msg.senderId);
+                return { ...msg, replyTo: { ...msg.replyTo!, content: plain } };
+            }
+            return msg;
         }));
     }, [decryptContent, resolveReplyContent, e2e]);
 
@@ -363,6 +371,11 @@ export const useMessages = (
                         await saveMediaKey(msg.id, pending.key, pending.iv).catch(() => {});
                     }
                     decryptedMsg = { ...decryptedMsg, content: '' };
+                }
+                // Resolve encrypted replyTo preview (server always returns ciphertext)
+                if (msg.replyTo?.content && looksEncrypted(msg.replyTo.content)) {
+                    const plain = await resolveReplyContent(msg.replyTo, msg.senderId);
+                    decryptedMsg = { ...decryptedMsg, replyTo: { ...decryptedMsg.replyTo!, content: plain } };
                 }
             } else {
                 // ── v3 multi-device ───────────────────────────────────────────
