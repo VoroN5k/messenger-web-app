@@ -161,18 +161,33 @@ export const useConversations = (socket: any, activeConversationId?: number) => 
 
             if (isCiphertext) {
                 try {
-                    // v3: decrypt via per-device envelope (envelopes arrive in socket payload)
                     if (c.startsWith('v3:') && msg.senderDeviceId && msg.envelopes?.length) {
+                        // v3: own-device envelope works for both sender and receiver
                         const plain = await e2e.decryptV3(msg.content, msg.senderDeviceId, msg.envelopes);
                         if (plain !== null) plainContent = plain;
-                    } else if (targetConv.type === 'DIRECT') {
-                        const otherMember = targetConv.members.find((m) => m.userId !== currentUserId);
-                        if (otherMember) plainContent = await e2e.decrypt(msg.content, otherMember.userId);
-                    } else if (targetConv.type === 'GROUP') {
-                        plainContent = await e2e.decryptFromGroup(msg.content, targetConv.id, Number(msg.senderId));
+                    } else if (!isOwnMessage) {
+                        // v2/legacy DR: only valid for incoming messages — DR can't decrypt own echoes
+                        if (targetConv.type === 'DIRECT') {
+                            const otherMember = targetConv.members.find((m) => m.userId !== currentUserId);
+                            if (otherMember) plainContent = await e2e.decrypt(msg.content, otherMember.userId);
+                        } else if (targetConv.type === 'GROUP') {
+                            plainContent = await e2e.decryptFromGroup(msg.content, targetConv.id, Number(msg.senderId));
+                        }
+                    } else if (msg.id) {
+                        // v2 own echo: try IDB cache (written by useMessages echo handler)
+                        const { loadPlaintext } = await import('@/src/lib/cryptoDb');
+                        const cached = await loadPlaintext(msg.id).catch(() => null);
+                        if (cached) plainContent = cached.content;
                     }
                 } catch (e) {
                     console.error('onMessage decrypt error:', e);
+                }
+
+                // Last resort for own v2 echo: recover plaintext that was optimistically
+                // set in the sidebar by ChatArea before the echo arrived.
+                if (isOwnMessage && plainContent === c) {
+                    const existing = convsRef.current.find(cv => cv.id === msg.conversationId)?.lastMessage;
+                    if (existing?.content && existing.content !== c) plainContent = existing.content;
                 }
             }
 

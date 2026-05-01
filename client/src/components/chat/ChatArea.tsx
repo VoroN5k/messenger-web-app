@@ -567,7 +567,24 @@ export default function ChatArea({
 
         // Send the text message first
         if (hasText) {
-            sendMessage(inputValue.trim(), replyTo?.id, scheduledAt, destructAfterSeconds);
+            const plaintext = inputValue.trim();
+            sendMessage(plaintext, replyTo?.id, scheduledAt, destructAfterSeconds);
+            // Update the sidebar preview immediately with plaintext so it never shows
+            // ciphertext while waiting for the server echo to arrive.
+            if (conversation && onConversationUpdate) {
+                onConversationUpdate({
+                    id:         conversation.id,
+                    updatedAt:  new Date().toISOString(),
+                    lastMessage: {
+                        id:        Date.now(),
+                        content:   plaintext,
+                        senderId:  currentUser?.id ?? 0,
+                        createdAt: new Date().toISOString(),
+                        fileType:  null,
+                        fileUrl:   null,
+                    },
+                });
+            }
             setInputValue('');
             setReplyTo(null);
         }

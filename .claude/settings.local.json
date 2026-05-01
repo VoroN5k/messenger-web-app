@@ -16,7 +16,8 @@
       "Bash(grep -v \"^\\\\s*$\")",
       "Bash(npm install *)",
       "Bash(wasm-pack build *)",
-      "Bash(npx nest *)"
+      "Bash(npx nest *)",
+      "Bash(npx tsx *)"
     ]
   }
 }
